@@ -89,18 +89,6 @@ function renderHosts(hosts) {
   }
 }
 
-function waitingReason(fleet) {
-  const counts = fleet?.runners;
-  if (!counts) return "Waiting for a host capacity snapshot.";
-  if (counts.occupied_slots + counts.reserved_slots >= fleet.slot_limit) {
-    return "The fleet's configured slots are occupied or reserved.";
-  }
-  if (!fleet.hosts.some((host) => host.status === "UP" && !host.cordoned && host.occupied_slots < host.slot_limit)) {
-    return "No ready host currently has a free slot.";
-  }
-  return "Waiting for the scheduler to assign a runner.";
-}
-
 function renderDetails(job) {
   const details = el("job-details");
   details.hidden = !job;
@@ -108,14 +96,19 @@ function renderDetails(job) {
   text("detail-title", "Job #" + job.id);
   githubLink("detail-link", job.url);
   const source = job.timing?.discovery_source;
-  const reasons = [
-    job.pool_error || job.retry_reason || (job.status === "OFFLINE" ? "The worker is unreachable. Its runner slot remains reserved." : ""),
-    job.status === "WAITING" ? waitingReason(current.fleet) : "",
+  const reason = job.diagnostic?.message || job.pool_error || "";
+  const detailsText = [
+    reason,
     source ? "Discovered by " + (source === "poll" ? "GitHub API polling." : "webhook.") : "",
     job.runner_host ? "Host " + job.runner_host : "",
     job.retry_at ? "Retry time " + stamp(job.retry_at) : "",
   ].filter(Boolean);
-  text("detail-reason", reasons.join(" · ") || "Waiting for job events.");
+  text("detail-reason", detailsText.join(" · ") || "Waiting for job events.");
+  const retry = job.retry_reason && job.retry_reason !== reason ? job.retry_reason : "";
+  el("detail-retry").hidden = !retry;
+  text("detail-retry", retry);
+  el("detail-route").hidden = !job.runner_label;
+  text("detail-label", job.runner_label || "");
   const timeline = el("detail-timeline");
   timeline.replaceChildren();
   for (const [label, time] of [
@@ -143,6 +136,7 @@ function renderJobs() {
   const active = current.fleet?.jobs || [];
   const recent = current.recent || [];
   const jobs = view === "active" ? active : recent;
+  el("job-diagnose").hidden = demoMode || view !== "active" || !current.fleet;
   text("jobs-summary", active.length + " active · " + recent.length + " recently cleaned");
   const empty = el("job-empty");
   empty.hidden = jobs.length !== 0;
@@ -195,6 +189,9 @@ function render() {
   text("updated", demoMode ? "Sample data" : current.sampled_at ? "Observed " + relative(current.sampled_at).toLowerCase() : "Awaiting first snapshot");
   el("update-dot").dataset.tone = notice ? "warn" : current.sampled_at ? "ok" : "";
 
+  const scope = fleet?.repository_scope;
+  el("access-scope").hidden = scope !== "selected" && scope !== "all";
+  text("access-scope-value", scope === "selected" ? "Only selected repositories" : "All repositories");
   const connected = !!(current.last_webhook || current.last_poll);
   text("app-signal", connected ? "Activity verified" : "Awaiting evidence");
   el("app-signal").dataset.tone = connected ? "ok" : "";

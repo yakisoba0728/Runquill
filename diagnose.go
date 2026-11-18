@@ -205,6 +205,11 @@ func localJobReason(j statusJob, report *statusReport) string {
 			return "waiting for a worker with an available slot"
 		}
 		return fmt.Sprintf("in the Runquill queue at position %d", j.QueuePosition)
+	case "STARTING", "OFFLINE", "UNKNOWN":
+		if j.Diagnostic != nil {
+			return j.Diagnostic.Message
+		}
+		return fmt.Sprintf("local state %s (%s)", j.Status, j.detail)
 	case "RUNNING":
 		return "runner container is running. GitHub still reports the job as queued"
 	default:

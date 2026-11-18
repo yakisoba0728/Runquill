@@ -23,7 +23,9 @@ export function sample(name) {
   let jobs = [
     job(4826, "papertrail", "RUNNING", "local", { timing: timing("webhook", 120, 119, 114, 110) }),
     job(4824, "pattern-kit", "RUNNING", "builder-west", { timing: timing("webhook", 221, 220, 217, 213) }),
-    job(4827, "forecast", "WAITING", "", { queue_position: 1, timing: timing("webhook", 10, 9) }),
+    job(4827, "forecast", "WAITING", "", { queue_position: 1, runner_label: "runquill-18062-1-forecast",
+      diagnostic: { code: "waiting_scheduler", message: "Waiting for Runquill to assign an available runner." },
+      timing: timing("webhook", 10, 9) }),
   ];
   let match = at(8);
   let firstSeen = true;
@@ -42,10 +44,14 @@ export function sample(name) {
   if (name === "offline") {
     hosts = [host("local", 2, 2), host("builder-west", 2, 0, 1)];
     jobs = [
-      job(4835, "pattern-kit", "OFFLINE", "builder-west", { timing: timing("webhook", 260, 259, 255, 250) }),
+      job(4835, "pattern-kit", "OFFLINE", "builder-west", { runner_label: "runquill-18048-1-pattern",
+        diagnostic: { code: "runner_host_offline", message: "The assigned worker is offline. Its slot stays reserved until Runquill can reach it." },
+        timing: timing("webhook", 260, 259, 255, 250) }),
       job(4836, "forecast", "RUNNING", "local", { timing: timing("webhook", 81, 80, 75, 71) }),
       job(4838, "papertrail", "RUNNING", "local", { timing: timing("poll", 62, 44, 39, 33) }),
-      job(4840, "forecast", "WAITING", "", { queue_position: 1, timing: timing("webhook", 9, 8) }),
+      job(4840, "forecast", "WAITING", "", { queue_position: 1, runner_label: "runquill-18063-1-forecast",
+        diagnostic: { code: "workers_full", message: "Reachable workers eligible for this job have no free slots." },
+        timing: timing("webhook", 9, 8) }),
     ];
     firstSeen = true;
     firstClean = cleaned;
@@ -57,7 +63,7 @@ export function sample(name) {
       first_job_seen: firstSeen, first_job_clean: firstClean,
       recent: firstClean ? [cleaned] : [],
       fleet: {
-        slot_limit: 4, hosts, jobs,
+        slot_limit: 4, repository_scope: "selected", hosts, jobs,
         runners: {
           known_running: hosts.reduce((n, h) => n + h.occupied_slots, 0),
           occupied_slots: hosts.reduce((n, h) => n + h.occupied_slots, 0),

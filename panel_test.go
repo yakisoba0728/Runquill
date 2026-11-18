@@ -22,9 +22,9 @@ func TestPanelRoutesAndFirstJobEvidence(t *testing.T) {
 	if _, err := q.record(ctx, j, now); err != nil {
 		t.Fatal(err)
 	}
-	p := newPanel(config{pollInterval: 30 * time.Second})
+	p := newPanel(config{pollInterval: 30 * time.Second, repositoryScope: scopeSelected})
 	p.markPoll(now, true)
-	host := hostCapacity{dockerHostSnapshot: dockerHostSnapshot{Name: "local", Containers: map[string]string{}}, Limit: 1}
+	host := hostCapacity{dockerHostSnapshot: dockerHostSnapshot{Name: "local", Containers: map[string]string{}}, Limit: 1, Cordoned: true}
 	p.capture(ctx, q, []hostCapacity{host}, 0, 1, nil)
 
 	rec := httptest.NewRecorder()
@@ -46,7 +46,9 @@ func TestPanelRoutesAndFirstJobEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got.LastPoll == nil || !got.FirstJobSeen || got.FirstJobClean != nil ||
-		len(got.Fleet.Jobs) != 1 || got.Fleet.Jobs[0].Timing.DiscoverySource != "poll" {
+		got.Fleet.RepositoryScope != scopeSelected || len(got.Fleet.Jobs) != 1 ||
+		got.Fleet.Jobs[0].Timing.DiscoverySource != "poll" || got.Fleet.Jobs[0].RunnerLabel != j.route ||
+		got.Fleet.Jobs[0].Diagnostic == nil || got.Fleet.Jobs[0].Diagnostic.Code != "workers_cordoned" {
 		t.Fatalf("first job progress: %+v", got)
 	}
 

@@ -31,6 +31,8 @@ kubectl -n runquill-system port-forward svc/runquill 8080:8080 8081:8081
 
 For polling, the manager only needs outbound GitHub access. To receive webhooks, route public HTTPS `/webhook` to the Service's port 8080. For a shared team panel, configure a separate HTTPS origin on port 8081 and preserve the public Host header through the proxy. For a loopback panel, register `http://127.0.0.1:8081/auth/github/callback` and use the port-forward above. Use your cluster's secret encryption and restrict access to the manager namespace, volumes, and GitHub App key.
 
+Pending runner Pods can show scheduling, image pull, volume mount and container startup causes in the panel and `runquill status --json`. Apply the current manifest to let Runquill list warning Events in its runner namespace for mount diagnostics. Full Kubernetes details are available through `kubectl describe pod -n runquill-runners POD_NAME`.
+
 ## Runner settings
 
 | Setting | Default | Effect |

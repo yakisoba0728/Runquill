@@ -22,10 +22,11 @@ type dockerFleet struct {
 }
 
 type dockerHostSnapshot struct {
-	Name       string
-	Pool       string
-	Containers map[string]string
-	Err        error
+	Name              string
+	Pool              string
+	Containers        map[string]string
+	RunnerDiagnostics map[string]jobDiagnostic
+	Err               error
 }
 
 const dockerHostProbeTimeout = 5 * time.Second

@@ -42,16 +42,18 @@ type panelCompleted struct {
 }
 
 type panelState struct {
-	mu       sync.RWMutex
-	snapshot panelSnapshot
-	backend  string
-	pools    workerPools
+	mu              sync.RWMutex
+	snapshot        panelSnapshot
+	backend         string
+	repositoryScope string
+	pools           workerPools
 }
 
 func newPanel(cfg config) *panelState {
-	return &panelState{snapshot: panelSnapshot{
-		Polling: cfg.pollInterval > 0, Webhook: cfg.secret != "",
-	}}
+	return &panelState{
+		repositoryScope: cfg.repositoryScope,
+		snapshot:        panelSnapshot{Polling: cfg.pollInterval > 0, Webhook: cfg.secret != ""},
+	}
 }
 
 func (p *panelState) markWebhook(at time.Time) {
@@ -91,7 +93,7 @@ func (p *panelState) capture(ctx context.Context, q *queue, hosts []hostCapacity
 		return
 	}
 	report := summarizeStatus(jobs, hosts, unassigned, limit, now)
-	report.configure(p.backend, p.pools, jobs)
+	report.configure(p.backend, p.repositoryScope, p.pools, jobs, hosts)
 	if probeErr != nil {
 		report.DockerError = "Runner host discovery failed. Check the manager logs."
 	}

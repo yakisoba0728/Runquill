@@ -281,6 +281,8 @@ RUNQUILL_MANAGER_IMAGE=runquill-manager:local docker compose -f compose.yaml -f 
 Viewer는 상태를 보고 읽기 토큰을 만들 수 있습니다. Operator는 워커에 새 작업을 배정하거나 잠시 멈출 수 있습니다. Admin은 팀 사용자와 권한, 토큰, 감사 기록을 관리합니다. 토큰은 1~90일 뒤 만료되며 원문은 발급 시 한 번 표시됩니다. 워커 정비를 활성화해도 실행 중인 작업은 계속 처리됩니다.
 
 
+패널에서 작업을 선택하면 러너 라벨, 대기 또는 시작 원인, 최근 재시도 이유를 확인할 수 있습니다. 화면에 작업이 없으면 `runquill diagnose OWNER/REPO`로 GitHub App의 접근 범위, 러너 라벨, 이벤트 전달을 점검하세요. 같은 원인은 `runquill status --json`의 작업별 `diagnostic` 필드에도 표시됩니다.
+
 ### 슬롯과 상태 확인
 
 대기 작업 수, 러너 슬롯 사용량, 시작 및 정리 횟수를 모니터링하려면 별도 [Prometheus 메트릭 리스너](docs/metrics.md)를 활성화하세요.

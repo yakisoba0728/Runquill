@@ -74,9 +74,12 @@
           </table>
           <p class="empty" id="job-empty">Waiting for a fleet snapshot…</p>
         </div>
+        <p id="job-diagnose" class="inline-note" hidden>Missing a job? Run <code>runquill diagnose OWNER/REPO</code> to check GitHub App access, its job label, and delivery.</p>
         <div id="job-details" class="job-details" hidden>
           <div class="detail-head"><h3 id="detail-title">Job details</h3><a id="detail-link" target="_blank" rel="noopener noreferrer" hidden>Open in GitHub ↗</a></div>
           <p id="detail-reason"></p>
+          <p id="detail-retry" hidden></p>
+          <p id="detail-route" hidden>Runner label <code id="detail-label"></code></p>
           <ol id="detail-timeline" class="timeline" aria-label="Observed job events"></ol>
         </div>
       </section>
@@ -89,6 +92,7 @@
         <section class="surface" aria-labelledby="signals-title">
           <div class="section-head"><div><h2 id="signals-title">GitHub connection</h2><p>Observed delivery and polling</p></div></div>
           <dl class="signals">
+            <div id="access-scope" hidden><dt>Configured access</dt><dd id="access-scope-value"></dd></div>
             <div><dt>App connection</dt><dd id="app-signal">Awaiting evidence</dd></div>
             <div><dt>Last matched webhook</dt><dd id="webhook-signal">—</dd></div>
             <div><dt>Last successful poll</dt><dd id="poll-signal">—</dd></div>

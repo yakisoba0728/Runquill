@@ -140,23 +140,23 @@ func availableHost(hosts []hostCapacity, pool string) *hostCapacity {
 }
 
 func (s *scheduler) reconcileFleet(ctx context.Context, active []job, snapshots []dockerHostSnapshot, states map[string]hostState, now time.Time) error {
-	containers := make(map[string]map[string]string, len(snapshots))
+	observations := make(map[string]dockerHostSnapshot, len(snapshots))
 	seenOn := make(map[string]string)
 	allObserved := true
 	for _, host := range snapshots {
-		containers[host.Name] = host.Containers
+		observations[host.Name] = host
 		allObserved = allObserved && host.Containers != nil
 		for name := range host.Containers {
 			seenOn[name] = host.Name
 		}
 	}
 	for name, state := range states {
-		if _, configured := containers[name]; !configured && state.untrackedSlots.Int64 > 0 {
+		if _, configured := observations[name]; !configured && state.untrackedSlots.Int64 > 0 {
 			allObserved = false
 		}
 	}
 	for _, j := range active {
-		if _, configured := containers[j.runnerHost]; j.runnerHost != "" && !configured {
+		if _, configured := observations[j.runnerHost]; j.runnerHost != "" && !configured {
 			allObserved = false
 		}
 	}
@@ -177,11 +177,11 @@ func (s *scheduler) reconcileFleet(ctx context.Context, active []job, snapshots 
 		if j.retryAt > now.Unix() || (seen != "" && j.runnerHost != seen) {
 			continue
 		}
-		hostContainers := containers[j.runnerHost]
-		if hostContainers == nil && (j.runnerHost != "" || !allObserved) {
+		host := observations[j.runnerHost]
+		if host.Containers == nil && (j.runnerHost != "" || !allObserved) {
 			continue
 		}
-		if err := s.reconcile(ctx, *j, hostContainers, now); err != nil {
+		if err := s.reconcile(ctx, *j, host.Containers, host.RunnerDiagnostics[j.runnerName], now); err != nil {
 			if err := s.retry(ctx, *j, now, "reconcile runner", err); err != nil {
 				return err
 			}
@@ -330,7 +330,7 @@ func (s *scheduler) launch(ctx context.Context, j job, host, pool string, now ti
 	return true, nil
 }
 
-func (s *scheduler) reconcile(ctx context.Context, j job, containers map[string]string, now time.Time) error {
+func (s *scheduler) reconcile(ctx context.Context, j job, containers map[string]string, detail jobDiagnostic, now time.Time) error {
 	state := containers[j.runnerName]
 	outsideInstallation := false
 	if state == "running" || state == "pending" || state == "paused" || state == "restarting" {
@@ -414,13 +414,17 @@ func (s *scheduler) reconcile(ctx context.Context, j job, containers map[string]
 			return err
 		}
 	}
+	previousRunner := ""
+	if detail.Message != "" && detail.Code != "pod_terminating" {
+		previousRunner = "Previous runner · " + detail.Message
+	}
 	_, err := s.queue.ExecContext(ctx, `UPDATE jobs SET runner_name = NULL, runner_host = NULL, runner_id = NULL,
         launched_at = NULL, retry_at = ?,
         runner_cleaned_at = CASE WHEN phase = ? THEN max(changed_at, ?) END,
         runner_cleaned_host = CASE WHEN phase = ? THEN runner_host END,
-        retry_reason = CASE WHEN phase = ? THEN coalesce(nullif(retry_reason, ''),
+        retry_reason = CASE WHEN phase = ? THEN coalesce(nullif(?, ''), nullif(retry_reason, ''),
             'runner became unavailable while the job was queued') ELSE '' END
-        WHERE job_id = ? AND runner_name = ?`, now.Add(retryDelay).Unix(), completed, time.Now().Unix(), completed, queued, j.id, j.runnerName)
+        WHERE job_id = ? AND runner_name = ?`, now.Add(retryDelay).Unix(), completed, time.Now().Unix(), completed, queued, previousRunner, j.id, j.runnerName)
 	if err != nil {
 		return err
 	}

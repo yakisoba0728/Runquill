@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -67,7 +68,9 @@ func inspectStatus(ctx context.Context, db *sql.DB) (*statusReport, error) {
 		probeErr = fmt.Errorf("list runners: %w", probeErr)
 	}
 	report := summarizeStatus(jobs, hosts, unassigned, limit, time.Now())
-	report.configure(runners.kind, runners.pools, jobs)
+	// Bad GitHub configuration should not hide the local queue.
+	scope, _ := parseRepositoryScope(os.Getenv(repositoryScopeEnv))
+	report.configure(runners.kind, scope, runners.pools, jobs, hosts)
 	if probeErr != nil {
 		report.DockerError = strings.Join(strings.Fields(probeErr.Error()), " ")
 	}
@@ -119,14 +122,15 @@ func readStatusJobs(ctx context.Context, db *sql.DB) ([]job, error) {
 }
 
 type statusReport struct {
-	Backend       string         `json:"backend,omitempty"`
-	SchemaVersion int            `json:"schema_version"`
-	SlotLimit     int            `json:"slot_limit"`
-	Runners       *statusRunners `json:"runners"`
-	Hosts         []statusHost   `json:"hosts"`
-	Jobs          []statusJob    `json:"jobs"`
-	DockerError   string         `json:"docker_error,omitempty"`
-	pools         workerPools
+	Backend         string         `json:"backend,omitempty"`
+	RepositoryScope string         `json:"repository_scope,omitempty"`
+	SchemaVersion   int            `json:"schema_version"`
+	SlotLimit       int            `json:"slot_limit"`
+	Runners         *statusRunners `json:"runners"`
+	Hosts           []statusHost   `json:"hosts"`
+	Jobs            []statusJob    `json:"jobs"`
+	DockerError     string         `json:"docker_error,omitempty"`
+	pools           workerPools
 }
 
 type statusRunners struct {
@@ -156,6 +160,8 @@ type statusJob struct {
 	RetryAt       *time.Time       `json:"retry_at,omitempty"`
 	RetryReason   string           `json:"retry_reason,omitempty"`
 	Runner        string           `json:"runner,omitempty"`
+	RunnerLabel   string           `json:"runner_label,omitempty"`
+	Diagnostic    *jobDiagnostic   `json:"diagnostic,omitempty"`
 	RunnerHost    string           `json:"runner_host,omitempty"`
 	Pool          string           `json:"pool,omitempty"`
 	PoolError     string           `json:"pool_error,omitempty"`
@@ -269,7 +275,7 @@ func summarizeStatus(jobs []job, hosts []hostCapacity, unassigned, limit int, no
 		state, detail := statusRow(j, hosts, now)
 		row := statusJob{
 			ID: j.id, Repository: j.repository, Status: state, RetryReason: j.retryReason,
-			Runner: j.runnerName, RunnerHost: j.runnerHost, URL: jobURL(j), Timing: jobTiming(j, now), detail: detail,
+			Runner: j.runnerName, RunnerLabel: j.route, RunnerHost: j.runnerHost, URL: jobURL(j), Timing: jobTiming(j, now), detail: detail,
 		}
 		if state == "WAITING" {
 			position++
@@ -284,15 +290,17 @@ func summarizeStatus(jobs []job, hosts []hostCapacity, unassigned, limit int, no
 	return report
 }
 
-func (r *statusReport) configure(backend string, pools workerPools, jobs []job) {
+func (r *statusReport) configure(backend, repositoryScope string, pools workerPools, jobs []job, hosts []hostCapacity) {
 	r.pools = pools
 	r.Backend = backend
+	r.RepositoryScope = repositoryScope
 	for i, j := range jobs {
 		pool, err := pools.forJob(j)
 		r.Jobs[i].Pool = pool
 		if err != nil {
 			r.Jobs[i].PoolError = err.Error()
 		}
+		r.Jobs[i].Diagnostic = r.explainJob(r.Jobs[i], j.phase, hosts)
 	}
 }
 
@@ -351,6 +359,9 @@ func (r statusReport) writeText(out io.Writer) error {
 			fmt.Fprintf(table, "\t\t\t%s\n", j.PoolError)
 		} else if j.Pool != "" {
 			fmt.Fprintf(table, "\t\t\tpool=%s\n", j.Pool)
+		}
+		if j.Diagnostic != nil && j.Diagnostic.Message != j.PoolError {
+			fmt.Fprintf(table, "\t\t\t%s\n", j.Diagnostic.Message)
 		}
 		if j.Timing != nil {
 			if timing := j.Timing.text(); timing != "" {

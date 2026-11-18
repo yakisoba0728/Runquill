@@ -289,6 +289,8 @@ For release installs, omit the image override and use `--no-build` with the same
 Team users sign in with their enrolled GitHub account. Tokens expire after 1–90 days, have one scope, and can be revoked from the panel. The secret is shown only when issued. Send `Authorization: Bearer <token>` with `GET /snapshot` for `fleet:read` or `POST /api/hosts/cordon` for `hosts:write`. The latter accepts `{"host":"local","cordoned":true}`. You can pause new work on a host without interrupting its active runners. Audit history records sign-ins and management changes.
 
 
+Select a job in the panel to see its runner label, current queue or startup explanation, and latest retry reason. The configured GitHub App access scope is shown in **GitHub connection**. The panel displays discovered jobs. For a missing job, use `runquill diagnose OWNER/REPO` to check the App installation, the job's GitHub label and discovery. `runquill status --json` exposes the same job explanation as the optional `diagnostic` object with a `code` and `message`.
+
 ### Status and upgrades
 
 For fleet-wide queue depth, slot usage, and runner throughput, enable the separate [Prometheus metrics listener](docs/metrics.md).

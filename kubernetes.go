@@ -27,6 +27,7 @@ const kubeRunnerLabel = "app.kubernetes.io/managed-by=runquill"
 
 type kubeRunners struct {
 	pods    typed.PodInterface
+	events  typed.EventInterface
 	secrets typed.SecretInterface
 	options kubeRunnerOptions
 }
@@ -104,7 +105,10 @@ func newKubeRunners(image string) (*kubeRunners, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &kubeRunners{pods: api.Pods(opts.namespace), secrets: api.Secrets(opts.namespace), options: opts}, nil
+	return &kubeRunners{
+		pods: api.Pods(opts.namespace), events: api.Events(opts.namespace),
+		secrets: api.Secrets(opts.namespace), options: opts,
+	}, nil
 }
 
 func (k *kubeRunners) check(ctx context.Context, report func(string, error)) {
@@ -131,9 +135,19 @@ func (k *kubeRunners) snapshot(ctx context.Context) ([]dockerHostSnapshot, error
 		return []dockerHostSnapshot{host}, nil
 	}
 	host.Containers = make(map[string]string, len(list.Items))
+	host.RunnerDiagnostics = make(map[string]jobDiagnostic)
+	mountCandidates := make(map[string]string)
 	for _, pod := range list.Items {
 		host.Containers[pod.Name] = kubePodState(pod)
+		detail := kubePodDiagnostic(pod)
+		if detail.Code != "" {
+			host.RunnerDiagnostics[pod.Name] = detail
+		}
+		if detail.Code == "pod_preparing" && pod.UID != "" {
+			mountCandidates[string(pod.UID)] = pod.Name
+		}
 	}
+	k.addMountDiagnostics(ctx, mountCandidates, host.RunnerDiagnostics)
 	return []dockerHostSnapshot{host}, nil
 }
 
