@@ -293,6 +293,36 @@ GitHub에서 작업이 대기 중이라면 `docker compose exec manager runquill
 
 폴링은 매번 접근 가능한 비공개 저장소에서 대기 중과 실행 중인 워크플로를 확인하며, 최근 활동이 있는 저장소부터 조회합니다. 요청됨, 대기, 보류 상태는 저장소 목록이 유지되는 동안 성공한 네 번의 조회 안에 순환 확인합니다. 작업별 타이밍에는 첫 발견 경로와 러너 등록, GitHub가 제공한 작업 시작 시각이 표시됩니다. 발견 지연은 GitHub 작업 생성 시각을 제공한 경우에만 표시됩니다.
 
+### 대기열 백업과 복구
+
+매니저를 실행한 채 SQLite 대기열을 백업할 수 있습니다. 볼륨을 잃어도 복구할 수 있도록 백업을 볼륨 밖으로 복사합니다.
+
+```sh
+umask 077
+docker compose exec -T manager runquill backup --output /data/queue-backup.sqlite3
+docker compose cp manager:/data/queue-backup.sqlite3 ./queue-backup.sqlite3
+```
+
+백업은 소유자만 읽고 쓸 수 있는 새 파일에 저장합니다. 대기 작업, 러너 리스, 워커 정비 상태, 저장소 조회 기록이 포함됩니다. 저장소와 작업 정보가 들어 있으므로 비공개로 보관합니다. GitHub App PEM, 설정, OAuth 비밀값은 별도로 백업합니다. 패널 사용자, 세션, 토큰, 감사 기록은 제외됩니다. 복구 후 패널을 사용하려면 `RUNQUILL_PANEL_BOOTSTRAP_ID`에 첫 관리자의 숫자 GitHub 계정 ID를 설정하고 팀 등록과 토큰 발급을 다시 진행합니다.
+
+기존 매니저를 중지하고 원본 큐를 보관합니다. 백업할 때 사용한 `RUNQUILL_OWNER`와 `RUNQUILL_APP_ID`로 새 큐를 준비합니다.
+
+```sh
+docker compose stop manager
+docker compose run --rm --no-deps -e RUNQUILL_DB=/data/recovered.sqlite3 \
+    -v "$PWD/queue-backup.sqlite3:/run/queue-backup.sqlite3:ro" \
+    manager restore --from /run/queue-backup.sqlite3
+```
+
+새 큐는 활성화할 때까지 매니저 시작을 차단합니다. 워커와 GitHub에서 백업 시점 이후 생성된 러너를 확인합니다. 해당 환경에서 `gc --dry-run`으로 추적되지 않은 러너를 점검할 수 있습니다. 남은 러너를 정리하고 기존 매니저가 중지되어 있는지 확인한 뒤 `.env`에 `RUNQUILL_DB=/data/recovered.sqlite3`를 설정합니다.
+
+```sh
+docker compose run --rm --no-deps manager restore --activate
+docker compose up -d
+```
+
+SSH 워커나 패널을 사용한다면 기존 Compose 파일 조합을 그대로 사용합니다. k3s에서는 기존 매니저를 중지한 상태로 PVC에 복구 파일을 준비하고 활성화한 뒤 Deployment의 `RUNQUILL_DB`에 새 경로를 설정합니다. 원본 큐 파일은 남아 있고, 한 운영 환경에는 매니저 하나만 실행합니다.
+
 로컬에서 대기열과 웹훅 테스트를 실행하려면 Go 1.26.11 이상에서 `go test -race ./...`를 사용합니다.
 
 [CI](.github/workflows/ci.yml)는 amd64와 arm64 Linux에서 Go 테스트와 Docker-in-Docker 검증을 실행합니다. amd64에서는 임시 k3s 클러스터를 띄워 워커 중지 시 작업이 대기하고, 재개 시 러너가 생성되며, 작업 완료 후 Pod와 자격 증명 Secret이 제거되는지 확인합니다. 관리자와 뷰어에 별도 GitHub 계정을 쓰는 [OAuth 검증](panel_live_oauth_test.go)은 전용 OAuth 앱을 준비해 로컬에서 실행할 수 있습니다.

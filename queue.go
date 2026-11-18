@@ -72,13 +72,13 @@ func openQueue(path string) (*queue, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return nil, err
 	}
-	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0600)
+	lock, err := lockQueue(path)
 	if err != nil {
 		return nil, err
 	}
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := checkQueueReady(path); err != nil {
 		lock.Close()
-		return nil, fmt.Errorf("lock queue %s: %w", path, err)
+		return nil, err
 	}
 	db, err := openQueueDB(path, "rwc")
 	if err != nil {
@@ -96,6 +96,18 @@ func openQueue(path string) (*queue, error) {
 		return nil, fmt.Errorf("migrate queue: %w", err)
 	}
 	return q, nil
+}
+
+func lockQueue(path string) (*os.File, error) {
+	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		lock.Close()
+		return nil, fmt.Errorf("lock queue %s: %w", path, err)
+	}
+	return lock, nil
 }
 
 func (q *queue) migrate() error {

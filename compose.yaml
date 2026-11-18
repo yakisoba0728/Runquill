@@ -19,7 +19,7 @@ services:
       RUNQUILL_RUNNER_IMAGE: ${RUNQUILL_RUNNER_IMAGE:-runquill-runner:local}
       RUNQUILL_KEY_FILE: /run/secrets/github-app-key
       RUNQUILL_BIND: 0.0.0.0
-      RUNQUILL_DB: /data/runquill.sqlite3
+      RUNQUILL_DB: ${RUNQUILL_DB:-/data/runquill.sqlite3}
     secrets:
       - github-app-key
     volumes:

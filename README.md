@@ -295,6 +295,36 @@ Use `docker compose exec manager runquill gc --dry-run` to inventory labelled ru
 - Runquill polls the GitHub API on startup and waits `RUNQUILL_POLL_INTERVAL` (default `30s`) after each scan. Each scan checks queued and in-progress runs in every eligible repository, giving recent activity priority. The poller rotates requested, waiting, and pending runs so each repository receives a full scan within four successful passes if the repository list stays stable. Webhooks and polling share one queue record per GitHub job ID. Set the interval to `0` to run with webhooks alone.
 - Job timing records the first discovery source, successful GitHub runner registration, and GitHub’s reported job start when available. The discovery delay measures GitHub job creation to Runquill discovery when GitHub provides a creation timestamp. The Runquill queue duration measures discovery to first registration, or elapsed wait for a queued job. Missing timestamps and durations are omitted in `status --json`.
 
+### Back up and recover the queue
+
+Take a consistent SQLite snapshot while the manager is running. Save it outside the queue volume so you can recover from volume loss.
+
+```sh
+umask 077
+docker compose exec -T manager runquill backup --output /data/queue-backup.sqlite3
+docker compose cp manager:/data/queue-backup.sqlite3 ./queue-backup.sqlite3
+```
+
+The versioned snapshot is written with owner-only permissions to a new file. It contains queued jobs, runner leases, host maintenance state, and repository scan history. Treat it as private because it contains repository and job metadata. Keep the GitHub App PEM, configuration and OAuth secrets in your separate secret backup. Panel users, sessions, tokens and audit records are excluded. For a recovered panel, set `RUNQUILL_PANEL_BOOTSTRAP_ID` to the intended administrator's numeric GitHub ID, then enroll the team again and issue fresh tokens.
+
+Stop the previous manager and preserve its queue file. Use the same `RUNQUILL_OWNER` and `RUNQUILL_APP_ID` to prepare a new queue on the destination volume.
+
+```sh
+docker compose stop manager
+docker compose run --rm --no-deps -e RUNQUILL_DB=/data/recovered.sqlite3 \
+    -v "$PWD/queue-backup.sqlite3:/run/queue-backup.sqlite3:ro" \
+    manager restore --from /run/queue-backup.sqlite3
+```
+
+The prepared queue blocks manager startup. Check old workers and GitHub for runners created after the backup, using `gc --dry-run` against the prepared queue where applicable. Resolve untracked runners and make sure the previous manager stays stopped before activating the recovery. Then set `RUNQUILL_DB=/data/recovered.sqlite3` in `.env` and run:
+
+```sh
+docker compose run --rm --no-deps manager restore --activate
+docker compose up -d
+```
+
+With SSH workers or the panel overlay, use your usual Compose files. With K3s, prepare and activate the new file on the manager PVC while the old manager is stopped, then set the deployment's `RUNQUILL_DB` to the new path. The recovery retains the original file for rollback. Each fleet needs exactly one running manager.
+
 ## Develop and release
 
 Use Go 1.26.11 or later. The manager builds as a native binary with the Docker CLI as its external runtime dependency.

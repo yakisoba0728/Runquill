@@ -21,7 +21,7 @@ var version = "dev"
 func main() {
 	showVersion := flag.Bool("version", false, "print the Runquill version")
 	flag.Usage = func() {
-		fmt.Fprintln(flag.CommandLine.Output(), "Usage: runquill [--version] | runquill setup | runquill workflow init | runquill doctor | runquill diagnose OWNER/REPO | runquill status [--json] | runquill gc --dry-run | runquill host {cordon|uncordon} HOST | runquill panel --demo")
+		fmt.Fprintln(flag.CommandLine.Output(), "Usage: runquill [--version] | runquill setup | runquill workflow init | runquill doctor | runquill diagnose OWNER/REPO | runquill status [--json] | runquill gc --dry-run | runquill host {cordon|uncordon} HOST | runquill panel --demo | runquill backup --output FILE | runquill restore (--from FILE | --activate)")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -79,6 +79,13 @@ func main() {
 		}
 		if err := setup(ctx, os.Stdout, ".", &http.Client{Timeout: 10 * time.Second}, githubAPIBase, options); err != nil {
 			slog.Error("runquill setup", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if command := flag.Arg(0); command == "backup" || command == "restore" {
+		if err := runQueueBackup(ctx, os.Stdout, command, flag.Args()[1:]); err != nil {
+			slog.Error("runquill "+command, "error", err)
 			os.Exit(1)
 		}
 		return
