@@ -1,0 +1,33 @@
+name: Runquill parallel jobs
+
+on:
+  workflow_dispatch:
+    inputs:
+      github_hosted:
+        description: Run these jobs on GitHub-hosted Ubuntu
+        type: boolean
+        default: false
+
+permissions: {}
+
+jobs:
+  check:
+    runs-on: ${{ inputs.github_hosted && 'ubuntu-latest' || format('runquill-{0}-{1}-check', github.run_id, github.run_attempt) }}
+    timeout-minutes: 5
+    steps:
+      - name: Show assigned runner
+        run: printf 'check ran on %s\n' "$RUNNER_NAME"
+
+  test:
+    name: Test (${{ matrix.suite }})
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [unit, integration]
+    runs-on: ${{ inputs.github_hosted && 'ubuntu-latest' || format('runquill-{0}-{1}-test-{2}', github.run_id, github.run_attempt, strategy.job-index) }}
+    timeout-minutes: 5
+    steps:
+      - name: Show assigned runner
+        env:
+          SUITE: ${{ matrix.suite }}
+        run: printf '%s tests ran on %s\n' "$SUITE" "$RUNNER_NAME"

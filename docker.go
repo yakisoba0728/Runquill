@@ -1,0 +1,108 @@
+package main
+
+import (
+	"archive/tar"
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"os/exec"
+	"strings"
+	"time"
+)
+
+const runnerLabel = "io.runquill.runner=1"
+
+func runnerOccupiesSlot(state string) bool {
+	switch state {
+	case "created", "running", "paused", "restarting":
+		return true
+	default:
+		return false
+	}
+}
+
+type docker struct {
+	image string
+	host  string
+}
+
+func (d docker) command(ctx context.Context, input []byte, args ...string) (string, error) {
+	if d.host == "" {
+		return dockerCommand(ctx, input, args...)
+	}
+	output, err := dockerCommand(ctx, input, append([]string{"--host", d.host}, args...)...)
+	if err != nil {
+		return "", fmt.Errorf("%s on %s: %w", args[0], d.host, err)
+	}
+	return output, nil
+}
+
+func dockerCommand(ctx context.Context, input []byte, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	if input != nil {
+		cmd.Stdin = bytes.NewReader(input)
+	}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	result, err := cmd.Output()
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
+	if err != nil {
+		return "", fmt.Errorf("docker %s: %w: %s", args[0], err, strings.TrimSpace(stderr.String()))
+	}
+	return string(result), nil
+}
+
+func (d docker) containers(ctx context.Context) (map[string]string, error) {
+	output, err := d.command(ctx, nil, "ps", "-a", "--filter", "label="+runnerLabel, "--format", "{{.Names}}\t{{.State}}")
+	if err != nil {
+		return nil, err
+	}
+	states := make(map[string]string)
+	for line := range strings.SplitSeq(strings.TrimSpace(output), "\n") {
+		if line == "" {
+			continue
+		}
+		name, state, ok := strings.Cut(line, "\t")
+		if !ok || name == "" || state == "" {
+			return nil, errors.New("invalid Docker container list")
+		}
+		states[name] = state
+	}
+	return states, nil
+}
+
+func (d docker) start(ctx context.Context, name, jit string) error {
+	_, err := d.command(ctx, nil, "create", "--name", name, "--label", runnerLabel,
+		"--pull", "never", "--init", "--privileged", "--cgroupns", "private", "--log-driver", "json-file",
+		"--log-opt", "max-size=10m", "--log-opt", "max-file=2", d.image)
+	if err != nil {
+		return err
+	}
+	// Copy the JIT credential without exposing it in Docker's command or environment metadata.
+	var archive bytes.Buffer
+	tw := tar.NewWriter(&archive)
+	if err := tw.WriteHeader(&tar.Header{Name: "runquill-jit", Mode: 0600, Size: int64(len(jit))}); err != nil {
+		return err
+	}
+	if _, err := tw.Write([]byte(jit)); err != nil {
+		return err
+	}
+	if err := tw.Close(); err != nil {
+		return err
+	}
+	if _, err := d.command(ctx, archive.Bytes(), "cp", "-", name+":/run"); err != nil {
+		return err
+	}
+	_, err = d.command(ctx, nil, "start", name)
+	return err
+}
+
+func (d docker) remove(ctx context.Context, name string) error {
+	_, err := d.command(ctx, nil, "rm", "-f", "-v", name)
+	return err
+}

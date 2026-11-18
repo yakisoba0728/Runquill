@@ -1,0 +1,115 @@
+name: Publish Runquill
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    needs: verify
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            os: ubuntu-24.04
+          - arch: arm64
+            os: ubuntu-24.04-arm
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Build and push native images
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          tag="$GITHUB_REF_NAME-$ARCH"
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker buildx build --platform "linux/$ARCH" --push \
+            --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --build-arg "VERSION=$GITHUB_REF_NAME" -t "$image:$tag" .
+          docker buildx build --platform "linux/$ARCH" --push \
+            --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            -t "$image-runner:$tag" runner
+
+  publish:
+    needs: build
+    permissions:
+      contents: read
+      packages: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Publish multi-architecture tags
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          for target in "$image" "$image-runner"; do
+            docker buildx imagetools create -t "$target:$GITHUB_REF_NAME" \
+              "$target:$GITHUB_REF_NAME-amd64" "$target:$GITHUB_REF_NAME-arm64"
+          done
+
+  release:
+    needs: publish
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.26.x'
+      - name: Build standalone binaries
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          mkdir release-assets
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath \
+              -ldflags "-s -w -X main.version=$GITHUB_REF_NAME -X main.releaseImage=$image" \
+              -o "release-assets/runquill-linux-$arch" .
+          done
+          test "$(release-assets/runquill-linux-amd64 --version)" = "$GITHUB_REF_NAME"
+          cp compose.yaml compose.ssh.yaml install.sh LICENSE release-assets/
+          (cd release-assets && sha256sum runquill-linux-amd64 runquill-linux-arm64 compose.yaml compose.ssh.yaml install.sh LICENSE > SHA256SUMS)
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          assets=(release-assets/*)
+          if existing=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name'); then
+            for asset in "${assets[@]}"; do
+              name=${asset##*/}
+              if grep -Fxq -- "$name" <<< "$existing"; then
+                gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --dir existing-assets --pattern "$name"
+                cmp -- "$asset" "existing-assets/$name"
+              else
+                gh release upload "$GITHUB_REF_NAME" "$asset" --repo "$GITHUB_REPOSITORY"
+              fi
+            done
+          else
+            flags=(--verify-tag --generate-notes)
+            if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+              flags+=(--prerelease)
+            fi
+            gh release create "$GITHUB_REF_NAME" "${assets[@]}" --repo "$GITHUB_REPOSITORY" "${flags[@]}"
+          fi

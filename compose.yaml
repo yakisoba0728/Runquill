@@ -1,0 +1,31 @@
+services:
+  manager:
+    build: .
+    image: ${RUNQUILL_MANAGER_IMAGE:-runquill-manager:local}
+    restart: unless-stopped
+    stop_grace_period: 15s
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      RUNQUILL_OWNER: ${RUNQUILL_OWNER:?Set your GitHub login in .env}
+      RUNQUILL_APP_ID: ${RUNQUILL_APP_ID:?Set your GitHub App ID in .env}
+      RUNQUILL_WEBHOOK_SECRET: ${RUNQUILL_WEBHOOK_SECRET:-}
+      RUNQUILL_POLL_INTERVAL: ${RUNQUILL_POLL_INTERVAL:-30s}
+      RUNQUILL_MAX_RUNNERS: ${RUNQUILL_MAX_RUNNERS:-2}
+      RUNQUILL_DOCKER_HOSTS: ${RUNQUILL_DOCKER_HOSTS:-local}
+      RUNQUILL_RUNNER_IMAGE: ${RUNQUILL_RUNNER_IMAGE:-runquill-runner:local}
+      RUNQUILL_KEY_FILE: /run/secrets/github-app-key
+      RUNQUILL_BIND: 0.0.0.0
+      RUNQUILL_DB: /data/runquill.sqlite3
+    secrets:
+      - github-app-key
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - queue:/data
+
+secrets:
+  github-app-key:
+    file: ${RUNQUILL_KEY_FILE:?Set the PEM file path in .env}
+
+volumes:
+  queue:

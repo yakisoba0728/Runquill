@@ -1,0 +1,38 @@
+name: Runquill smoke test
+
+on:
+  push:
+  workflow_dispatch:
+    inputs:
+      github_hosted:
+        description: Run this job on GitHub-hosted Ubuntu
+        type: boolean
+        default: false
+
+permissions: {}
+
+jobs:
+  smoke:
+    runs-on: ${{ inputs.github_hosted && 'ubuntu-latest' || format('runquill-{0}-{1}-smoke', github.run_id, github.run_attempt) }}
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: smoke-test
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 15
+    steps:
+      - name: Build a Docker image
+        run: printf 'FROM scratch\nLABEL purpose=runquill-smoke\n' | docker build -t runquill-smoke -
+      - name: Connect to PostgreSQL
+        env:
+          POSTGRES_PORT: ${{ job.services.postgres.ports['5432'] }}
+        run: |
+          docker run --rm --network host -e PGPASSWORD=smoke-test postgres:17-alpine \
+            psql -h 127.0.0.1 -p "$POSTGRES_PORT" -U postgres -v ON_ERROR_STOP=1 -c 'SELECT 1'

@@ -1,0 +1,7 @@
+services:
+  manager:
+    volumes:
+      - type: bind
+        source: ${RUNQUILL_SSH_DIR:?Set RUNQUILL_SSH_DIR to a dedicated SSH configuration directory}
+        target: /root/.ssh
+        read_only: true
