@@ -21,11 +21,11 @@ curl -fsSLO https://github.com/yakisoba0728/Runquill/releases/latest/download/in
 sh install.sh
 ```
 
-The installer verifies release downloads, runs browser setup, pulls matching images, and starts Compose in `./runquill`. Use `--dir PATH` for a different directory, `--version v0.1.1` to pin a release, or `--download-only` to download the binary and Compose files first.
+The installer verifies release downloads, runs browser setup, pulls matching images, and starts Compose in `./runquill`. Use `--dir PATH` for a different directory, `--version v0.1.2` to pin a release, or `--download-only` to download the binary and Compose files first.
 
 ### Create and install the GitHub App
 
-Run `setup` from the directory containing `compose.yaml`. To use a source checkout, build the setup binary with Go 1.26 or later.
+Run `setup` from the directory containing `compose.yaml`. To use a source checkout, build the setup binary with Go 1.26.11 or later and use the latest patch for your Go version.
 
 ```sh
 CGO_ENABLED=0 go build -o runquill .
@@ -166,6 +166,12 @@ runs-on: ${{ format('runquill-{0}-{1}-test-{2}', github.run_id, github.run_attem
 
 Pass the expression as the job's single `runs-on` label. Start the suffix with a letter or digit, then use letters, digits, hyphens, or underscores. Keep the whole label within 100 characters. Runquill registers each ephemeral runner with its job's label so GitHub can match parallel jobs to their respective runners. [GitHub Actions contexts](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts)
 
+### Reuse Docker build layers across jobs
+
+Copy the [cached build example](examples/runquill-build-cache.yml) into `.github/workflows/` in a repository with a root `Dockerfile`. It builds the committed Git revision on the default branch and keeps the resulting image available for later steps in the same job. A new runner can restore layers through the GitHub Actions cache. Choose a distinct `scope` for each image and use it in both cache settings. Cache export failures leave the build usable. [Docker GitHub Actions cache](https://docs.docker.com/build/cache/backends/gha/)
+
+The example pins both actions to exact commits, uses read-only repository permissions, and writes cache from the default branch. Pass build secrets through BuildKit secret mounts so they stay out of cached image layers. [Docker build secrets](https://docs.docker.com/build/building/secrets/)
+
 ## Operate and upgrade
 
 ```sh
@@ -174,6 +180,8 @@ docker compose exec manager runquill status
 
 The snapshot includes running runner containers, per-host slot usage and health, and direct GitHub job links. `WAITING` positions follow queue order among jobs ready to start. `RETRY` shows the time until the next attempt and the latest failure or reconciliation reason when available. When using the standalone binary, run `runquill status` with the manager's queue and Docker environment settings.
 
+Use `docker compose exec -T manager runquill status --json` for scripts and monitoring. Schema version 1 includes `slot_limit`, `runners`, `hosts`, and `jobs`. Occupied slots are observed on reachable workers. Reserved slots account for offline workers and leases without an observed host. If Docker reports a conflicting topology, the snapshot still includes jobs and a `docker_error`, with `runners` set to `null` and a nonzero exit status.
+
 - `RUNQUILL_MAX_RUNNERS` defaults to 2. Provisioning failures retry after 15 seconds and allow later jobs to use available slots. GitHub fails self-hosted jobs that remain queued for more than 24 hours. [GitHub runner routing](https://docs.github.com/en/actions/reference/runners/self-hosted-runners#routing-precedence-for-self-hosted-runners)
 - `docker compose logs -f manager` shows admissions, cleanup, and API errors. The GitHub workflow retains step output as usual.
 - Preserve the Compose `queue` volume during upgrades, including upgrades from the original Python version. For published images, update both tags and repeat the pull commands. A manager restart continues tracking existing runners.
@@ -181,7 +189,7 @@ The snapshot includes running runner containers, per-host slot usage and health,
 
 ## Develop and release
 
-Use Go 1.26 or later. The manager builds as a native binary with the Docker CLI as its external runtime dependency.
+Use Go 1.26.11 or later. The manager builds as a native binary with the Docker CLI as its external runtime dependency.
 
 ```sh
 go test -race ./...

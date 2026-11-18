@@ -15,11 +15,11 @@ curl -fsSLO https://github.com/yakisoba0728/Runquill/releases/latest/download/in
 sh install.sh
 ```
 
-설치 스크립트는 다운로드 체크섬을 확인하고, 브라우저 설정을 거쳐 같은 버전의 이미지를 받은 뒤 `./runquill`에서 Compose를 시작합니다. `--dir PATH`로 경로를 바꾸고, `--version v0.1.1`으로 버전을 지정하거나, `--download-only`로 바이너리와 Compose 파일만 받을 수 있습니다.
+설치 스크립트는 다운로드 체크섬을 확인하고, 브라우저 설정을 거쳐 같은 버전의 이미지를 받은 뒤 `./runquill`에서 Compose를 시작합니다. `--dir PATH`로 경로를 바꾸고, `--version v0.1.2`으로 버전을 지정하거나, `--download-only`로 바이너리와 Compose 파일만 받을 수 있습니다.
 
 ### GitHub App 연결
 
-`compose.yaml`이 있는 디렉터리에서 `setup`을 실행합니다. 소스에서 빌드하는 경우 Go 1.26 이상을 사용합니다.
+`compose.yaml`이 있는 디렉터리에서 `setup`을 실행합니다. 소스에서 빌드할 때는 Go 1.26.11 이상에서 해당 Go 버전의 최신 패치를 사용합니다.
 
 ```sh
 CGO_ENABLED=0 go build -o runquill .
@@ -160,6 +160,12 @@ runs-on: ${{ format('runquill-{0}-{1}-test-{2}', github.run_id, github.run_attem
 
 이 식을 `runs-on`의 단일 라벨로 사용합니다. 접미사는 영문자나 숫자로 시작하고 이후에는 하이픈과 밑줄도 쓸 수 있습니다. 라벨 전체는 100자 이내여야 합니다. Runquill은 작업마다 요청한 라벨로 일회용 러너를 등록하고, GitHub는 라벨이 일치하는 러너에 작업을 배정합니다. [GitHub Actions 컨텍스트 문서](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts)
 
+### 다음 작업에서 Docker 빌드 레이어 재사용
+
+루트에 `Dockerfile`이 있는 저장소의 `.github/workflows/`에 [빌드 캐시 예제](examples/runquill-build-cache.yml)를 복사합니다. 기본 브랜치의 커밋을 빌드하고, 같은 작업의 이후 단계에서 결과 이미지를 사용할 수 있습니다. 새 러너는 GitHub Actions 캐시에서 이전 빌드의 레이어를 복원합니다. 이미지마다 `scope`를 하나씩 정해 캐시 입력과 출력 양쪽에 같은 값을 쓰세요. 캐시 저장에 실패해도 빌드 결과를 사용할 수 있습니다. [Docker GitHub Actions 캐시](https://docs.docker.com/build/cache/backends/gha/)
+
+예제는 두 액션을 커밋 SHA로 고정하고 읽기 권한만 사용합니다. 캐시는 기본 브랜치에서 갱신합니다. 빌드 시크릿은 BuildKit 시크릿 마운트로 전달하면 캐시 레이어에 남지 않습니다. [Docker 빌드 시크릿](https://docs.docker.com/build/building/secrets/)
+
 ## 대기열과 작업 환경
 
 - `RUNQUILL_MAX_RUNNERS`가 전체 저장소의 동시 실행 수를 정합니다. 정원이 차면 SQLite에 대기하고, 빈자리가 나면 작업을 발견한 순서대로 러너를 생성합니다. 생성에 실패한 작업은 기본 15초 뒤 재시도합니다. 재시도 시간 동안 다음 작업이 빈자리를 사용할 수 있습니다.
@@ -175,10 +181,12 @@ docker compose exec manager runquill status
 
 실행 중인 러너 수와 서버별 상태·슬롯 사용량, GitHub 작업 링크를 한 번에 확인할 수 있습니다. `WAITING`은 바로 실행할 수 있는 작업의 대기 순서를 표시합니다. `RETRY`에는 다음 시도까지 남은 시간과 기록된 재시도 이유가 표시됩니다. 바이너리를 직접 실행하는 경우 매니저와 같은 큐 및 Docker 환경 설정으로 `runquill status`를 실행합니다.
 
+스크립트나 모니터링 도구에서는 `docker compose exec -T manager runquill status --json`을 사용합니다. 스키마 버전 1에 `slot_limit`, `runners`, `hosts`, `jobs`가 들어 있습니다. 사용 중인 슬롯은 응답한 서버에서 관측한 값이고, 예약 슬롯에는 오프라인 서버와 소유 서버를 확인할 수 없는 러너 기록이 포함됩니다. Docker 호스트 구성이 충돌하면 작업 목록과 `docker_error`가 출력되고, `runners`는 `null`이며 명령은 실패 코드로 종료합니다.
+
 매니저 로그는 `docker compose logs -f manager`로 확인합니다. 새 GitHub 러너 버전을 적용하려면 `docker build --pull -t runquill-runner:local runner`를 다시 실행합니다. 이미 실행 중인 작업은 사용하던 이미지로 마무리됩니다.
 
 태그별 GHCR 이미지 설치와 업그레이드 절차는 [영문 설치 가이드](README.md#start-the-manager)에 있습니다. 이전 버전에서 업그레이드할 때는 Compose의 `queue` 볼륨을 유지하면 대기열과 실행 중인 러너 기록을 이어받습니다.
 
-로컬에서 대기열과 웹훅 테스트를 실행하려면 Go 1.26 이상에서 `go test -race ./...`를 사용합니다.
+로컬에서 대기열과 웹훅 테스트를 실행하려면 Go 1.26.11 이상에서 `go test -race ./...`를 사용합니다.
 
 Copyright © 2026 Runquill contributors. [Apache License 2.0](LICENSE)

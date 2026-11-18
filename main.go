@@ -21,7 +21,7 @@ var version = "dev"
 func main() {
 	showVersion := flag.Bool("version", false, "print the Runquill version")
 	flag.Usage = func() {
-		fmt.Fprintln(flag.CommandLine.Output(), "Usage: runquill [--version] | runquill setup [--webhook-url URL] | runquill doctor [--repo OWNER/REPO] | runquill status | runquill host {cordon|uncordon} HOST")
+		fmt.Fprintln(flag.CommandLine.Output(), "Usage: runquill [--version] | runquill setup [--webhook-url URL] | runquill doctor [--repo OWNER/REPO] | runquill status [--json] | runquill host {cordon|uncordon} HOST")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -52,8 +52,15 @@ func main() {
 		}
 		return
 	}
-	if flag.NArg() == 1 && flag.Arg(0) == "status" {
-		if err := status(ctx, os.Stdout); err != nil {
+	if flag.Arg(0) == "status" {
+		flags := flag.NewFlagSet("runquill status", flag.ExitOnError)
+		jsonOutput := flags.Bool("json", false, "write the status snapshot as JSON")
+		flags.Parse(flag.Args()[1:])
+		if flags.NArg() != 0 {
+			flags.Usage()
+			os.Exit(2)
+		}
+		if err := status(ctx, os.Stdout, *jsonOutput); err != nil {
 			slog.Error("runquill status", "error", err)
 			os.Exit(1)
 		}

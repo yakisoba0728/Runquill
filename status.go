@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,7 +13,7 @@ import (
 	"time"
 )
 
-func status(ctx context.Context, out io.Writer) error {
+func status(ctx context.Context, out io.Writer, jsonOutput bool) error {
 	limit, err := runnerLimit()
 	if err != nil {
 		return err
@@ -42,19 +43,30 @@ func status(ctx context.Context, out io.Writer) error {
 	dockerCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	snapshots, dockerErr := runtime.snapshot(dockerCtx)
-	if dockerErr != nil {
-		return errors.Join(writeStatus(out, jobs, nil, 0, limit, time.Now()), fmt.Errorf("list runner containers: %w", dockerErr))
-	}
-	hosts, unassigned := fleetCapacity(snapshots, states, jobs, limits, limit)
-	var hostErrors []error
-	for _, host := range hosts {
-		if host.Containers != nil {
-			hostErrors = nil
-			break
+	var hosts []hostCapacity
+	var unassigned int
+	if dockerErr == nil {
+		hosts, unassigned = fleetCapacity(snapshots, states, jobs, limits, limit)
+		var hostErrors []error
+		for _, host := range hosts {
+			if host.Containers != nil {
+				hostErrors = nil
+				break
+			}
+			hostErrors = append(hostErrors, host.Err)
 		}
-		hostErrors = append(hostErrors, host.Err)
+		dockerErr = errors.Join(hostErrors...)
+	} else {
+		dockerErr = fmt.Errorf("list runner containers: %w", dockerErr)
 	}
-	return errors.Join(writeStatus(out, jobs, hosts, unassigned, limit, time.Now()), errors.Join(hostErrors...))
+	report := summarizeStatus(jobs, hosts, unassigned, limit, time.Now())
+	if dockerErr != nil {
+		report.DockerError = strings.Join(strings.Fields(dockerErr.Error()), " ")
+	}
+	if jsonOutput {
+		return errors.Join(json.NewEncoder(out).Encode(report), dockerErr)
+	}
+	return errors.Join(report.writeText(out), dockerErr)
 }
 
 func readStatusJobs(ctx context.Context, db *sql.DB) ([]job, error) {
@@ -92,69 +104,145 @@ func readStatusJobs(ctx context.Context, db *sql.DB) ([]job, error) {
 	return jobs, rows.Err()
 }
 
-func writeStatus(out io.Writer, jobs []job, hosts []hostCapacity, unassigned, limit int, now time.Time) error {
-	table := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	if len(hosts) == 0 {
-		fmt.Fprintln(table, "Runners: unavailable (Docker query failed)")
-	} else {
-		occupied := unassigned
-		var running, offline int
+type statusReport struct {
+	SchemaVersion int            `json:"schema_version"`
+	SlotLimit     int            `json:"slot_limit"`
+	Runners       *statusRunners `json:"runners"`
+	Hosts         []statusHost   `json:"hosts"`
+	Jobs          []statusJob    `json:"jobs"`
+	DockerError   string         `json:"docker_error,omitempty"`
+}
+
+type statusRunners struct {
+	KnownRunning            int `json:"known_running"`
+	OccupiedSlots           int `json:"occupied_slots"`
+	ReservedSlots           int `json:"reserved_slots"`
+	UnassignedReservedSlots int `json:"unassigned_reserved_slots"`
+	OfflineHosts            int `json:"offline_hosts"`
+}
+
+type statusHost struct {
+	Name          string `json:"name"`
+	Status        string `json:"status"`
+	Cordoned      bool   `json:"cordoned"`
+	SlotLimit     int    `json:"slot_limit"`
+	OccupiedSlots int    `json:"occupied_slots"`
+	ReservedSlots int    `json:"reserved_slots"`
+	Error         string `json:"error,omitempty"`
+}
+
+type statusJob struct {
+	ID            int64      `json:"id"`
+	Repository    string     `json:"repository"`
+	Status        string     `json:"status"`
+	QueuePosition int        `json:"queue_position,omitempty"`
+	RetryAt       *time.Time `json:"retry_at,omitempty"`
+	RetryReason   string     `json:"retry_reason,omitempty"`
+	Runner        string     `json:"runner,omitempty"`
+	RunnerHost    string     `json:"runner_host,omitempty"`
+	URL           string     `json:"url,omitempty"`
+	detail        string
+}
+
+func summarizeStatus(jobs []job, hosts []hostCapacity, unassigned, limit int, now time.Time) statusReport {
+	report := statusReport{
+		SchemaVersion: 1,
+		SlotLimit:     limit,
+		Hosts:         make([]statusHost, 0, len(hosts)),
+		Jobs:          make([]statusJob, 0, len(jobs)),
+	}
+	if len(hosts) > 0 {
+		runners := &statusRunners{ReservedSlots: unassigned, UnassignedReservedSlots: unassigned}
 		for _, host := range hosts {
-			occupied += host.Occupied
-			if host.Containers == nil {
-				offline++
+			row := statusHost{Name: host.Name, Status: "UP", Cordoned: host.Cordoned, SlotLimit: host.Limit}
+			if host.Err != nil {
+				row.Status = "UNAVAILABLE"
+				row.Error = strings.Join(strings.Fields(host.Err.Error()), " ")
 			}
-			for _, state := range host.Containers {
-				if state == "running" {
-					running++
+			if host.Containers == nil {
+				row.Status = "OFFLINE"
+				row.ReservedSlots = host.Occupied
+				runners.OfflineHosts++
+				runners.ReservedSlots += host.Occupied
+			} else {
+				row.OccupiedSlots = host.Occupied
+				runners.OccupiedSlots += host.Occupied
+				for _, state := range host.Containers {
+					if state == "running" {
+						runners.KnownRunning++
+					}
 				}
 			}
+			report.Hosts = append(report.Hosts, row)
 		}
-		if offline > 0 {
-			fmt.Fprintf(table, "Runners: %d known running, %d/%d slots occupied or reserved\n", running, occupied, limit)
+		report.Runners = runners
+	}
+	position := 0
+	for _, j := range jobs {
+		state, detail := statusRow(j, hosts, now)
+		row := statusJob{
+			ID: j.id, Repository: j.repository, Status: state, RetryReason: j.retryReason,
+			Runner: j.runnerName, RunnerHost: j.runnerHost, URL: jobURL(j), detail: detail,
+		}
+		if state == "WAITING" {
+			position++
+			row.QueuePosition = position
+		}
+		if state == "RETRY" {
+			retryAt := time.Unix(j.retryAt, 0).UTC()
+			row.RetryAt = &retryAt
+		}
+		report.Jobs = append(report.Jobs, row)
+	}
+	return report
+}
+
+func (r statusReport) writeText(out io.Writer) error {
+	table := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+	if r.Runners == nil {
+		fmt.Fprintln(table, "Runners: unavailable (Docker query failed)")
+	} else {
+		counts := r.Runners
+		total := counts.OccupiedSlots + counts.ReservedSlots
+		if counts.OfflineHosts > 0 {
+			fmt.Fprintf(table, "Runners: %d known running, %d/%d slots occupied or reserved\n", counts.KnownRunning, total, r.SlotLimit)
+		} else if counts.ReservedSlots > 0 {
+			fmt.Fprintf(table, "Runners: %d running, %d/%d slots occupied or reserved\n", counts.KnownRunning, total, r.SlotLimit)
 		} else {
-			fmt.Fprintf(table, "Runners: %d running, %d/%d slots occupied\n", running, occupied, limit)
+			fmt.Fprintf(table, "Runners: %d running, %d/%d slots occupied\n", counts.KnownRunning, total, r.SlotLimit)
 		}
-		if unassigned > 0 {
-			fmt.Fprintf(table, "Slots reserved without a known host: %d\n", unassigned)
+		if counts.UnassignedReservedSlots > 0 {
+			fmt.Fprintf(table, "Slots reserved without a known host: %d\n", counts.UnassignedReservedSlots)
 		}
 		fmt.Fprintln(table, "\nHOST\tSTATUS\tMODE\tSLOTS\tDETAIL")
-		for _, host := range hosts {
-			health, mode, detail := "UP", "ACTIVE", ""
-			slots := fmt.Sprintf("%d/%d", host.Occupied, host.Limit)
-			if host.Err != nil {
-				health = "UNAVAILABLE"
-				detail = strings.Join(strings.Fields(host.Err.Error()), " ")
-			}
-			if host.Containers == nil {
-				health = "OFFLINE"
+		for _, host := range r.Hosts {
+			mode := "ACTIVE"
+			slots := fmt.Sprintf("%d/%d", host.OccupiedSlots+host.ReservedSlots, host.SlotLimit)
+			if host.Status == "OFFLINE" {
 				slots += " reserved"
 			}
 			if host.Cordoned {
 				mode = "CORDONED"
 			}
-			fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\n", host.Name, health, mode, slots, detail)
+			fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\n", host.Name, host.Status, mode, slots, host.Error)
 		}
 		if err := table.Flush(); err != nil {
 			return err
 		}
 	}
-	if len(jobs) == 0 {
+	if len(r.Jobs) == 0 {
 		fmt.Fprintln(table, "\nNo queued jobs or runner leases.")
 		return table.Flush()
 	}
 	fmt.Fprintln(table, "\nSTATE\tPOSITION\tJOB\tDETAIL")
-	position := 0
-	for _, j := range jobs {
-		state, detail := statusRow(j, hosts, now)
+	for _, j := range r.Jobs {
 		rank := "-"
-		if state == "WAITING" {
-			position++
-			rank = strconv.Itoa(position)
+		if j.QueuePosition > 0 {
+			rank = strconv.Itoa(j.QueuePosition)
 		}
-		fmt.Fprintf(table, "%s\t%s\t%d\t%s\n", state, rank, j.id, detail)
-		if link := jobURL(j); link != "" {
-			fmt.Fprintf(table, "\t\t\t%s\n", link)
+		fmt.Fprintf(table, "%s\t%s\t%d\t%s\n", j.Status, rank, j.ID, j.detail)
+		if j.URL != "" {
+			fmt.Fprintf(table, "\t\t\t%s\n", j.URL)
 		}
 	}
 	return table.Flush()

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"slices"
@@ -73,7 +74,7 @@ func TestStatusShowsCapacityQueueOrderAndLinks(t *testing.T) {
 	containers := map[string]string{"runner-a": "running", "runner-b": "created", "runner-c": "exited"}
 	hosts := []hostCapacity{{dockerHostSnapshot: dockerHostSnapshot{Name: "local", Containers: containers}, Limit: 3, Occupied: 2}}
 	var out bytes.Buffer
-	if err := writeStatus(&out, jobs, hosts, 0, 3, now); err != nil {
+	if err := summarizeStatus(jobs, hosts, 0, 3, now).writeText(&out); err != nil {
 		t.Fatal(err)
 	}
 	var got []string
@@ -112,7 +113,7 @@ func TestStatusShowsOfflineAndCordonedHosts(t *testing.T) {
 		{id: 60, runnerName: "runner-d", runnerHost: "ssh://builder", phase: inProgress},
 	}
 	var out bytes.Buffer
-	if err := writeStatus(&out, jobs, hosts, 1, 5, time.Now()); err != nil {
+	if err := summarizeStatus(jobs, hosts, 1, 5, time.Now()).writeText(&out); err != nil {
 		t.Fatal(err)
 	}
 	got := strings.Join(strings.Fields(out.String()), " ")
@@ -151,11 +152,55 @@ func TestStatusReadsConfiguredLimitsAndCordon(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	if err := status(ctx, &out); err != nil {
+	if err := status(ctx, &out, false); err != nil {
 		t.Fatal(err)
 	}
 	got := strings.Join(strings.Fields(out.String()), " ")
 	if !strings.Contains(got, "local UP CORDONED 1/1") || !strings.Contains(got, fleetTestWorker+" OFFLINE ACTIVE") {
 		t.Fatalf("unexpected status output:\n%s", out.String())
+	}
+	now := time.Now()
+	for _, id := range []int64{42, 51} {
+		j := job{id: id, repository: "owner/repo", route: "runquill-172-1-ci"}
+		if _, err := q.record(ctx, j, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	retryAt := now.Add(time.Minute).Unix()
+	if _, err := q.ExecContext(ctx, "UPDATE jobs SET retry_at = ?, retry_reason = 'GitHub unavailable' WHERE job_id = 42", retryAt); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := status(ctx, &out, true); err != nil {
+		t.Fatal(err)
+	}
+	var decoded statusReport
+	if err := json.Unmarshal(out.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.SchemaVersion != 1 || decoded.SlotLimit != 3 || decoded.Runners == nil ||
+		decoded.Runners.KnownRunning != 1 || decoded.Runners.OccupiedSlots != 1 ||
+		decoded.Runners.ReservedSlots != 2 || decoded.Runners.OfflineHosts != 1 ||
+		len(decoded.Hosts) != 2 || !decoded.Hosts[0].Cordoned || decoded.Hosts[1].Status != "OFFLINE" ||
+		decoded.Hosts[1].ReservedSlots != 2 || decoded.DockerError != "" {
+		t.Fatalf("unexpected JSON host snapshot: %s", out.String())
+	}
+	if len(decoded.Jobs) != 2 || decoded.Jobs[0].Status != "RETRY" || decoded.Jobs[0].RetryAt == nil ||
+		decoded.Jobs[0].RetryAt.Unix() != retryAt || decoded.Jobs[0].RetryReason != "GitHub unavailable" ||
+		decoded.Jobs[1].QueuePosition != 1 || decoded.Jobs[1].URL != "https://github.com/owner/repo/actions/runs/172/job/51" {
+		t.Fatalf("unexpected JSON jobs: %s", out.String())
+	}
+	t.Setenv("FLEET_TEST_WORKER_STATE", "duplicate-engine")
+	out.Reset()
+	if err := status(ctx, &out, true); err == nil {
+		t.Fatal("expected conflicting Docker topology to fail")
+	}
+	decoded = statusReport{}
+	if err := json.Unmarshal(out.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Runners != nil || decoded.Hosts == nil || len(decoded.Hosts) != 0 || len(decoded.Jobs) != 2 ||
+		!strings.Contains(decoded.DockerError, "identify the same engine") {
+		t.Fatalf("unexpected JSON on Docker failure: %s", out.String())
 	}
 }
