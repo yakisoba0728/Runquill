@@ -24,24 +24,25 @@ const defaultSetupPanelURL = "http://127.0.0.1:8081"
 var setupOAuthValue = regexp.MustCompile("^[A-Za-z0-9._-]{1,256}$")
 
 var panelSetupPage = template.Must(template.New("panel-setup").Parse(`<!doctype html>
-<html lang="en">
+<html lang="{{if .Korean}}ko{{else}}en{{end}}">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Runquill panel setup</title></head>
-<body>
-<h1>Set up the Runquill panel</h1>
-<p><a href="https://github.com/settings/applications/new" target="_blank" rel="noopener noreferrer">Register a GitHub OAuth App</a> for panel sign-in.</p>
+{{if .InWizard}}<link rel="stylesheet" href="/wizard.css">{{end}}
+<body><main>
+<h1>{{if .Korean}}Runquill 패널 로그인 설정{{else}}Set up the Runquill panel{{end}}</h1>
+<p><a href="https://github.com/settings/applications/new" target="_blank" rel="noopener noreferrer">{{if .Korean}}GitHub OAuth App 등록 열기{{else}}Register a GitHub OAuth App{{end}}</a>{{if not .Korean}} for panel sign-in.{{end}}</p>
 <dl>
-  <dt>Homepage URL</dt><dd><code>{{.Origin}}</code></dd>
-  <dt>Authorization callback URL</dt><dd><code>{{.Callback}}</code></dd>
+  <dt>{{if .Korean}}홈페이지 URL{{else}}Homepage URL{{end}}</dt><dd><code>{{.Origin}}</code></dd>
+  <dt>{{if .Korean}}인증 콜백 URL{{else}}Authorization callback URL{{end}}</dt><dd><code>{{.Callback}}</code></dd>
 </dl>
-<p>In the OAuth App settings, generate a client secret, then enter its credentials below.</p>
-<form method="post" action="/">
+<p>{{if .Korean}}위 주소를 GitHub 설정에 입력하고 생성한 클라이언트 시크릿을 여기에 입력하세요.{{else}}In the OAuth App settings, generate a client secret, then enter its credentials below.{{end}}</p>
+<form method="post" action="{{.Form}}">
   <input type="hidden" name="state" value="{{.State}}">
-  <p><label>Client ID <input name="client_id" required maxlength="256" autocomplete="off" spellcheck="false"></label></p>
-  <p><label>Client secret <input name="client_secret" type="password" required maxlength="256" autocomplete="off"></label></p>
-  <p><label>First administrator's numeric GitHub user ID <input name="bootstrap_id" value="{{.Bootstrap}}" inputmode="numeric" pattern="[0-9]+" maxlength="19" required></label></p>
-  <button type="submit">Save panel configuration</button>
+  <p><label>{{if .Korean}}클라이언트 ID{{else}}Client ID{{end}} <input name="client_id" required maxlength="256" autocomplete="off" spellcheck="false"></label></p>
+  <p><label>{{if .Korean}}클라이언트 시크릿{{else}}Client secret{{end}} <input name="client_secret" type="password" required maxlength="256" autocomplete="off"></label></p>
+  <p><label>{{if .Korean}}첫 관리자의 GitHub 숫자 ID{{else}}First administrator's numeric GitHub user ID{{end}} <input name="bootstrap_id" value="{{.Bootstrap}}" inputmode="numeric" pattern="[0-9]+" maxlength="19" required></label></p>
+  <button type="submit">{{if .Korean}}패널 설정 저장{{else}}Save panel configuration{{end}}</button>
 </form>
-</body>
+</main></body>
 </html>`))
 
 func configurePanelSetup(ctx context.Context, out io.Writer, path string, original []byte, values map[string]string, opts setupOptions, ownerID int64) (panelOAuthConfig, error) {
@@ -137,7 +138,13 @@ func readPanelSetup(ctx context.Context, out io.Writer, port int, origin string,
 	}
 	defer listener.Close()
 	localURL := "http://" + listener.Addr().String()
-	page := struct{ Origin, Callback, State, Bootstrap string }{Origin: origin, Callback: origin + panelCallbackPath, State: rand.Text()}
+	page := struct {
+		Origin, Callback, State, Bootstrap, Form string
+		Korean, InWizard                         bool
+	}{Origin: origin, Callback: origin + panelCallbackPath, State: rand.Text(), Form: "/", Korean: wizardKorean(ctx), InWizard: currentWizard(ctx) != nil}
+	if web := currentWizard(ctx); web != nil {
+		localURL, page.Form = web.origin, "/oauth/"
+	}
 	if ownerID > 0 {
 		page.Bootstrap = strconv.FormatInt(ownerID, 10)
 	}
@@ -168,9 +175,16 @@ func readPanelSetup(ctx context.Context, out io.Writer, port int, origin string,
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		fmt.Fprintln(w, "Panel settings received. Return to your terminal to finish setup.")
+		if currentWizard(ctx) != nil {
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+		} else {
+			fmt.Fprintln(w, "Panel settings received. Return to your terminal to finish setup.")
+		}
 		saved <- cfg
 	})
+	if web := currentWizard(ctx); web != nil {
+		return wizardStep(ctx, web, "/oauth", mux, saved)
+	}
 	return runSetupBrowser(ctx, out, listener, mux, "to configure GitHub sign-in for the panel", "", saved)
 }
 

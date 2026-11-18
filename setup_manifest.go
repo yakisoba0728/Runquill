@@ -30,17 +30,19 @@ type manifestApp struct {
 }
 
 var appManifestPage = template.Must(template.New("manifest").Parse(`<!doctype html>
-<html lang="en">
+<html lang="{{if .Korean}}ko{{else}}en{{end}}">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Runquill setup</title></head>
-<body>
-<h1>Connect Runquill to GitHub</h1>
+{{if .InWizard}}<link rel="stylesheet" href="/wizard.css">{{end}}
+<body><main>
+<h1>{{if .Korean}}Runquill과 GitHub 연결{{else}}Connect Runquill to GitHub{{end}}</h1>
+{{if .Korean}}<p>GitHub에서 러너용 비공개 앱 등록을 승인하세요. 승인 후 이 마법사로 돌아옵니다.</p>{{else}}
 <p>Create a private GitHub App with Actions read and {{.RunnerPermission}} write permissions.
-{{if .Webhook}}GitHub will send workflow job events to your HTTPS webhook.{{else}}Runquill will discover jobs by polling GitHub.{{end}}</p>
+{{if .Webhook}}GitHub will send workflow job events to your HTTPS webhook.{{else}}Runquill will discover jobs by polling GitHub.{{end}}</p>{{end}}
 <form method="post" action="{{.Action}}?state={{.State}}">
   <input type="hidden" name="manifest" value="{{.Manifest}}">
-  <button type="submit">Create GitHub App</button>
+  <button type="submit">{{if .Korean}}GitHub App 등록{{else}}Create GitHub App{{end}}</button>
 </form>
-</body>
+</main></body>
 </html>`))
 
 func registerManifestApp(ctx context.Context, out io.Writer, client *http.Client, apiBase string, opts setupOptions) (manifestApp, error) {
@@ -54,6 +56,9 @@ func registerManifestApp(ctx context.Context, out io.Writer, client *http.Client
 
 	host := listener.Addr().String()
 	localURL := "http://" + host
+	if web := currentWizard(ctx); web != nil {
+		localURL = web.origin + "/connect"
+	}
 	state := rand.Text()
 	action := "https://github.com/settings/apps/new"
 	if opts.organization != "" {
@@ -93,8 +98,8 @@ func registerManifestApp(ctx context.Context, out io.Writer, client *http.Client
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		page := struct {
 			Action, State, Manifest, RunnerPermission string
-			Webhook                                   bool
-		}{action, state, string(manifest), permissionLabel, opts.webhookURL != ""}
+			Webhook, Korean, InWizard                 bool
+		}{action, state, string(manifest), permissionLabel, opts.webhookURL != "", wizardKorean(ctx), currentWizard(ctx) != nil}
 		_ = appManifestPage.Execute(w, page)
 	})
 	mux.HandleFunc("GET /callback", func(w http.ResponseWriter, r *http.Request) {
@@ -122,12 +127,21 @@ func registerManifestApp(ctx context.Context, out io.Writer, client *http.Client
 			http.Error(w, "GitHub App registration needs attention. Check the terminal for details.", http.StatusBadGateway)
 		} else {
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-			fmt.Fprintln(w, "GitHub App registered. Return to your terminal to continue Runquill setup.")
+			if currentWizard(ctx) != nil {
+				http.Redirect(w, r, "/", http.StatusSeeOther)
+			} else {
+				fmt.Fprintln(w, "GitHub App registered. Return to your terminal to continue Runquill setup.")
+			}
 		}
 		converted <- result{app, err}
 	})
 
-	res, err := runSetupBrowser(ctx, out, listener, mux, "to create your GitHub App", " https://github.com", converted)
+	var res result
+	if web := currentWizard(ctx); web != nil {
+		res, err = wizardStep(ctx, web, "/connect", mux, converted)
+	} else {
+		res, err = runSetupBrowser(ctx, out, listener, mux, "to create your GitHub App", " https://github.com", converted)
+	}
 	if err != nil {
 		return manifestApp{}, err
 	}

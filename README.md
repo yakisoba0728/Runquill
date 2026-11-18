@@ -26,6 +26,10 @@ One manager and its persistent SQLite queue limit runner concurrency across repo
 
 Use an amd64 or arm64 Linux server with cgroup v2, rootful Docker Engine, Docker Compose, `curl`, and `sha256sum`. Run one manager per group of Docker hosts. The default polling setup works behind NAT with outbound access to GitHub. Use an HTTPS endpoint for webhook delivery.
 
+### Set up in a browser
+
+Run `sh install.sh --wizard` to connect GitHub, configure panel sign-in, deploy the manager, and download the first workflow in one browser session. The wizard supports English and Korean, plus optional Tailscale Serve and Funnel on a Docker Compose host. [Browser setup](docs/browser-setup.md)
+
 ### Install a public release
 
 ```sh

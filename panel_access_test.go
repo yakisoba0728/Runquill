@@ -33,7 +33,11 @@ func (transport panelTransport) RoundTrip(r *http.Request) (*http.Response, erro
 }
 
 func TestGitHubPanelLoginRolesAndTokens(t *testing.T) {
-	q, err := openQueue(filepath.Join(t.TempDir(), "queue.sqlite3"))
+	path := filepath.Join(t.TempDir(), "queue.sqlite3")
+	t.Setenv("RUNQUILL_DB", path)
+	t.Setenv("RUNQUILL_OWNER", "owner")
+	t.Setenv("RUNQUILL_APP_ID", "1")
+	q, err := openQueue(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,6 +164,16 @@ func TestGitHubPanelLoginRolesAndTokens(t *testing.T) {
 	assertStatus(request("POST", "/api/hosts/cordon", host, access.cfg.origin, "", viewerCookie), 403)
 	assertStatus(request("POST", "/api/tokens", `{"name":"denied","scope":"hosts:write","days":7}`,
 		access.cfg.origin, "", viewerCookie), 403)
+
+	assertStatus(request("POST", "/api/backup", "", access.cfg.origin, "", viewerCookie), 403)
+	assertStatus(request("POST", "/api/diagnose", `{"repository":"owner/private"}`, access.cfg.origin, "", viewerCookie), 403)
+	assertStatus(request("POST", "/api/backup", "", "https://foreign.invalid", "", adminCookie), 403)
+	backup := request("POST", "/api/backup", "", access.cfg.origin, "", adminCookie)
+	assertStatus(backup, 200)
+	if !strings.HasPrefix(backup.Body.String(), "SQLite format 3") ||
+		backup.Header().Get("Content-Disposition") != "attachment; filename=runquill-queue-backup.sqlite3" {
+		t.Fatal("backup did not return a downloadable SQLite file")
+	}
 
 	token := func(input string, cookie *http.Cookie) (int64, string) {
 		t.Helper()

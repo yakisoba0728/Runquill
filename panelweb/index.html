@@ -16,6 +16,7 @@
       <a class="wordmark" href="#overview"><span class="mark" aria-hidden="true"></span>runquill<span class="wordmark-divider">/</span><span class="product">Panel</span></a>
       <nav aria-label="Panel"><a href="#overview">Overview</a><a href="#first-job">First job setup</a><a id="access-nav" href="#access" hidden>Manage access</a></nav>
       <span id="mode" class="mode">Sample fleet</span>
+      <a id="language-toggle" class="language-toggle" href="?lang=ko" lang="ko">한국어</a>
       <button class="signout" id="signout" type="button" hidden>Sign out</button>
     </div>
   </header>
@@ -142,6 +143,15 @@
           <p id="team-message" class="inline-note" role="status" hidden></p>
         </section>
       </div>
+      <section class="surface" id="operations-panel" aria-labelledby="operations-title" hidden>
+        <div class="section-head"><div><h2 id="operations-title">Operations</h2><p>Check repository access or download the queue.</p></div><button id="download-backup" class="button" type="button">Download queue backup</button></div>
+        <form id="diagnose-form" class="control-form">
+          <label>GitHub repository<input name="repository" required maxlength="140" placeholder="OWNER/REPO"></label>
+          <button class="button" type="submit">Diagnose repository</button>
+        </form>
+        <p id="operations-message" class="inline-note" role="status" hidden></p>
+        <pre id="diagnose-result" class="diagnose-result" aria-live="polite" hidden></pre>
+      </section>
       <section class="surface" id="audit-panel" aria-labelledby="audit-title" hidden>
         <div class="section-head"><div><h2 id="audit-title">Audit history</h2><p>Recent sign-ins and management actions</p></div><button class="button" id="refresh-audit" type="button">Refresh</button></div>
         <ul class="control-list" id="audit-list"></ul>

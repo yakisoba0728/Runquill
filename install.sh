@@ -11,10 +11,11 @@ organization=
 runner_group_id=
 download_only=false
 panel=false
+wizard=false
 panel_url=
 
 usage() {
-    printf '%s\n' 'Usage: sh install.sh [--version vX.Y.Z] [--dir PATH] [--webhook-url URL] [--listen-port PORT] [--repository-scope all|selected] [--organization ORG [--runner-group-id ID]] [--download-only] [--panel [--panel-url URL]]'
+    printf '%s\n' 'Usage: sh install.sh [--version vX.Y.Z] [--dir PATH] [--webhook-url URL] [--listen-port PORT] [--repository-scope all|selected] [--organization ORG [--runner-group-id ID]] [--download-only] [--wizard] [--panel [--panel-url URL]]'
 }
 
 while [ "$#" -gt 0 ]; do
@@ -35,6 +36,7 @@ while [ "$#" -gt 0 ]; do
             esac
             shift 2
             ;;
+        --wizard) wizard=true; shift ;;
         --panel) panel=true; shift ;;
         --download-only) download_only=true; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -51,6 +53,11 @@ if [ -n "$panel_url" ] && [ "$panel" = false ]; then
     exit 2
 fi
 
+if [ "$wizard" = true ] && { [ "$panel" = true ] || [ -n "$webhook$repository_scope$organization$runner_group_id" ]; }; then
+    printf '%s\n' 'Set GitHub, panel, and webhook options inside the wizard.' >&2
+    exit 2
+fi
+
 if [ "$(uname -s)" != Linux ]; then
     printf '%s\n' 'Run the installer on the Linux server that will run Runquill.' >&2
     exit 1
@@ -63,7 +70,7 @@ esac
 
 command -v curl >/dev/null
 command -v sha256sum >/dev/null
-if [ "$download_only" = false ]; then
+if [ "$download_only" = false ] && [ "$wizard" = false ]; then
     docker compose version >/dev/null
     docker info >/dev/null
 fi
@@ -119,6 +126,16 @@ for name in runquill $files; do
 done
 printf 'Runquill %s is in %s\n' "$tag" "$(pwd)"
 if [ "$download_only" = true ]; then exit 0; fi
+if [ "$wizard" = true ]; then
+    if [ ! -f compose.panel.yaml ] || ! ./runquill --help 2>&1 | grep -q 'runquill wizard'; then
+        printf '%s\n' 'This release does not support browser setup. Select a newer release.' >&2
+        exit 1
+    fi
+    set -- wizard
+    if [ -n "$listen_port" ]; then set -- "$@" --listen-port "$listen_port"; fi
+    ./runquill "$@"
+    exit
+fi
 
 set -- setup
 if [ -n "$webhook" ]; then set -- "$@" --webhook-url "$webhook"; fi

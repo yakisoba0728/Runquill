@@ -1,5 +1,8 @@
+import { language, localizeDocument, tr } from "./i18n.js";
+
+localizeDocument();
 const el = (id) => document.getElementById(id);
-const text = (id, value) => { el(id).textContent = value; };
+const text = (id, value) => { el(id).textContent = tr(value); };
 const demoMode = document.body.dataset.mode === "demo";
 const viewButtons = document.querySelectorAll("[data-view]");
 const demoButtons = document.querySelectorAll("[data-scenario]");
@@ -12,24 +15,24 @@ let user = null;
 
 function node(tag, value, css) {
   const result = document.createElement(tag);
-  if (value != null) result.textContent = value;
+  if (value != null) result.textContent = tr(value);
   if (css) result.className = css;
   return result;
 }
 
 function relative(value) {
-  if (!value) return "Not observed";
+  if (!value) return tr("Not observed");
   const seconds = Math.max(0, Math.floor((Date.now() - Date.parse(value)) / 1000));
-  if (seconds < 5) return "Just now";
-  if (seconds < 60) return seconds + "s ago";
+  if (seconds < 5) return tr("Just now");
+  if (seconds < 60) return tr("{n}s ago", { n: seconds });
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return minutes + "m ago";
+  if (minutes < 60) return tr("{n}m ago", { n: minutes });
   const hours = Math.floor(minutes / 60);
-  return hours < 24 ? hours + "h ago" : Math.floor(hours / 24) + "d ago";
+  return hours < 24 ? tr("{n}h ago", { n: hours }) : tr("{n}d ago", { n: Math.floor(hours / 24) });
 }
 
 function stamp(value) {
-  return new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return new Date(value).toLocaleTimeString(language, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
 function githubLink(id, url) {
@@ -66,18 +69,18 @@ function renderHosts(hosts) {
     name.append(node("span", host.name), badge(state));
     const used = host.occupied_slots + host.reserved_slots;
     const capacity = node("div", null, "host-meta");
-    capacity.append(node("span", used + " of " + host.slot_limit + " slots"),
-      node("span", host.reserved_slots ? host.reserved_slots + " reserved" : " "));
+    capacity.append(node("span", tr("{used} of {limit} slots", { used, limit: host.slot_limit })),
+      node("span", host.reserved_slots ? tr("{n} reserved", { n: host.reserved_slots }) : " "));
     const bar = node("progress");
     bar.max = Math.max(1, host.slot_limit);
     bar.value = Math.min(bar.max, used);
     bar.dataset.reserved = String(host.reserved_slots > 0);
-    bar.setAttribute("aria-label", host.name + " capacity");
+    bar.setAttribute("aria-label", tr("{host} capacity", { host: host.name }));
     row.append(name, capacity, bar);
     if (user && user.role !== "viewer") {
       const control = node("button", host.cordoned ? "Resume assignments" : "Pause assignments", "button host-control");
       control.type = "button";
-      control.setAttribute("aria-label", control.textContent + " on " + host.name);
+      control.setAttribute("aria-label", tr("{action} on {host}", { action: control.textContent, host: host.name }));
       control.addEventListener("click", async () => {
         control.disabled = true;
         await management.updateHost(host);
@@ -93,15 +96,15 @@ function renderDetails(job) {
   const details = el("job-details");
   details.hidden = !job;
   if (!job) return;
-  text("detail-title", "Job #" + job.id);
+  text("detail-title", tr("Job #{id}", { id: job.id }));
   githubLink("detail-link", job.url);
   const source = job.timing?.discovery_source;
-  const reason = job.diagnostic?.message || job.pool_error || "";
+  const reason = tr(job.diagnostic?.message || "") || job.pool_error || "";
   const detailsText = [
     reason,
-    source ? "Discovered by " + (source === "poll" ? "GitHub API polling." : "webhook.") : "",
-    job.runner_host ? "Host " + job.runner_host : "",
-    job.retry_at ? "Retry time " + stamp(job.retry_at) : "",
+    source ? tr(source === "poll" ? "Discovered by GitHub API polling." : "Discovered by webhook.") : "",
+    job.runner_host ? tr("Host {name}", { name: job.runner_host }) : "",
+    job.retry_at ? tr("Retry time {time}", { time: stamp(job.retry_at) }) : "",
   ].filter(Boolean);
   text("detail-reason", detailsText.join(" · ") || "Waiting for job events.");
   const retry = job.retry_reason && job.retry_reason !== reason ? job.retry_reason : "";
@@ -137,10 +140,10 @@ function renderJobs() {
   const recent = current.recent || [];
   const jobs = view === "active" ? active : recent;
   el("job-diagnose").hidden = demoMode || view !== "active" || !current.fleet;
-  text("jobs-summary", active.length + " active · " + recent.length + " recently cleaned");
+  text("jobs-summary", tr("{active} active · {recent} recently cleaned", { active: active.length, recent: recent.length }));
   const empty = el("job-empty");
   empty.hidden = jobs.length !== 0;
-  empty.textContent = current.fleet ? (view === "active" ? "No active or queued jobs." : "No confirmed runner cleanup yet.") : "Waiting for a fleet snapshot…";
+  empty.textContent = tr(current.fleet ? (view === "active" ? "No active or queued jobs." : "No confirmed runner cleanup yet.") : "Waiting for a fleet snapshot…");
   const detailJob = jobs.find((job) => job.id === selected);
   for (const job of jobs) {
     const row = node("tr");
@@ -150,12 +153,12 @@ function renderJobs() {
     button.dataset.job = job.id;
     button.setAttribute("aria-expanded", String(job.id === selected));
     button.setAttribute("aria-controls", "job-details");
-    button.setAttribute("aria-label", job.repository + " job " + job.id);
+    button.setAttribute("aria-label", tr("{repo} job {id}", { repo: job.repository, id: job.id }));
     button.addEventListener("click", () => {
       selected = selected === job.id ? null : job.id;
       renderJobs();
     });
-    const meta = ["#" + job.id, job.queue_position ? "queue " + job.queue_position : null].filter(Boolean);
+    const meta = ["#" + job.id, job.queue_position ? tr("queue {position}", { position: job.queue_position }) : null].filter(Boolean);
     identity.append(button, node("span", meta.join(" · "), "job-meta"));
     const stateColumn = node("td");
     const state = job.status || "CLEANED";
@@ -177,16 +180,16 @@ function render() {
   text("running", counts?.known_running ?? "—");
   text("waiting", waiting ?? "—");
   text("slots", counts ? used + " / " + fleet.slot_limit : "—");
-  text("slot-note", counts?.reserved_slots ? counts.reserved_slots + " reserved" : "Used and reserved capacity");
+  text("slot-note", counts?.reserved_slots ? tr("{n} reserved", { n: counts.reserved_slots }) : "Used and reserved capacity");
   text("healthy", hosts.length ? hosts.filter((host) => host.status === "UP").length + " / " + hosts.length : "—");
   text("host-description", fleet?.backend === "kubernetes" ? "Kubernetes runner pool capacity" : "Capacity by Docker engine");
-  text("host-note", counts?.offline_hosts ? counts.offline_hosts + " offline" : "Reachable and ready");
+  text("host-note", counts?.offline_hosts ? tr("{n} offline", { n: counts.offline_hosts }) : "Reachable and ready");
 
   let notice = refreshError ? "Panel refresh failed. Showing the last available snapshot." : fleet?.docker_error;
   if (!notice && current.poll_failed) notice = "The latest GitHub poll failed. Check the manager logs.";
   el("notice").hidden = !notice;
   text("notice", notice || "");
-  text("updated", demoMode ? "Sample data" : current.sampled_at ? "Observed " + relative(current.sampled_at).toLowerCase() : "Awaiting first snapshot");
+  text("updated", demoMode ? "Sample data" : current.sampled_at ? tr("Observed {time}", { time: relative(current.sampled_at).toLowerCase() }) : "Awaiting first snapshot");
   el("update-dot").dataset.tone = notice ? "warn" : current.sampled_at ? "ok" : "";
 
   const scope = fleet?.repository_scope;
@@ -210,7 +213,7 @@ function render() {
   el("check-seen").hidden = !current.first_job_seen;
   el("check-seen-instruction").hidden = current.first_job_seen;
   text("check-clean", current.first_job_clean
-    ? "Runner cleanup confirmed for job #" + current.first_job_clean.id + "."
+    ? tr("Runner cleanup confirmed for job #{id}.", { id: current.first_job_clean.id })
     : "When the job finishes, Runquill removes its runner. Check the job result on GitHub.");
   githubLink("check-link", current.first_job_clean?.url);
 

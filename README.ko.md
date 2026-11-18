@@ -26,6 +26,10 @@
 
 cgroup v2를 사용하는 amd64 또는 arm64 Linux 서버에 일반 모드(rootful)의 Docker Engine, Docker Compose, `curl`, `sha256sum`이 필요합니다. 기본 폴링 방식은 외부 GitHub API에 접근할 수 있으면 공유기 뒤에서도 동작합니다. 웹훅을 쓰는 경우 공개 HTTPS 주소를 설정합니다.
 
+### 브라우저로 설치
+
+`sh install.sh --wizard`를 실행하면 브라우저에서 GitHub App 연결, 패널 OAuth 등록, 매니저 배포와 첫 작업 확인을 이어갈 수 있습니다. 마법사와 패널은 한국어·영어를 지원합니다. Docker Compose에서는 Tailscale Serve로 패널을 tailnet에 연결하고 Funnel로 웹훅 경로를 공개할 수 있습니다. [브라우저 설치 가이드](docs/browser-setup.md)
+
 ### 공개 릴리스 설치
 
 ```sh

@@ -1,8 +1,10 @@
+import { language, tr } from "./i18n.js";
+
 const byID = (id) => document.getElementById(id);
 
-export async function panelRequest(path, method = "GET", data) {
+export async function panelRequest(path, method = "GET", data, timeout = 7000) {
   const response = await fetch(path, {
-    method, cache: "no-store", signal: AbortSignal.timeout(7000),
+    method, cache: "no-store", signal: AbortSignal.timeout(timeout),
     headers: data === undefined ? undefined : { "Content-Type": "application/json" },
     body: data === undefined ? undefined : JSON.stringify(data),
   });
@@ -16,7 +18,7 @@ export async function panelRequest(path, method = "GET", data) {
 
 function message(id, value) {
   const target = byID(id);
-  target.textContent = value || "";
+  target.textContent = tr(value || "");
   target.hidden = !value;
 }
 
@@ -25,7 +27,7 @@ export function showLogin(error) {
   byID("sign-in").hidden = false;
   byID("access-nav").hidden = true;
   byID("signout").hidden = true;
-  byID("mode").textContent = "Sign-in required";
+  byID("mode").textContent = tr("Sign-in required");
   byID("token-secret").value = "";
   byID("issued-token").hidden = true;
   message("login-message", error);
@@ -36,15 +38,15 @@ function listItem(parent, title, details, button, action) {
   const info = document.createElement("div");
   const heading = document.createElement("strong");
   const meta = document.createElement("small");
-  heading.textContent = title;
-  meta.textContent = details;
+  heading.textContent = tr(title);
+  meta.textContent = tr(details);
   info.append(heading, meta);
   li.append(info);
   if (button) {
     const control = document.createElement("button");
     control.type = "button";
     control.className = "button";
-    control.textContent = button;
+    control.textContent = tr(button);
     control.addEventListener("click", action);
     li.append(control);
   }
@@ -78,9 +80,8 @@ async function tokens() {
   list.replaceChildren();
   if (!entries.length) listItem(list, "No active API tokens", "Create a token when a script needs access.");
   for (const token of entries) {
-    listItem(list, token.name, token.scope + " · expires " +
-      new Date(token.expires_at * 1000).toLocaleDateString(), "Revoke", () => {
-      if (!window.confirm("Revoke the token " + token.name + "?")) return;
+    listItem(list, token.name, tr("{scope} · expires {date}", { scope: token.scope, date: new Date(token.expires_at * 1000).toLocaleDateString(language) }), "Revoke", () => {
+      if (!window.confirm(tr("Revoke the token {name}?", { name: token.name }))) return;
       void report("token-message", async () => {
         await panelRequest("./api/tokens/" + token.id, "DELETE");
         message("token-message", "Token revoked.");
@@ -95,11 +96,11 @@ async function team() {
   const entries = await panelRequest("./api/team");
   list.replaceChildren();
   for (const member of entries) {
-    listItem(list, member.login ? "@" + member.login : "GitHub ID " + member.github_id,
-      member.role + (member.disabled ? " · disabled" : "") + " · ID " + member.github_id,
+    listItem(list, member.login ? "@" + member.login : tr("GitHub ID {id}", { id: member.github_id }),
+      tr(member.role) + (member.disabled ? " · " + tr("disabled") : "") + " · ID " + member.github_id,
       member.disabled ? "Enable" : "Disable", () => {
         const label = member.login ? "@" + member.login : "ID " + member.github_id;
-        if (!member.disabled && !window.confirm("Disable " + label + " and revoke their sessions and tokens?")) return;
+        if (!member.disabled && !window.confirm(tr("Disable {name} and revoke their sessions and tokens?", { name: label }))) return;
         void report("team-message", async () => {
           await panelRequest("./api/team/" + member.github_id, "PUT", {
             role: member.role, disabled: !member.disabled,
@@ -117,9 +118,32 @@ async function audit() {
   list.replaceChildren();
   if (!entries.length) listItem(list, "No audit entries yet", "");
   for (const event of entries) {
-    listItem(list, event.action, new Date(event.occurred_at * 1000).toLocaleString() + " · GitHub ID " + event.actor +
+    listItem(list, event.action, new Date(event.occurred_at * 1000).toLocaleString(language) + " · GitHub ID " + event.actor +
       (event.target ? " · " + event.target : ""));
   }
+}
+
+function bindOperations() {
+  byID("operations-panel").hidden = false;
+  byID("download-backup").addEventListener("click", () => void report("operations-message", async () => {
+    const response = await fetch("./api/backup", { method: "POST", cache: "no-store", signal: AbortSignal.timeout(10000) });
+    if (!response.ok) throw new Error(await response.text());
+    const url = URL.createObjectURL(await response.blob());
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "runquill-queue-backup.sqlite3";
+    anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    message("operations-message", "Queue backup downloaded.");
+  }));
+  bindForm("diagnose-form", "operations-message", async (form) => {
+    const result = byID("diagnose-result");
+    result.hidden = true;
+    const response = await panelRequest("./api/diagnose", "POST", { repository: form.get("repository") }, 10000);
+    result.textContent = response.report;
+    result.hidden = false;
+    message("operations-message", response.ok ? "Repository check complete." : "Repository check needs attention.");
+  });
 }
 
 export async function initializeManagement() {
@@ -135,8 +159,8 @@ export async function initializeManagement() {
   byID("access").hidden = false;
   byID("access-nav").hidden = false;
   byID("signout").hidden = false;
-  byID("mode").textContent = user.role;
-  byID("current-user").textContent = "Signed in as @" + user.login + " · " + user.role;
+  byID("mode").textContent = tr(user.role);
+  byID("current-user").textContent = tr("Signed in as @{name} · {role}", { name: user.login, role: tr(user.role) });
   byID("maint-scope").disabled = user.role === "viewer";
   byID("signout").addEventListener("click", () => void report("host-action", async () => {
     await panelRequest("./api/logout", "POST");
@@ -158,6 +182,7 @@ export async function initializeManagement() {
     await tokens();
   });
   if (user.role === "admin") {
+    bindOperations();
     byID("team-panel").hidden = false;
     byID("audit-panel").hidden = false;
     bindForm("team-form", "team-message", async (form) => {

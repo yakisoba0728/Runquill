@@ -177,3 +177,6 @@ body[data-mode="live"]:not([data-authenticated]) .topbar nav { display: none; }
   .segments button { padding-inline: 7px; }
 }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+.language-toggle { color: inherit; font-size: .85rem; }
+.diagnose-result { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 19rem; overflow: auto; margin: .8rem 0 0; }

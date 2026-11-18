@@ -67,6 +67,8 @@ func (a *panelAccess) register(mux *http.ServeMux, panel *panelState) {
 	mux.HandleFunc("POST /api/tokens", a.require("browser", a.createToken))
 	mux.HandleFunc("DELETE /api/tokens/{id}", a.require("browser", a.revokeToken))
 	mux.HandleFunc("GET /api/audit", a.require("admin", a.audit))
+	mux.HandleFunc("POST /api/backup", a.require("admin", a.downloadBackup))
+	mux.HandleFunc("POST /api/diagnose", a.require("admin", panelDiagnose))
 	mux.HandleFunc("POST /api/hosts/cordon", a.require("hosts:write", func(w http.ResponseWriter, r *http.Request, user panelIdentity) {
 		a.cordon(w, r, user, panel)
 	}))

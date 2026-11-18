@@ -21,7 +21,7 @@ var version = "dev"
 func main() {
 	showVersion := flag.Bool("version", false, "print the Runquill version")
 	flag.Usage = func() {
-		fmt.Fprintln(flag.CommandLine.Output(), "Usage: runquill [--version] | runquill setup | runquill workflow init | runquill doctor | runquill diagnose OWNER/REPO | runquill status [--json] | runquill gc --dry-run | runquill host {cordon|uncordon} HOST | runquill panel --demo | runquill worker | runquill backup --output FILE | runquill restore (--from FILE | --activate)")
+		fmt.Fprintln(flag.CommandLine.Output(), "Usage: runquill [--version] | runquill setup | runquill wizard | runquill workflow init | runquill doctor | runquill diagnose OWNER/REPO | runquill status [--json] | runquill gc --dry-run | runquill host {cordon|uncordon} HOST | runquill panel --demo | runquill worker | runquill backup --output FILE | runquill restore (--from FILE | --activate)")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -63,6 +63,13 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Printf("Created %s. Commit it to your private repository's default branch, then run Runquill first job from the GitHub Actions tab.\n", firstWorkflowPath)
+		return
+	}
+	if flag.Arg(0) == "wizard" {
+		if err := wizardCommand(ctx, flag.Args()[1:]); err != nil && !errors.Is(err, flag.ErrHelp) {
+			slog.Error("runquill wizard", "error", err)
+			os.Exit(1)
+		}
 		return
 	}
 	if flag.Arg(0) == "setup" {

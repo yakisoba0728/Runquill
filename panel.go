@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-//go:embed panelweb/index.html panelweb/panel.css panelweb/panel.js panelweb/demo.js panelweb/manage.js
+//go:embed panelweb/index.html panelweb/panel.css panelweb/panel.js panelweb/i18n.js panelweb/demo.js panelweb/manage.js
 var panelAssets embed.FS
 
 type panelSnapshot struct {
@@ -180,6 +180,7 @@ func panelHandler(panel *panelState, access *panelAccess) http.Handler {
 	})
 	mux.Handle("GET /panel.css", files)
 	mux.Handle("GET /panel.js", files)
+	mux.Handle("GET /i18n.js", files)
 	if panel == nil {
 		mux.Handle("GET /demo.js", files)
 	} else if access != nil {
