@@ -319,13 +319,18 @@ docker run --rm --network smoke -v "$PWD:/work:ro" -e PGPASSWORD=smoke-test post
 	if output, err := exec.CommandContext(ctx, "docker", "build", "-t", tag, dir).CombinedOutput(); err != nil {
 		t.Fatalf("build smoke image: %v\n%s", err, output)
 	}
-	d := docker{image: tag}
+	d := docker{image: tag, cpus: 1, memoryMiB: 2048}
 	t.Cleanup(func() {
 		d.remove(context.Background(), name)
 		dockerCommand(context.Background(), nil, "image", "rm", tag)
 	})
 	if err := d.start(ctx, name, "test-config"); err != nil {
 		t.Fatal(err)
+	}
+	limits, err := dockerCommand(ctx, nil, "inspect", "--format",
+		"{{.HostConfig.NanoCpus}} {{.HostConfig.Memory}} {{.HostConfig.MemorySwap}}", name)
+	if err != nil || strings.TrimSpace(limits) != "1000000000 2147483648 2147483648" {
+		t.Fatalf("runner resource limits: %q, %v", limits, err)
 	}
 	exit, err := exec.CommandContext(ctx, "docker", "wait", name).CombinedOutput()
 	if err != nil || strings.TrimSpace(string(exit)) != "0" {

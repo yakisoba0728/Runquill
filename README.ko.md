@@ -161,6 +161,24 @@ docker compose -f compose.yaml -f compose.ssh.yaml exec manager runquill status
 docker compose -f compose.yaml -f compose.ssh.yaml exec manager runquill host uncordon ssh://builder@worker.example.com
 ```
 
+### 워커 풀로 작업 분리
+
+`.env`에 `RUNQUILL_WORKER_POOLS` JSON을 설정하면 작업을 워커 풀로 보낼 수 있습니다. `hosts`에는 `RUNQUILL_DOCKER_HOSTS`에 적은 이름을 그대로 사용합니다. 호스트는 풀 하나에 속하고, 목록에 없는 호스트는 `default` 풀에 속합니다.
+
+```dotenv
+RUNQUILL_WORKER_POOLS='{"build":{"hosts":["ssh://builder@worker.example.com"],"repositories":["you/project"],"cpus":4,"memory_mib":8192}}'
+```
+
+`repositories`에 입력한 저장소만 해당 풀을 사용합니다. 필드를 생략하면 조건을 충족하는 모든 저장소가 접근할 수 있고, 빈 목록을 설정하면 어느 저장소도 접근할 수 없습니다. `cpus`와 `memory_mib`는 새 러너 컨테이너에 적용되는 Docker 자원 한도입니다. 전체 동시 실행 한도와 서버별 슬롯 한도도 적용됩니다.
+
+작업 라벨의 접미사에 풀 이름을 지정합니다. 풀 접두사가 없는 작업은 `default`를 사용합니다. 매트릭스 빌드라면 작업별 라벨을 구분하는 `strategy.job-index`도 포함합니다.
+
+```yaml
+runs-on: ${{ format('runquill-{0}-{1}-pool__build__compile-{2}', github.run_id, github.run_attempt, strategy.job-index) }}
+```
+
+한 풀의 슬롯이 다 차도 다른 풀에서 작업을 시작할 수 있습니다. 서로 다른 신뢰 수준의 작업을 운영할 때는 전용 워커를 배치하고 해당 풀에 접근할 저장소를 제한하세요.
+
 ## 워크플로에서 러너 선택
 
 [스모크 워크플로](examples/runquill-smoke.yml)는 기본값으로 내 서버를 사용합니다. **Run workflow**에서 `github_hosted`를 선택하면 `ubuntu-latest`를 사용합니다. [병렬 작업 예제](examples/runquill-parallel.yml)에는 같은 옵션을 쓰는 단일 작업 1개와 매트릭스 작업 2개가 있습니다. `.github/workflows/`에 복사해 수동 실행하면 각 작업 로그에서 배정된 러너 이름을 볼 수 있습니다.
@@ -218,6 +236,10 @@ docker compose exec manager runquill status
 매니저 로그는 `docker compose logs -f manager`로 확인합니다. 새 GitHub 러너 버전을 적용하려면 `docker build --pull -t runquill-runner:local runner`를 다시 실행합니다. 이미 실행 중인 작업은 사용하던 이미지로 마무리됩니다.
 
 태그별 GHCR 이미지 설치와 업그레이드 절차는 [영문 설치 가이드](README.md#start-the-manager)에 있습니다. 이전 버전에서 업그레이드할 때는 Compose의 `queue` 볼륨을 유지하면 대기열과 실행 중인 러너 기록을 이어받습니다.
+
+GitHub에서 작업이 대기 중이라면 `docker compose exec manager runquill diagnose OWNER/REPO`로 원인을 확인할 수 있습니다. App의 접근 권한, 마지막 저장소 폴링 결과, 작업 라벨, 재시도 이유, 슬롯 부족을 함께 보여줍니다.
+
+큐 볼륨을 잃었거나 러너가 남아 있다면 `docker compose exec manager runquill gc --dry-run`으로 해당 컨테이너와 워커, 리스 상태를 확인합니다. 큐에 관련 작업 정보가 있으면 GitHub 작업 상태도 조회합니다. 큐나 워커가 응답하지 않으면 부분 조회임을 표시합니다.
 
 폴링은 매번 접근 가능한 비공개 저장소에서 대기 중과 실행 중인 워크플로를 확인하며, 최근 활동이 있는 저장소부터 조회합니다. 요청됨, 대기, 보류 상태는 저장소 목록이 유지되는 동안 성공한 네 번의 조회 안에 순환 확인합니다. 작업별 타이밍에는 첫 발견 경로와 러너 등록, GitHub가 제공한 작업 시작 시각이 표시됩니다. 발견 지연은 GitHub 작업 생성 시각을 제공한 경우에만 표시됩니다.
 

@@ -21,7 +21,7 @@ var version = "dev"
 func main() {
 	showVersion := flag.Bool("version", false, "print the Runquill version")
 	flag.Usage = func() {
-		fmt.Fprintln(flag.CommandLine.Output(), "Usage: runquill [--version] | runquill setup [--webhook-url URL] | runquill workflow init | runquill doctor [--repo OWNER/REPO] | runquill status [--json] | runquill host {cordon|uncordon} HOST | runquill panel --demo")
+		fmt.Fprintln(flag.CommandLine.Output(), "Usage: runquill [--version] | runquill setup | runquill workflow init | runquill doctor | runquill diagnose OWNER/REPO | runquill status [--json] | runquill gc --dry-run | runquill host {cordon|uncordon} HOST | runquill panel --demo")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -101,6 +101,31 @@ func main() {
 		}
 		if err := setHostCordon(ctx, os.Stdout, flag.Arg(2), action == "cordon"); err != nil {
 			slog.Error("runquill host", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if flag.Arg(0) == "gc" {
+		flags := flag.NewFlagSet("runquill gc", flag.ExitOnError)
+		dryRun := flags.Bool("dry-run", false, "inspect runners and leases without changes")
+		flags.Parse(flag.Args()[1:])
+		if !*dryRun || flags.NArg() != 0 {
+			flags.Usage()
+			os.Exit(2)
+		}
+		if err := gc(ctx, os.Stdout); err != nil {
+			slog.Error("runquill gc", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if flag.Arg(0) == "diagnose" {
+		if flag.NArg() != 2 {
+			fmt.Fprintln(os.Stderr, "Usage: runquill diagnose OWNER/REPO")
+			os.Exit(2)
+		}
+		if err := diagnose(ctx, os.Stdout, flag.Arg(1)); err != nil {
+			slog.Error("runquill diagnose", "error", err)
 			os.Exit(1)
 		}
 		return
@@ -207,6 +232,10 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	pools, err := runtime.configurePools(os.Getenv("RUNQUILL_WORKER_POOLS"))
+	if err != nil {
+		return err
+	}
 	if len(runtime.hosts) == 1 {
 		if err := runtime.prepare(ctx); err != nil {
 			return err
@@ -230,7 +259,7 @@ func run(ctx context.Context) error {
 		}
 		defer panelListener.Close()
 	}
-	s := &scheduler{queue: q, github: api, runtime: runtime, limit: cfg.limit, hostLimits: hostLimits, panel: panel}
+	s := &scheduler{queue: q, github: api, runtime: runtime, limit: cfg.limit, hostLimits: hostLimits, panel: panel, pools: pools}
 	server := &http.Server{
 		Addr:              net.JoinHostPort(env("RUNQUILL_BIND", "127.0.0.1"), env("RUNQUILL_PORT", "8080")),
 		Handler:           webhook(q, cfg.owner, []byte(cfg.secret), panel),

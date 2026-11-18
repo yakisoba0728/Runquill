@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -23,8 +24,11 @@ func runnerOccupiesSlot(state string) bool {
 }
 
 type docker struct {
-	image string
-	host  string
+	image     string
+	host      string
+	pool      string
+	cpus      float64
+	memoryMiB int64
 }
 
 func (d docker) command(ctx context.Context, input []byte, args ...string) (string, error) {
@@ -78,9 +82,17 @@ func (d docker) containers(ctx context.Context) (map[string]string, error) {
 }
 
 func (d docker) start(ctx context.Context, name, jit string) error {
-	_, err := d.command(ctx, nil, "create", "--name", name, "--label", runnerLabel,
+	args := []string{"create", "--name", name, "--label", runnerLabel,
 		"--pull", "never", "--init", "--privileged", "--cgroupns", "private", "--log-driver", "json-file",
-		"--log-opt", "max-size=10m", "--log-opt", "max-file=2", d.image)
+		"--log-opt", "max-size=10m", "--log-opt", "max-file=2"}
+	if d.cpus != 0 {
+		args = append(args, "--cpus", strconv.FormatFloat(d.cpus, 'f', -1, 64))
+	}
+	if d.memoryMiB != 0 {
+		memory := strconv.FormatInt(d.memoryMiB, 10) + "m"
+		args = append(args, "--memory", memory, "--memory-swap", memory)
+	}
+	_, err := d.command(ctx, nil, append(args, d.image)...)
 	if err != nil {
 		return err
 	}

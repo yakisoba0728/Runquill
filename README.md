@@ -163,6 +163,24 @@ docker compose -f compose.yaml -f compose.ssh.yaml exec manager runquill status
 docker compose -f compose.yaml -f compose.ssh.yaml exec manager runquill host uncordon ssh://builder@worker.example.com
 ```
 
+### Route jobs to worker pools
+
+Set `RUNQUILL_WORKER_POOLS` to a JSON object in `.env` to opt in. The keys are pool names and `hosts` are exact entries from `RUNQUILL_DOCKER_HOSTS`. A host belongs to one pool. Unlisted hosts belong to `default`. Pool settings can apply to `default` too.
+
+```dotenv
+RUNQUILL_WORKER_POOLS='{"build":{"hosts":["ssh://builder@worker.example.com"],"repositories":["you/project"],"cpus":4,"memory_mib":8192}}'
+```
+
+The `repositories` list controls which repositories can use the pool. Omit it for access by any eligible repository. An empty list grants access to none. `cpus` and `memory_mib` set Docker limits for each new runner. Omit them for Docker’s defaults. The global runner limit and per-host limits still apply.
+
+Express the pool in the suffix of the unique job label. A label without the pool prefix uses `default`. For a matrix, include `strategy.job-index` as usual.
+
+```yaml
+runs-on: ${{ format('runquill-{0}-{1}-pool__build__compile-{2}', github.run_id, github.run_attempt, strategy.job-index) }}
+```
+
+Waiting jobs use slots in their requested pool, and available pools can advance while another is full. For workloads with different trust requirements, deploy workers on dedicated machines and limit repository access to each pool.
+
 ## Choose a runner
 
 The [smoke workflow](examples/runquill-smoke.yml) runs on Runquill by default. On **Run workflow**, select `github_hosted` to use `ubuntu-latest`. The [parallel jobs example](examples/runquill-parallel.yml) applies the same switch to one standalone job and two matrix jobs. Copy it into `.github/workflows/` and run it to see the runner name in each job's log.
@@ -210,6 +228,10 @@ docker compose exec manager runquill status
 The snapshot includes running runner containers, per-host slot usage and health, and direct GitHub job links. `WAITING` positions follow queue order among jobs ready to start. `RETRY` shows the time until the next attempt and the latest failure or reconciliation reason when available. When using the standalone binary, run `runquill status` with the manager's queue and Docker environment settings.
 
 Use `docker compose exec -T manager runquill status --json` for scripts and monitoring. Schema version 1 includes `slot_limit`, `runners`, `hosts`, and `jobs`. Occupied slots are observed on reachable workers. Reserved slots account for offline workers and leases without an observed host. If Docker reports a conflicting topology, the snapshot still includes jobs and a `docker_error`, with `runners` set to `null` and a nonzero exit status.
+
+If GitHub shows a queued job that Runquill has not started, run `docker compose exec manager runquill diagnose OWNER/REPO`. It checks the App’s access using a repository-scoped read-only token, reports the last recorded poll, and explains invalid labels, retries, and worker capacity for queued jobs.
+
+Use `docker compose exec manager runquill gc --dry-run` to inventory labelled runner containers without a matching queue lease. It shows the Docker host and state, checks GitHub when the queue contains the associated job, and reports incomplete inventory when a host or queue is unavailable. The command only reads containers and queue data.
 
 - `RUNQUILL_MAX_RUNNERS` defaults to 2. Provisioning failures retry after 15 seconds and allow later jobs to use available slots. GitHub fails self-hosted jobs that remain queued for more than 24 hours. [GitHub runner routing](https://docs.github.com/en/actions/reference/runners/self-hosted-runners#routing-precedence-for-self-hosted-runners)
 - `docker compose logs -f manager` shows admissions, cleanup, and API errors. The GitHub workflow retains step output as usual.

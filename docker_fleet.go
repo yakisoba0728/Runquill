@@ -21,6 +21,7 @@ type dockerFleet struct {
 
 type dockerHostSnapshot struct {
 	Name       string
+	Pool       string
 	Containers map[string]string
 	Err        error
 }
@@ -108,7 +109,7 @@ func (f *dockerFleet) snapshot(ctx context.Context) ([]dockerHostSnapshot, error
 			ctx, cancel := context.WithTimeout(ctx, dockerHostProbeTimeout)
 			defer cancel()
 			result := &hosts[i]
-			result.Name = host.label()
+			result.Name, result.Pool = host.label(), host.pool
 			if len(f.hosts) > 1 {
 				engineIDs[i], result.Err = host.engineID(ctx)
 				if result.Err != nil {
