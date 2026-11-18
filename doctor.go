@@ -51,7 +51,7 @@ func doctor(ctx context.Context, out io.Writer, repo string) error {
 		}
 	}
 	if len(failures) == 0 {
-		fmt.Fprintln(out, "Preflight passed. Run the smoke workflow to verify job discovery, runner assignment, and cleanup.")
+		fmt.Fprintln(out, "Preflight passed. Run your first workflow to verify job discovery, runner assignment, and cleanup.")
 	}
 	return errors.Join(failures...)
 }

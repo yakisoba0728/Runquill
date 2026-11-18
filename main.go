@@ -21,7 +21,7 @@ var version = "dev"
 func main() {
 	showVersion := flag.Bool("version", false, "print the Runquill version")
 	flag.Usage = func() {
-		fmt.Fprintln(flag.CommandLine.Output(), "Usage: runquill [--version] | runquill setup [--webhook-url URL] | runquill doctor [--repo OWNER/REPO] | runquill status [--json] | runquill host {cordon|uncordon} HOST")
+		fmt.Fprintln(flag.CommandLine.Output(), "Usage: runquill [--version] | runquill setup [--webhook-url URL] | runquill workflow init | runquill doctor [--repo OWNER/REPO] | runquill status [--json] | runquill host {cordon|uncordon} HOST")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -31,6 +31,18 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if flag.Arg(0) == "workflow" {
+		if flag.NArg() != 2 || flag.Arg(1) != "init" {
+			fmt.Fprintln(os.Stderr, "Usage: runquill workflow init")
+			os.Exit(2)
+		}
+		if err := initWorkflow("."); err != nil {
+			slog.Error("runquill workflow init", "error", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Created %s. Commit it to your private repository's default branch, then run Runquill first job from the GitHub Actions tab.\n", firstWorkflowPath)
+		return
+	}
 	if flag.Arg(0) == "setup" {
 		flags := flag.NewFlagSet("runquill setup", flag.ExitOnError)
 		var options setupOptions

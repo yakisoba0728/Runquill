@@ -111,7 +111,7 @@ func setup(ctx context.Context, out io.Writer, dir string, client *http.Client, 
 	if endpoint := values["RUNQUILL_WEBHOOK_URL"]; endpoint != "" {
 		fmt.Fprintf(out, "Forward %s to http://127.0.0.1:8080/webhook with your HTTPS reverse proxy.\n", endpoint)
 	}
-	fmt.Fprintln(out, "Run examples/runquill-smoke.yml in a private repository to verify runner assignment and cleanup.")
+	fmt.Fprintln(out, "From the root of a private repository checkout, use runquill workflow init to create a first-job workflow.")
 	return nil
 }
 

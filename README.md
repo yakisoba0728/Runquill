@@ -2,7 +2,9 @@
 
 English · [한국어](README.ko.md)
 
-Runquill starts short-lived GitHub Actions runners on your Linux server for private repositories owned by your personal GitHub account. Install one GitHub App with **All repositories** access, then opt jobs in through `runs-on`. New private repositories use the same installation.
+Runquill runs GitHub Actions jobs from your personal account's private repositories on your Linux Docker servers. Install one GitHub App with **All repositories** access, then opt jobs in through `runs-on`. New private repositories use the same installation.
+
+[Quickstart](#install-a-public-release) · [First job](#verify-your-first-job) · [Worker servers](#add-docker-worker-servers) · [Release downloads](https://github.com/yakisoba0728/Runquill/releases)
 
 - Each job receives a repository-scoped runner with a fresh filesystem and its own Docker daemon. Workflows can use `docker build`, service containers, and job containers.
 - A SQLite queue limits concurrent runners across repositories and provisions them in job discovery order. The queue and runner records survive a manager restart.
@@ -12,16 +14,20 @@ Runquill starts short-lived GitHub Actions runners on your Linux server for priv
 
 ## Install
 
-Use an amd64 or arm64 Linux server with cgroup v2, rootful Docker Engine, and Docker Compose. Run one manager per group of Docker hosts.
+Use an amd64 or arm64 Linux server with cgroup v2, rootful Docker Engine, Docker Compose, `curl`, and `sha256sum`. Run one manager per group of Docker hosts. The default polling setup works behind NAT with outbound access to GitHub. Use an HTTPS endpoint for webhook delivery.
 
 ### Install a public release
 
 ```sh
 curl -fsSLO https://github.com/yakisoba0728/Runquill/releases/latest/download/install.sh
-sh install.sh
+sh install.sh --dir "$HOME/runquill"
 ```
 
-The installer verifies release downloads, runs browser setup, pulls matching images, and starts Compose in `./runquill`. Use `--dir PATH` for a different directory, `--version v0.1.2` to pin a release, or `--download-only` to download the binary and Compose files first.
+1. Open the browser link from the installer. Create the private GitHub App and install it on your personal account with **All repositories** access.
+2. Wait for the installer to start Compose and report `Preflight passed.`
+3. [Run your first job](#verify-your-first-job) from a private repository you own.
+
+The installer verifies release checksums and pulls matching manager and runner images. The command above installs into `$HOME/runquill`. Use `--version v0.1.2` to pin a release, or `--download-only` to fetch the binary and Compose files before setup.
 
 ### Create and install the GitHub App
 
@@ -66,15 +72,24 @@ docker compose up -d --no-build
 
 ### Verify your first job
 
-Run the preflight in the manager's environment.
+From the root of a private Git repository checkout, generate the [first-job workflow](examples/runquill-first-job.yml). Use the path to your Runquill installation if it differs from the quickstart.
 
 ```sh
-docker compose exec manager runquill doctor
+"$HOME/runquill/runquill" workflow init
 ```
 
-Add `--repo OWNER/REPO` to verify App installation coverage for a particular repository. The command checks the local configuration, Docker Engine, runner image, GitHub App installation and permissions. When a webhook secret is set, it also checks the event subscription and webhook configuration. It exits with status 1 if a check fails.
+The command creates `.github/workflows/runquill-first-job.yml` and protects any existing file at that path. If your installed version predates `workflow init` or the binary is on a different machine, copy the linked YAML into `.github/workflows/` yourself.
 
-To verify the full lifecycle, create a private repository after installing the App. Copy [the smoke workflow](examples/runquill-smoke.yml) to `.github/workflows/` and run it with the default settings. Check for successful Docker and PostgreSQL steps in GitHub Actions, then confirm the manager logs `runner removed` and that the runner has disappeared from the repository's **Settings → Actions → Runners**.
+Commit and push the workflow to the repository's default branch or merge it through your usual review process. In GitHub, open **Actions → Runquill first job → Run workflow**. The **Show the runner** step prints a name beginning with `runquill-`. This workflow needs only a shell, so it checks runner assignment independently of application dependencies. [GitHub manual workflow requirements](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow)
+
+Use these commands on the server from the Runquill installation directory to check App coverage and follow runner removal:
+
+```sh
+docker compose exec -T manager runquill doctor --repo OWNER/REPO
+docker compose logs -f manager
+```
+
+`doctor` checks the local configuration, Docker Engine, runner image, GitHub App installation and permissions, and webhook settings if configured. It exits with status 1 if a check fails. After a successful job, look for `runner removed` and confirm the runner has disappeared from the repository's **Settings → Actions → Runners**. Run the [Docker and PostgreSQL smoke workflow](examples/runquill-smoke.yml) when you need to verify service containers and Docker builds.
 
 ### Use an existing GitHub App or configure webhooks
 

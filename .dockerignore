@@ -5,3 +5,6 @@
 !*.go
 *_test.go
 !LICENSE
+!examples/
+examples/*
+!examples/runquill-first-job.yml

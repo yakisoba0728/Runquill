@@ -106,3 +106,4 @@ docker pull "$runner_image"
 docker compose pull manager
 docker compose up -d --no-build
 docker compose exec -T manager runquill doctor
+printf 'First job guide: %s/blob/%s/README.md#verify-your-first-job\n' "$repo" "$tag"

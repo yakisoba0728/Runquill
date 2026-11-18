@@ -4,18 +4,26 @@
 
 개인 GitHub 계정의 비공개 저장소에서 요청한 Actions 작업을 내 서버에서 실행합니다. GitHub App을 **All repositories**로 한 번 설치하면 이후에 만드는 비공개 저장소도 같은 설치로 처리됩니다. 서버에서 관리할 저장소 목록은 필요 없습니다.
 
+[빠른 시작](#공개-릴리스-설치) · [첫 작업](#첫-작업-확인) · [작업 서버 추가](#docker-작업-서버-추가) · [릴리스 다운로드](https://github.com/yakisoba0728/Runquill/releases)
+
+**신뢰 범위** · Docker-in-Docker에는 `--privileged`가 필요합니다. 전용 서버에서 신뢰하는 코드만 실행하고, 신뢰하기 어려운 PR 코드는 GitHub 호스팅 러너로 보냅니다. GitHub App 키와 매니저의 Docker 소켓은 각각 설치 범위의 저장소와 호스트 Docker를 관리할 수 있으므로 접근을 제한합니다.
+
 ## 서버 설치
 
-cgroup v2를 사용하는 amd64 또는 arm64 Linux 서버에 일반 모드(rootful)의 Docker Engine과 Docker Compose가 필요합니다. 폴링만 사용하면 공개 HTTPS 주소 없이 운영할 수 있습니다.
+cgroup v2를 사용하는 amd64 또는 arm64 Linux 서버에 일반 모드(rootful)의 Docker Engine, Docker Compose, `curl`, `sha256sum`이 필요합니다. 기본 폴링 방식은 외부 GitHub API에 접근할 수 있으면 공유기 뒤에서도 동작합니다. 웹훅을 쓰는 경우 공개 HTTPS 주소를 설정합니다.
 
 ### 공개 릴리스 설치
 
 ```sh
 curl -fsSLO https://github.com/yakisoba0728/Runquill/releases/latest/download/install.sh
-sh install.sh
+sh install.sh --dir "$HOME/runquill"
 ```
 
-설치 스크립트는 다운로드 체크섬을 확인하고, 브라우저 설정을 거쳐 같은 버전의 이미지를 받은 뒤 `./runquill`에서 Compose를 시작합니다. `--dir PATH`로 경로를 바꾸고, `--version v0.1.2`으로 버전을 지정하거나, `--download-only`로 바이너리와 Compose 파일만 받을 수 있습니다.
+1. 설치 프로그램이 출력한 브라우저 링크를 열어 비공개 GitHub App을 만듭니다. 개인 계정에 **All repositories**로 설치합니다.
+2. 설치 프로그램이 Compose를 시작하고 `Preflight passed.`를 출력할 때까지 기다립니다.
+3. 내 비공개 저장소에서 [첫 작업을 실행합니다](#첫-작업-확인).
+
+설치 스크립트는 다운로드 체크섬을 확인하고 같은 버전의 매니저와 러너 이미지를 받습니다. 위 명령은 `$HOME/runquill`에 설치합니다. `--version v0.1.2`로 버전을 지정하거나 `--download-only`로 바이너리와 Compose 파일만 먼저 받을 수 있습니다.
 
 ### GitHub App 연결
 
@@ -60,13 +68,24 @@ docker compose up -d --no-build
 
 ### 첫 작업 확인
 
-아래 명령으로 Docker, 러너 이미지 및 GitHub App 권한을 점검합니다. 특정 저장소가 설치 범위에 들어 있는지 확인하려면 `--repo OWNER/REPO`를 붙입니다.
+비공개 Git 저장소를 내려받은 디렉터리의 루트에서 [첫 작업용 워크플로](examples/runquill-first-job.yml)를 만듭니다. 빠른 시작과 설치 위치가 다르다면 경로를 맞춰 실행합니다.
 
 ```sh
-docker compose exec manager runquill doctor
+"$HOME/runquill/runquill" workflow init
 ```
 
-앱 설치 후 새 비공개 저장소를 만들고, `.github/workflows/`에 [확인용 워크플로](examples/runquill-smoke.yml)를 복사해 실행합니다. GitHub Actions에서 Docker 빌드와 PostgreSQL 연결을 확인합니다. 작업이 끝나면 매니저 로그에 `runner removed`가 나오고, 저장소의 **Settings → Actions → Runners**에서 러너가 사라지는지 확인합니다.
+이 명령은 `.github/workflows/runquill-first-job.yml`을 생성하고 같은 경로의 기존 파일을 보호합니다. `workflow init`이 추가되기 전 버전을 쓰거나 실행 파일이 다른 서버에 있다면 링크의 YAML을 내 저장소의 `.github/workflows/`에 직접 복사합니다.
+
+워크플로를 저장소의 기본 브랜치에 커밋하고 푸시하거나 기존 리뷰 절차로 병합합니다. GitHub에서 **Actions → Runquill first job → Run workflow**를 누릅니다. **Show the runner** 단계에 `runquill-`로 시작하는 이름이 출력됩니다. 이 작업은 쉘만 사용하므로 애플리케이션 의존성 없이 러너 배정을 먼저 확인할 수 있습니다. [GitHub 수동 실행 요구사항](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow)
+
+서버의 Runquill 설치 디렉터리에서는 App이 저장소에 접근할 수 있는지 확인하고 매니저 로그를 볼 수 있습니다.
+
+```sh
+docker compose exec -T manager runquill doctor --repo OWNER/REPO
+docker compose logs -f manager
+```
+
+작업이 끝나면 매니저 로그에 `runner removed`가 출력되고, 저장소의 **Settings → Actions → Runners**에서 해당 러너가 사라집니다. Docker 빌드와 서비스 컨테이너까지 확인하려면 [Docker·PostgreSQL 검증 워크플로](examples/runquill-smoke.yml)를 실행합니다.
 
 ### 기존 GitHub App 또는 웹훅 사용
 
@@ -171,7 +190,6 @@ runs-on: ${{ format('runquill-{0}-{1}-test-{2}', github.run_id, github.run_attem
 - `RUNQUILL_MAX_RUNNERS`가 전체 저장소의 동시 실행 수를 정합니다. 정원이 차면 SQLite에 대기하고, 빈자리가 나면 작업을 발견한 순서대로 러너를 생성합니다. 생성에 실패한 작업은 기본 15초 뒤 재시도합니다. 재시도 시간 동안 다음 작업이 빈자리를 사용할 수 있습니다.
 - GitHub는 러너를 24시간 넘게 기다린 작업을 실패 처리합니다. [GitHub 러너 배정 규칙](https://docs.github.com/en/actions/reference/runners/self-hosted-runners#routing-precedence-for-self-hosted-runners)
 - 러너는 저장소 범위의 일회용 JIT 러너입니다. 작업마다 새 컨테이너와 내부 Docker 데몬이 생기므로 `docker build`, `services:`, `container:`를 사용할 수 있습니다. 작업이 끝나면 컨테이너와 내부 이미지, 볼륨, 작업 디렉터리가 삭제됩니다.
-- 내부 Docker는 `--privileged`를 사용합니다. 이 서버에서 실행을 승인한 저장소와 워크플로에 Runquill을 사용하세요. 신뢰하기 어려운 PR의 코드는 GitHub 호스팅 러너로 지정하세요.
 - 서버당 매니저 하나를 실행합니다. 매니저를 재시작해도 Compose의 `queue` 볼륨에 있는 대기열과 현재 러너 기록을 이어받습니다.
 - 매니저를 시작할 때와 매번 검색을 마치고 `RUNQUILL_POLL_INTERVAL`(기본 `30s`)이 지난 뒤 GitHub API에서 대기 작업을 찾습니다. 웹훅과 폴링으로 같은 GitHub 작업을 받으면 큐 기록 하나를 공유합니다. 이 값을 `0`으로 설정하면 웹훅만 사용합니다.
 
@@ -188,5 +206,7 @@ docker compose exec manager runquill status
 태그별 GHCR 이미지 설치와 업그레이드 절차는 [영문 설치 가이드](README.md#start-the-manager)에 있습니다. 이전 버전에서 업그레이드할 때는 Compose의 `queue` 볼륨을 유지하면 대기열과 실행 중인 러너 기록을 이어받습니다.
 
 로컬에서 대기열과 웹훅 테스트를 실행하려면 Go 1.26.11 이상에서 `go test -race ./...`를 사용합니다.
+
+[릴리스 검증](.github/workflows/release.yml)은 [CI](.github/workflows/ci.yml)를 통해 amd64와 arm64 Linux에서 Go 테스트와 Docker-in-Docker 검증을 실행합니다.
 
 Copyright © 2026 Runquill contributors. [Apache License 2.0](LICENSE)
