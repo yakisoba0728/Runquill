@@ -14,31 +14,42 @@ import (
 )
 
 func status(ctx context.Context, out io.Writer, jsonOutput bool) error {
-	limit, err := runnerLimit()
-	if err != nil {
-		return err
-	}
 	path := env("RUNQUILL_DB", "runquill.sqlite3")
 	db, err := openQueueDB(path, "ro")
 	if err != nil {
 		return err
 	}
 	defer db.Close()
+	report, err := inspectStatus(ctx, db)
+	if report == nil {
+		return fmt.Errorf("read queue %s: %w", path, err)
+	}
+	if jsonOutput {
+		return errors.Join(json.NewEncoder(out).Encode(report), err)
+	}
+	return errors.Join(report.writeText(out), err)
+}
+
+func inspectStatus(ctx context.Context, db *sql.DB) (*statusReport, error) {
+	limit, err := runnerLimit()
+	if err != nil {
+		return nil, err
+	}
 	jobs, err := readStatusJobs(ctx, db)
 	if err != nil {
-		return fmt.Errorf("read queue %s (start the manager to initialize the queue): %w", path, err)
+		return nil, fmt.Errorf("start the manager to initialize the queue: %w", err)
 	}
 	states, err := readHostStates(ctx, db)
 	if err != nil {
-		return fmt.Errorf("read Docker host states: %w", err)
+		return nil, fmt.Errorf("read Docker host states: %w", err)
 	}
 	runtime, err := newDockerFleet(env("RUNQUILL_RUNNER_IMAGE", "runquill-runner:local"), env("RUNQUILL_DOCKER_HOSTS", "local"))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	limits, err := runtime.limits(env("RUNQUILL_DOCKER_HOST_LIMITS", ""))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	dockerCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -63,10 +74,7 @@ func status(ctx context.Context, out io.Writer, jsonOutput bool) error {
 	if dockerErr != nil {
 		report.DockerError = strings.Join(strings.Fields(dockerErr.Error()), " ")
 	}
-	if jsonOutput {
-		return errors.Join(json.NewEncoder(out).Encode(report), dockerErr)
-	}
-	return errors.Join(report.writeText(out), dockerErr)
+	return &report, dockerErr
 }
 
 func readStatusJobs(ctx context.Context, db *sql.DB) ([]job, error) {

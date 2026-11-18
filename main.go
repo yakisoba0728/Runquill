@@ -21,7 +21,7 @@ var version = "dev"
 func main() {
 	showVersion := flag.Bool("version", false, "print the Runquill version")
 	flag.Usage = func() {
-		fmt.Fprintln(flag.CommandLine.Output(), "Usage: runquill [--version] | runquill setup [--webhook-url URL] | runquill doctor [--repo OWNER/REPO] | runquill status [--json] | runquill host {cordon|uncordon} HOST")
+		fmt.Fprintln(flag.CommandLine.Output(), "Usage: runquill [--version] | runquill setup [--webhook-url URL] | runquill doctor [--repo OWNER/REPO] | runquill diagnose OWNER/REPO | runquill status [--json] | runquill host {cordon|uncordon} HOST")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -74,6 +74,17 @@ func main() {
 		}
 		if err := setHostCordon(ctx, os.Stdout, flag.Arg(2), action == "cordon"); err != nil {
 			slog.Error("runquill host", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if flag.Arg(0) == "diagnose" {
+		if flag.NArg() != 2 {
+			fmt.Fprintln(os.Stderr, "Usage: runquill diagnose OWNER/REPO")
+			os.Exit(2)
+		}
+		if err := diagnose(ctx, os.Stdout, flag.Arg(1)); err != nil {
+			slog.Error("runquill diagnose", "error", err)
 			os.Exit(1)
 		}
 		return
