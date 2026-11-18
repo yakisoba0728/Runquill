@@ -14,6 +14,8 @@ With downloaded release files, run `./runquill wizard` in the installation direc
 4. Review the target and deploy. For K3s, place the matching release’s `runquill-k3s.yaml` in the installation directory and select a context authorized to create the bundled namespaces, RBAC, deployment and Secrets. The wizard checks for existing Runquill namespaces before a fresh deployment.
 5. Download the sample workflow, add it on GitHub and choose **Run workflow**. Follow discovery and runner cleanup in the operations panel.
 
+The deployment page updates its current stage and command output about once a second. In an existing Compose installation, `./runquill wizard --check-compose` opens the wizard and reruns its read-only preflight.
+
 English and Korean are available in both screens. Administrator browser sessions can check repository access and download a queue-only backup. Restore uses an offline manager and the [recovery procedure](../README.md#back-up-and-recover-the-queue).
 
 When you add the panel to an older runner-only installation, the wizard can configure a separate OAuth App using the URLs on the setup page. Existing panel credentials can be reused.

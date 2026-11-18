@@ -27,7 +27,8 @@ var panelSetupPage = template.Must(template.New("panel-setup").Parse(`<!doctype 
 <html lang="{{if .Korean}}ko{{else}}en{{end}}">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Runquill panel setup</title></head>
 {{if .InWizard}}<link rel="stylesheet" href="/wizard.css">{{end}}
-<body><main>
+<body><main{{if .InWizard}} class="wizard-card"{{end}}>
+{{if .InWizard}}<header class="wizard-header"><span class="brand"><span class="brand-mark" aria-hidden="true"></span>runquill</span><a class="language" href="/">{{if .Korean}}설치 상태{{else}}Setup status{{end}}</a></header><div class="wizard-content">{{end}}
 <h1>{{if .Korean}}Runquill 패널 로그인 설정{{else}}Set up the Runquill panel{{end}}</h1>
 {{if .Manual}}
 <p><a href="https://github.com/settings/applications/new" target="_blank" rel="noopener noreferrer">{{if .Korean}}GitHub OAuth App 등록 열기{{else}}Register a GitHub OAuth App{{end}}</a>{{if not .Korean}} for panel sign-in.{{end}}</p>
@@ -46,8 +47,9 @@ var panelSetupPage = template.Must(template.New("panel-setup").Parse(`<!doctype 
   <p><label>{{if .Korean}}클라이언트 시크릿{{else}}Client secret{{end}} <input name="client_secret" type="password" required maxlength="256" autocomplete="off"></label></p>
   {{end}}
   <p><label>{{if .Korean}}첫 관리자의 GitHub 숫자 ID{{else}}First administrator's numeric GitHub user ID{{end}} <input name="bootstrap_id" value="{{.Bootstrap}}" inputmode="numeric" pattern="[0-9]+" maxlength="19" required></label></p>
-  <button type="submit">{{if .Korean}}패널 설정 저장{{else}}Save panel configuration{{end}}</button>
+  <button type="submit" class="primary">{{if .Korean}}패널 설정 저장{{else}}Save panel configuration{{end}}</button>
 </form>
+{{if .InWizard}}</div>{{end}}
 </main></body>
 </html>`))
 

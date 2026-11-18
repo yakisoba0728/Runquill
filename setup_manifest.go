@@ -35,7 +35,8 @@ var appManifestPage = template.Must(template.New("manifest").Parse(`<!doctype ht
 <html lang="{{if .Korean}}ko{{else}}en{{end}}">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Runquill setup</title></head>
 {{if .InWizard}}<link rel="stylesheet" href="/wizard.css">{{end}}
-<body><main>
+<body><main{{if .InWizard}} class="wizard-card"{{end}}>
+{{if .InWizard}}<header class="wizard-header"><span class="brand"><span class="brand-mark" aria-hidden="true"></span>runquill</span><a class="language" href="/">{{if .Korean}}설치 상태{{else}}Setup status{{end}}</a></header><div class="wizard-content">{{end}}
 <h1>{{if .Korean}}Runquill과 GitHub 연결{{else}}Connect Runquill to GitHub{{end}}</h1>
 {{if .Korean}}<p>GitHub에서 Runquill의 비공개 앱 등록을 승인하세요. 승인 후 이 마법사로 돌아옵니다.</p>{{else}}
 <p>Create a private GitHub App with Actions read and {{.RunnerPermission}} write permissions.
@@ -43,8 +44,9 @@ var appManifestPage = template.Must(template.New("manifest").Parse(`<!doctype ht
 {{if .Panel}}<p>{{if .Korean}}이 앱으로 러너를 등록하고 운영 패널에 로그인합니다.{{else}}Runquill uses this app for runner registration and panel sign-in.{{end}}</p>{{end}}
 <form method="post" action="{{.Action}}?state={{.State}}">
   <input type="hidden" name="manifest" value="{{.Manifest}}">
-  <button type="submit">{{if .Korean}}GitHub App 등록{{else}}Create GitHub App{{end}}</button>
+  <button type="submit" class="primary">{{if .Korean}}GitHub App 등록{{else}}Create GitHub App{{end}}</button>
 </form>
+{{if .InWizard}}</div>{{end}}
 </main></body>
 </html>`))
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
+	_ "embed"
 	"flag"
 	"fmt"
 	"html/template"
@@ -24,22 +25,31 @@ const wizardCookie = "runquill_setup"
 type setupWizardKey struct{}
 
 type setupWizard struct {
-	origin, key              string
-	dir                      string
-	client                   *http.Client
-	apiBase                  string
-	log                      io.Writer
-	ctx                      context.Context
-	mu                       sync.Mutex
-	step, installURL         string
-	handler                  http.Handler
-	language, phase, message string
-	options                  setupOptions
-	network                  wizardNetwork
-	kubeContext              string
-	kubeAccepted             bool
-	networkEnabled           bool
+	origin, key      string
+	dir              string
+	client           *http.Client
+	apiBase          string
+	log              io.Writer
+	ctx              context.Context
+	mu               sync.Mutex
+	step, installURL string
+	handler          http.Handler
+	language, phase  string
+	failed           bool
+	options          setupOptions
+	network          wizardNetwork
+	kubeContext      string
+	kubeAccepted     bool
+	networkEnabled   bool
+	checkCompose     bool
+	progress         wizardProgress
 }
+
+//go:embed panelweb/wizard.css
+var wizardCSS string
+
+//go:embed panelweb/wizard.js
+var wizardJS string
 
 func currentWizard(ctx context.Context) *setupWizard {
 	web, _ := ctx.Value(setupWizardKey{}).(*setupWizard)
@@ -82,81 +92,114 @@ func (web *setupWizard) setInstallURL(installURL string) {
 }
 
 var wizardHome = template.Must(template.New("wizard").Parse(`
-<!DOCTYPE html>
+<!doctype html>
 <html lang="{{.Language}}">
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-{{if or (eq .Phase "working") (eq .Phase "deploying")}}<meta http-equiv="refresh" content="4">{{end}}
-<title>Runquill · {{if .KO}}설치 마법사{{else}}Setup wizard{{end}}</title>
-<link rel="stylesheet" href="/wizard.css">
-<main>
-  <header><span>runquill</span><a href="/?lang={{if .KO}}en{{else}}ko{{end}}">{{if .KO}}English{{else}}한국어{{end}}</a></header>
-  <h1>{{if .KO}}Runquill 시작하기{{else}}Set up Runquill{{end}}</h1>
-  <nav aria-label="Setup progress">
-    <span>{{if .KO}}1. 설치 범위{{else}}1. Options{{end}}</span><span>{{if .KO}}2. GitHub 연결{{else}}2. GitHub{{end}}</span><span>{{if .KO}}3. 배포 및 첫 작업{{else}}3. Deploy and verify{{end}}</span>
-  </nav>
-  {{if .Error}}<p class="notice" role="alert">{{.Error}}</p>{{end}}
-  {{if eq .Phase "options"}}
-  <form method="post" action="/start">
-    <label>{{if .KO}}설치 환경{{else}}Deployment target{{end}}<select name="backend"><option value="docker">Docker Compose</option><option value="k3s">K3s</option></select></label>
-    <label>{{if .KO}}k3s 컨텍스트 이름{{else}}K3s context name{{end}} <input name="context" maxlength="200" spellcheck="false" placeholder="kubectl context"></label>
-    <label>{{if .KO}}GitHub 조직 이름 (개인 계정은 비워 두기){{else}}GitHub organization (leave empty for a personal account){{end}}<input name="organization" maxlength="39" spellcheck="false"></label>
-    <label>{{if .KO}}조직 러너 그룹 ID (선택){{else}}Organization runner group ID (optional){{end}}<input name="group" inputmode="numeric" pattern="[0-9]*" maxlength="19"></label>
-    <label>{{if .KO}}저장소 연결 범위{{else}}Repository access{{end}}<select name="repositories"><option value="all">{{if .KO}}전체 저장소{{else}}All repositories{{end}}</option><option value="selected">{{if .KO}}선택한 저장소{{else}}Selected repositories{{end}}</option></select></label>
-    <label>{{if .KO}}패널 주소 (기본값은 이 서버의 8081 포트){{else}}Panel origin (defaults to loopback port 8081){{end}}<input name="panel_url" type="url" placeholder="http://127.0.0.1:8081"></label>
-    <label>{{if .KO}}외부 웹훅 주소 (선택){{else}}External webhook address (optional){{end}}<input name="webhook_url" type="url" placeholder="https://example.com/webhook"></label>
-    <fieldset><legend>Tailscale</legend>
-      <p>{{if .KO}}Compose 호스트에서 로그인된 Tailscale을 사용할 수 있습니다. 기본 연결은 GitHub 폴링입니다.{{else}}Docker Compose can use the host’s signed-in Tailscale client. GitHub polling is the default.{{end}}</p>
-      <label class="check"><input type="checkbox" name="serve">{{if .KO}}Serve로 패널을 tailnet에 연결 (9443){{else}}Serve the panel privately on the tailnet (9443){{end}}</label>
-      <label class="check"><input type="checkbox" name="funnel">{{if .KO}}Funnel로 GitHub 웹훅 경로만 공개 (8443){{else}}Expose only the GitHub webhook path through Funnel (8443){{end}}</label>
-    </fieldset>
-    <input type="hidden" name="lang" value="{{.Language}}">
-    <button>{{if .KO}}GitHub 연결 시작{{else}}Connect GitHub{{end}}</button>
-  </form>
-  {{else if eq .Phase "working"}}
-    {{if .Step}}<p><a class="button" href="{{.Step}}/">{{if .KO}}현재 단계 열기{{else}}Open the current step{{end}}</a></p>{{else if .Install}}<p><a class="button" href="{{.Install}}" rel="noreferrer" target="_blank">{{if .KO}}GitHub에 앱 설치{{else}}Install the GitHub App{{end}}</a></p><p>{{if .KO}}GitHub에서 설치를 마치면 다음 단계가 여기에 표시됩니다.{{else}}Complete installation on GitHub. The next step will appear here.{{end}}</p>{{else}}<p role="status">{{if .KO}}상태를 확인하고 있습니다…{{else}}Checking setup status…{{end}}</p>{{end}}
-  {{else if eq .Phase "ready"}}
-    <p>{{if .KO}}GitHub App과 패널 설정을 저장했습니다. 아래 대상에 Runquill을 설치합니다.{{else}}GitHub App and panel settings are saved. Start Runquill on the following target.{{end}}</p>
-    <p><strong>{{.Target}}</strong></p>
-    {{if .Serve}}<p>{{if .KO}}패널은 Tailscale Serve로 연결됩니다.{{else}}The panel will be available through Tailscale Serve.{{end}}</p>{{end}}
-    {{if .Funnel}}<p class="notice">{{if .KO}}배포하면 GitHub가 접근할 수 있도록 웹훅 경로가 인터넷에 공개됩니다.{{else}}Deploying publishes the webhook path to the internet so GitHub can reach it.{{end}}</p>{{end}}
-    <form method="post" action="/deploy"><button>{{if .KO}}배포 및 사전 점검{{else}}Deploy and check installation{{end}}</button></form>
-  {{else if eq .Phase "deploying"}}
-    <p role="status">{{if .KO}}매니저를 시작하고 있습니다.{{else}}Starting the manager.{{end}} <a href="/">{{if .KO}}상태 확인{{else}}Check status{{end}}</a></p>
-  {{else if eq .Phase "done"}}
-    <p>{{if .KO}}매니저 배포와 사전 점검을 마쳤습니다.{{else}}The manager is deployed and preflight checks passed.{{end}}</p>
-    {{if .PanelURL}}<p><a class="button" href="{{.PanelURL}}">{{if .KO}}운영 패널 열기{{else}}Open the operations panel{{end}}</a></p>{{end}}
-    {{if .K3s}}<p>{{if .KO}}로컬 패널에 접속하려면 선택한 컨텍스트에서 포트 포워딩을 실행하세요.{{else}}To reach a loopback panel, forward the port in the selected context.{{end}} <code>kubectl -n runquill-system port-forward svc/runquill 8081:8081</code></p>{{end}}
-    {{if or .Serve .Funnel}}<fieldset><legend>Tailscale</legend>
-      <p>{{if .NetworkEnabled}}{{if .KO}}이 설치의 Tailscale 경로가 연결되어 있습니다.{{else}}Tailscale routes for this installation are connected.{{end}}{{else}}{{if .KO}}이 설치의 Tailscale 경로가 중지되어 있습니다.{{else}}Tailscale routes for this installation are paused.{{end}}{{end}}</p>
-      <form action="/tailscale" method="post">
-        <button>{{if .NetworkEnabled}}{{if .KO}}Tailscale 연결 중지{{else}}Pause Tailscale routes{{end}}{{else}}{{if .KO}}Tailscale 연결 복구{{else}}Resume Tailscale routes{{end}}{{end}}</button>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Runquill · {{if .KO}}설치 마법사{{else}}Setup wizard{{end}}</title>
+  <link rel="stylesheet" href="/wizard.css">
+  <script src="/wizard.js" defer></script>
+  {{if or (eq .Phase "working") (eq .Phase "deploying")}}<noscript><meta http-equiv="refresh" content="4"></noscript>{{end}}
+</head>
+<body data-phase="{{.Phase}}" data-step="{{.Step}}" data-install="{{if .Install}}true{{else}}false{{end}}" data-stage="{{.Stage}}">
+  <main class="wizard-card">
+    <header class="wizard-header">
+      <span class="brand"><span class="brand-mark" aria-hidden="true"></span>runquill</span>
+      <a class="language" href="/?lang={{if .KO}}en{{else}}ko{{end}}" lang="{{if .KO}}en{{else}}ko{{end}}">{{if .KO}}English{{else}}한국어{{end}}</a>
+    </header>
+    <div class="wizard-content">
+      <ol class="steps" aria-label="{{if .KO}}설치 단계{{else}}Setup steps{{end}}">
+        <li{{if eq .Phase "options"}} aria-current="step"{{end}}>{{if .KO}}설치 범위{{else}}Options{{end}}</li>
+        <li{{if eq .Phase "working"}} aria-current="step"{{end}}>GitHub</li>
+        <li{{if or (eq .Phase "ready") (eq .Phase "deploying") (eq .Phase "done")}} aria-current="step"{{end}}>{{if .KO}}배포{{else}}Deploy{{end}}</li>
+      </ol>
+      {{if .Error}}<p class="notice" role="alert">
+        {{if eq .Phase "ready"}}{{if .KO}}배포 점검을 통과하지 못했습니다. 아래 로그에서 원인을 확인하세요.{{else}}Deployment checks failed. See the log below.{{end}}
+        {{else}}{{if .KO}}설정 중 문제가 발생했습니다. Runquill 터미널에서 원인을 확인하세요.{{else}}Setup needs attention. Check the Runquill terminal for details.{{end}}{{end}}
+      </p>{{end}}
+      {{if eq .Phase "options"}}
+      <h1>{{if .KO}}Runquill 시작하기{{else}}Set up Runquill{{end}}</h1>
+      <form method="post" action="/start">
+        <div class="form-grid">
+          <label>{{if .KO}}설치 환경{{else}}Deployment target{{end}}<select name="backend"><option value="docker">Docker Compose</option><option value="k3s">K3s</option></select></label>
+          <label>{{if .KO}}저장소 연결 범위{{else}}Repository access{{end}}<select name="repositories"><option value="all">{{if .KO}}전체 저장소{{else}}All repositories{{end}}</option><option value="selected">{{if .KO}}선택한 저장소{{else}}Selected repositories{{end}}</option></select></label>
+        </div>
+        <label data-k3s>{{if .KO}}k3s 컨텍스트 이름{{else}}K3s context name{{end}} <input name="context" maxlength="200" spellcheck="false"></label>
+        <details class="advanced">
+          <summary>{{if .KO}}조직 및 연결 설정{{else}}Organization and network{{end}}</summary>
+          <div class="form-grid">
+            <label>{{if .KO}}GitHub 조직 (선택){{else}}GitHub organization (optional){{end}}<input name="organization" maxlength="39" spellcheck="false"></label>
+            <label>{{if .KO}}러너 그룹 ID (선택){{else}}Runner group ID (optional){{end}}<input name="group" inputmode="numeric" pattern="[0-9]*" maxlength="19"></label>
+          </div>
+          <label>{{if .KO}}패널 주소 (선택){{else}}Panel origin (optional){{end}}<input name="panel_url" type="url" placeholder="http://127.0.0.1:8081"></label>
+          <label>{{if .KO}}외부 웹훅 주소 (선택){{else}}Public webhook URL (optional){{end}}<input name="webhook_url" type="url" placeholder="https://example.com/webhook"></label>
+          <fieldset>
+            <legend>Tailscale</legend>
+            <label class="check"><input type="checkbox" name="serve">{{if .KO}}Serve로 패널을 tailnet에 연결{{else}}Serve the panel privately on the tailnet{{end}}</label>
+            <label class="check"><input type="checkbox" name="funnel">{{if .KO}}Funnel로 웹훅 경로를 인터넷에 공개{{else}}Expose the webhook path through Funnel{{end}}</label>
+          </fieldset>
+        </details>
+        <input type="hidden" name="lang" value="{{.Language}}">
+        <button class="primary">{{if .KO}}GitHub 연결 시작{{else}}Connect GitHub{{end}}</button>
       </form>
-    </fieldset>{{end}}
-    <h2>{{if .KO}}첫 작업 확인{{else}}Verify your first job{{end}}</h2>
-    <p>{{if .KO}}아래 워크플로 파일을 비공개 저장소의 .github/workflows/에 추가하고, GitHub Actions에서 실행하세요. 패널에서 러너 생성과 정리를 확인할 수 있습니다.{{else}}Add this workflow to .github/workflows/ in a private repository and run it from GitHub Actions. The panel shows discovery and cleanup.{{end}}</p>
-    <a href="/first-job.yml" download="runquill-first-job.yml">{{if .KO}}첫 작업 워크플로 다운로드{{else}}Download the first-job workflow{{end}}</a>
-  {{end}}
-</main>
+      {{else if eq .Phase "working"}}
+      <h1>{{if .KO}}GitHub 연결{{else}}Connect GitHub{{end}}</h1>
+      {{if .Step}}<p><a class="button primary" href="{{.Step}}/">{{if .KO}}현재 단계 열기{{else}}Open the current step{{end}}</a></p>
+      {{else if .Install}}<p>{{if .KO}}GitHub에서 앱을 설치하면 배포 화면으로 자동으로 넘어갑니다.{{else}}This page advances after you install the app on GitHub.{{end}}</p>
+      <a class="button primary" href="{{.Install}}" rel="noreferrer" target="_blank">{{if .KO}}GitHub에 앱 설치{{else}}Install the GitHub App{{end}}</a>
+      {{else}}<p role="status">{{if .KO}}연결을 확인하고 있습니다.{{else}}Checking the connection.{{end}}</p>{{end}}
+      {{else if eq .Phase "ready"}}
+      <h1>{{if .CheckCompose}}{{if .KO}}배포 상태 확인{{else}}Check deployment{{end}}{{else}}{{if .KO}}Runquill 배포{{else}}Deploy Runquill{{end}}{{end}}</h1>
+      {{if not .Error}}<p>{{if .KO}}GitHub 연결을 마쳤습니다. 배포할 환경을 확인하세요.{{else}}GitHub is connected. Review the deployment target.{{end}}</p>{{end}}
+      <p class="target">{{.Target}}</p>
+      {{if .Serve}}<p>{{if .KO}}패널은 Tailscale Serve로 연결됩니다.{{else}}The panel will be available through Tailscale Serve.{{end}}</p>{{end}}
+      {{if .Funnel}}<p class="notice">{{if .KO}}배포하면 웹훅 경로가 인터넷에 공개됩니다.{{else}}Deploying publishes the webhook path to the internet.{{end}}</p>{{end}}
+      <form method="post" action="/deploy"><button class="primary">{{if .CheckCompose}}{{if .KO}}사전 점검 다시 실행{{else}}Run preflight again{{end}}{{else}}{{if .KO}}배포 및 사전 점검{{else}}Deploy and check installation{{end}}{{end}}</button></form>
+      {{else if eq .Phase "deploying"}}
+      <h1>{{if .CheckCompose}}{{if .KO}}배포 상태 확인 중{{else}}Checking deployment{{end}}{{else}}{{if .KO}}Runquill 배포 중{{else}}Deploying Runquill{{end}}{{end}}</h1>
+      <p class="activity" role="status" id="wizard-activity">{{if .KO}}매니저를 시작하고 있습니다.{{else}}Starting the manager.{{end}}</p>
+      {{else if eq .Phase "done"}}
+      <h1>{{if .KO}}배포 완료{{else}}Deployment complete{{end}}</h1>
+      <p>{{if .KO}}매니저가 실행 중이며 사전 점검을 통과했습니다.{{else}}The manager is running and preflight checks passed.{{end}}</p>
+      <div class="actions">
+        {{if .PanelURL}}<a class="button primary" href="{{.PanelURL}}">{{if .KO}}운영 패널 열기{{else}}Open the operations panel{{end}}</a>{{end}}
+        <a class="button" href="/first-job.yml" download="runquill-first-job.yml">{{if .KO}}첫 작업 워크플로 다운로드{{else}}Download the first-job workflow{{end}}</a>
+      </div>
+      <p class="hint">{{if .KO}}워크플로를 비공개 저장소의 .github/workflows/에 추가하고 Actions에서 실행하세요.{{else}}Add the workflow to .github/workflows/ in a private repository and run it from Actions.{{end}}</p>
+      {{if .K3s}}<p><code>kubectl -n runquill-system port-forward svc/runquill 8081:8081</code></p>{{end}}
+      {{if or .Serve .Funnel}}<form action="/tailscale" method="post"><button>{{if .NetworkEnabled}}{{if .KO}}Tailscale 연결 중지{{else}}Pause Tailscale routes{{end}}{{else}}{{if .KO}}Tailscale 연결 복구{{else}}Resume Tailscale routes{{end}}{{end}}</button></form>{{end}}
+      {{end}}
+      {{if or .Log (eq .Phase "deploying")}}
+      <details class="deploy-log"{{if ne .Phase "done"}} open{{end}}>
+        <summary>{{if .KO}}배포 로그{{else}}Deployment log{{end}}</summary>
+        <pre id="wizard-log" tabindex="0">{{.Log}}</pre>
+        {{if eq .Phase "deploying"}}<a class="hint" href="/">{{if .KO}}상태 새로고침{{else}}Refresh status{{end}}</a>{{end}}
+      </details>
+      {{end}}
+    </div>
+  </main>
+</body>
 </html>`))
 
 func wizardCommand(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("runquill wizard", flag.ContinueOnError)
 	port := flags.Uint("listen-port", 0, "loopback port (0 selects a free port)")
+	checkCompose := flags.Bool("check-compose", false, "check an existing Compose installation without redeploying it")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 || *port > 65535 {
-		return fmt.Errorf("use runquill wizard [--listen-port PORT]")
+		return fmt.Errorf("use runquill wizard [--listen-port PORT] [--check-compose]")
 	}
 	dir, err := os.Getwd()
 	if err != nil {
 		return err
 	}
-	return runWizard(ctx, os.Stdout, dir, &http.Client{Timeout: 10 * time.Second}, githubAPIBase, *port)
+	return runWizard(ctx, os.Stdout, dir, &http.Client{Timeout: 10 * time.Second}, githubAPIBase, *port, *checkCompose)
 }
 
-func runWizard(ctx context.Context, out io.Writer, dir string, client *http.Client, apiBase string, port uint) error {
+func runWizard(ctx context.Context, out io.Writer, dir string, client *http.Client, apiBase string, port uint, checkCompose bool) error {
 	ctx, cancel := context.WithTimeout(ctx, time.Hour)
 	defer cancel()
 	listener, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.FormatUint(uint64(port), 10)))
@@ -167,6 +210,24 @@ func runWizard(ctx context.Context, out io.Writer, dir string, client *http.Clie
 	web := &setupWizard{
 		origin: "http://" + listener.Addr().String(), key: rand.Text(), dir: dir,
 		client: client, apiBase: apiBase, log: out, ctx: ctx, language: "en", phase: "options",
+	}
+	if checkCompose {
+		data, err := os.ReadFile(filepath.Join(dir, setupEnvFile))
+		if err != nil {
+			return err
+		}
+		values, err := setupValues(data)
+		if err != nil {
+			return err
+		}
+		cfg, err := savedPanelSetup(values, "")
+		if err != nil {
+			return err
+		}
+		web.options = setupOptions{panel: true, panelURL: cfg.origin}
+		web.phase = "deploying"
+		web.checkCompose = true
+		web.launchDeployment()
 	}
 	server := &http.Server{Handler: web, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 20 * time.Second, IdleTimeout: 20 * time.Second, MaxHeaderBytes: 16 << 10}
 	fmt.Fprintf(out, "Open %s/?key=%s in your browser.\n", web.origin, web.key)
@@ -187,7 +248,7 @@ func (web *setupWizard) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'self'; form-action 'self' https://github.com; frame-ancestors 'none'; base-uri 'none'")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; form-action 'self' https://github.com; frame-ancestors 'none'; base-uri 'none'")
 	if "http://"+r.Host != web.origin {
 		http.Error(w, "Use the configured loopback address.", http.StatusForbidden)
 		return
@@ -223,6 +284,11 @@ func (web *setupWizard) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && r.URL.Path == "/wizard.css":
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
 		fmt.Fprint(w, wizardCSS)
+	case r.Method == http.MethodGet && r.URL.Path == "/wizard.js":
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		fmt.Fprint(w, wizardJS)
+	case r.Method == http.MethodGet && r.URL.Path == "/status":
+		web.status(w)
 	case r.Method == http.MethodPost && r.URL.Path == "/start":
 		web.start(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == "/deploy":
@@ -259,10 +325,11 @@ func (web *setupWizard) render(w http.ResponseWriter, r *http.Request) {
 		language = "ko"
 	}
 	http.SetCookie(w, &http.Cookie{Name: "runquill_language", Value: language, Path: "/", SameSite: http.SameSiteLaxMode, MaxAge: 3600})
+	stage, log := web.progress.snapshot()
 	view := struct {
-		Language, Phase, Error, Step, Install, Target, PanelURL string
-		KO, K3s, Serve, Funnel, NetworkEnabled                  bool
-	}{language, web.phase, web.message, web.step, web.installURL, web.kubeContext, web.panelLink(language), language == "ko", web.options.kubernetes, web.network.serve, web.network.funnel, web.networkEnabled}
+		Language, Phase, Step, Install, Target, PanelURL, Stage, Log string
+		KO, K3s, Serve, Funnel, NetworkEnabled, CheckCompose, Error  bool
+	}{language, web.phase, web.step, web.installURL, web.kubeContext, web.panelLink(language), stage, log, language == "ko", web.options.kubernetes, web.network.serve, web.network.funnel, web.networkEnabled, web.checkCompose, web.failed}
 	web.mu.Unlock()
 	if !view.K3s {
 		view.Target = "Docker Compose"
@@ -297,7 +364,7 @@ func (web *setupWizard) start(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Setup is already in progress.", http.StatusConflict)
 		return
 	}
-	web.phase, web.message = "working", ""
+	web.phase, web.failed = "working", false
 	if r.PostForm.Get("lang") == "ko" {
 		web.language = "ko"
 	} else {
@@ -312,13 +379,9 @@ func (web *setupWizard) start(w http.ResponseWriter, r *http.Request) {
 func (web *setupWizard) setResult(phase string, err error) {
 	web.mu.Lock()
 	defer web.mu.Unlock()
-	web.phase, web.message = phase, ""
+	web.phase, web.failed = phase, err != nil
 	if err != nil {
 		fmt.Fprintln(web.log, err)
-		web.message = "Setup needs attention. Check the Runquill terminal for details."
-		if web.language == "ko" {
-			web.message = "설정 중 문제가 발생했습니다. Runquill 터미널에서 원인을 확인하세요."
-		}
 	}
 }
 
@@ -383,12 +446,18 @@ func (web *setupWizard) deploy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Deployment is unavailable in this step.", http.StatusConflict)
 		return
 	}
-	web.phase, web.message = "deploying", ""
+	web.phase, web.failed = "deploying", false
 	web.mu.Unlock()
+	web.launchDeployment()
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (web *setupWizard) launchDeployment() {
 	go func() {
 		ctx, cancel := context.WithTimeout(web.ctx, 8*time.Minute)
 		defer cancel()
-		if err := web.apply(ctx); err != nil {
+		if err := web.apply(ctx, web.checkCompose); err != nil {
+			fmt.Fprintln(&web.progress, err)
 			web.setResult("ready", err)
 		} else {
 			web.mu.Lock()
@@ -397,7 +466,6 @@ func (web *setupWizard) deploy(w http.ResponseWriter, r *http.Request) {
 			web.setResult("done", nil)
 		}
 	}()
-	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (web *setupWizard) toggleNetwork(w http.ResponseWriter, r *http.Request) {
@@ -408,10 +476,14 @@ func (web *setupWizard) toggleNetwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	enabled := !web.networkEnabled
-	web.phase, web.message = "deploying", ""
+	web.progress.mark("network")
+	web.phase, web.failed = "deploying", false
 	web.mu.Unlock()
 	go func() {
 		err := web.network.apply(web.ctx, enabled)
+		if err != nil {
+			fmt.Fprintln(&web.progress, err)
+		}
 		if err == nil {
 			web.mu.Lock()
 			web.networkEnabled = enabled
@@ -421,17 +493,3 @@ func (web *setupWizard) toggleNetwork(w http.ResponseWriter, r *http.Request) {
 	}()
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
-
-const wizardCSS = `
-:root{color-scheme:light dark;font:16px/1.55 system-ui,sans-serif;color:#1c2623;background:#f6f6f1}
-body{margin:0}main{width:min(620px,calc(100% - 32px));margin:2rem auto 5rem}
-header,nav{display:flex;gap:1rem;justify-content:space-between;flex-wrap:wrap}header{border-bottom:1px solid #9ca6a0;padding-bottom:1rem;font-weight:700}
-h1{font-size:2.1rem;line-height:1.15;margin:1.6rem 0 1rem}nav{color:#405a50;border-bottom:1px solid #c0c9c0;padding-bottom:1rem;margin-bottom:1.3rem;font-size:.9rem}
-label{display:flex;flex-direction:column;gap:.35rem;font-size:.92rem;margin-bottom:.85rem}.check{align-items:center;flex-direction:row;gap:.55rem}
-input,select,button,.button{font:inherit;padding:.55rem .7rem;border-radius:5px;border:1px solid #85968e}
-input,select{width:100%;box-sizing:border-box;background:Canvas;color:CanvasText}input[type=checkbox]{width:auto}
-button,.button{width:fit-content;background:#225849;color:#fff;cursor:pointer;display:inline-block;text-decoration:none;border-color:#225849}
-fieldset{border:1px solid #9ca6a0;margin:1.1rem 0;padding:.6rem 1rem}fieldset p{font-size:.9rem;margin:0 0 .8rem}
-a{color:#225849}code{overflow-wrap:anywhere}.notice{border-inline-start:3px solid #9a6b22;padding:.5rem .8rem;background:#f8edda}
-@media(prefers-color-scheme:dark){:root{background:#17211e;color:#f2f4ed}a,nav{color:#abe0c9}.notice{background:#43361d}}
-`

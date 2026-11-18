@@ -12,10 +12,7 @@ import (
 	"strings"
 )
 
-func (web *setupWizard) apply(ctx context.Context) error {
-	if web.options.kubernetes {
-		return web.applyK3s(ctx)
-	}
+func (web *setupWizard) apply(ctx context.Context, checkOnly bool) error {
 	data, err := os.ReadFile(filepath.Join(web.dir, setupEnvFile))
 	if err != nil {
 		return err
@@ -23,6 +20,10 @@ func (web *setupWizard) apply(ctx context.Context) error {
 	values, err := setupValues(data)
 	if err != nil {
 		return err
+	}
+	web.progress.reset(values)
+	if web.options.kubernetes {
+		return web.applyK3s(ctx)
 	}
 	compose := []string{"compose", "-f", "compose.yaml", "-f", "compose.panel.yaml"}
 	for host := range strings.SplitSeq(values["RUNQUILL_DOCKER_HOSTS"], ",") {
@@ -43,31 +44,37 @@ func (web *setupWizard) apply(ctx context.Context) error {
 		}
 		return nil
 	}
-	if setupImage.MatchString(values["RUNQUILL_RUNNER_IMAGE"]) && setupImage.MatchString(values["RUNQUILL_MANAGER_IMAGE"]) {
-		if err := docker("pull", values["RUNQUILL_RUNNER_IMAGE"]); err != nil {
+	if !checkOnly {
+		web.progress.mark("images")
+		up := "--build"
+		if setupImage.MatchString(values["RUNQUILL_RUNNER_IMAGE"]) && setupImage.MatchString(values["RUNQUILL_MANAGER_IMAGE"]) {
+			if err := docker("pull", values["RUNQUILL_RUNNER_IMAGE"]); err != nil {
+				return err
+			}
+			if err := docker(append(compose, "pull", "manager")...); err != nil {
+				return err
+			}
+			up = "--no-build"
+		} else if err := docker("build", "-t", "runquill-runner:local", "runner"); err != nil {
 			return err
 		}
-		if err := docker(append(compose, "pull", "manager")...); err != nil {
+		web.progress.mark("manager")
+		if err := docker(append(compose, "up", "-d", up)...); err != nil {
 			return err
 		}
-		if err := docker(append(compose, "up", "-d", "--no-build")...); err != nil {
-			return err
-		}
-	} else {
-		if err := docker("build", "-t", "runquill-runner:local", "runner"); err != nil {
-			return err
-		}
-		if err := docker(append(compose, "up", "-d", "--build")...); err != nil {
-			return err
+		if web.network.host != "" {
+			web.progress.mark("network")
+			if err := web.network.apply(ctx, true); err != nil {
+				return err
+			}
 		}
 	}
-	if err := web.network.apply(ctx, true); err != nil {
-		return err
-	}
+	web.progress.mark("check")
 	return docker(append(compose, "exec", "-T", "manager", "runquill", "doctor")...)
 }
 
 func (web *setupWizard) applyK3s(ctx context.Context) error {
+	web.progress.mark("resources")
 	base := []string{"--context", web.kubeContext}
 	makeCommand := func(args ...string) *exec.Cmd {
 		cmd := exec.CommandContext(ctx, "kubectl", append(base, args...)...)
@@ -106,16 +113,25 @@ func (web *setupWizard) applyK3s(ctx context.Context) error {
 			return err
 		}
 	}
+	web.progress.mark("manager")
 	if err := run(nil, true, "rollout", "status", "deployment/runquill", "--timeout=150s"); err != nil {
 		return err
 	}
+	web.progress.mark("check")
 	return run(nil, true, "exec", "deployment/runquill", "--", "runquill", "doctor")
 }
 
 func (web *setupWizard) deployCommand(ctx context.Context, input io.Reader, binary string, args ...string) error {
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Dir, cmd.Stdin = web.dir, input
-	cmd.Stdout, cmd.Stderr = web.log, web.log
+	fmt.Fprintf(&web.progress, "$ %s %s\n", binary, strings.Join(args, " "))
+	output := web.log
+	// An admission error can include part of a Kubernetes Secret sent on stdin.
+	if input == nil {
+		output = io.MultiWriter(web.log, &web.progress)
+	}
+	cmd.Stdout, cmd.Stderr = output, output
+	defer fmt.Fprintln(&web.progress)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("%s command failed: %w", binary, err)
 	}

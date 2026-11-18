@@ -27,7 +27,15 @@ func TestBrowserWizardRunsSingleOriginThroughDeployment(t *testing.T) {
 	dir, bin := t.TempDir(), t.TempDir()
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("RUNQUILL_WIZARD_TEST_LOG", filepath.Join(dir, "docker.log"))
-	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$RUNQUILL_WIZARD_TEST_LOG\"\n"), 0700); err != nil {
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(`#!/bin/sh
+printf '%s\n' "$*" >> "$RUNQUILL_WIZARD_TEST_LOG"
+if [ "$1" = build ]; then
+  printf 'Building fixture runner\n'
+  printf 'fixture credential: example-'
+  printf 'secret\n'
+  while [ ! -e "$RUNQUILL_WIZARD_TEST_LOG.release" ]; do sleep 0.05; done
+fi
+`), 0700); err != nil {
 		t.Fatal(err)
 	}
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -106,6 +114,9 @@ func TestBrowserWizardRunsSingleOriginThroughDeployment(t *testing.T) {
 	if code, _ := request(http.MethodGet, "/", "", nil); code != http.StatusUnauthorized {
 		t.Fatalf("wizard without credentials returned %d", code)
 	}
+	if code, _ := request(http.MethodGet, "/status", "", nil); code != http.StatusUnauthorized {
+		t.Fatalf("wizard logs without credentials returned %d", code)
+	}
 	if code, body := request(http.MethodGet, "/?key=fixture-access&lang=ko", "", nil); code != 200 || !strings.Contains(body, "Runquill 시작하기") {
 		t.Fatalf("localized wizard entry returned %d", code)
 	}
@@ -149,6 +160,14 @@ func TestBrowserWizardRunsSingleOriginThroughDeployment(t *testing.T) {
 		t.Fatalf("wizard did not save selected coverage and OAuth settings: %v", err)
 	}
 	request(http.MethodPost, "/deploy", server.URL, nil)
+	progress := waitPage("/status", "[redacted]")
+	if !strings.Contains(progress, `"phase":"deploying"`) || !strings.Contains(progress, `"stage":"images"`) ||
+		!strings.Contains(progress, "Building fixture runner") || strings.Contains(progress, "example-secret") {
+		t.Fatal("deployment did not expose live sanitized output")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "docker.log.release"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
 	waitPage("/", "운영 패널 열기")
 	if _, body := request(http.MethodGet, "/first-job.yml", "", nil); body != string(firstWorkflow) {
 		t.Fatal("wizard served a different first-job workflow")
