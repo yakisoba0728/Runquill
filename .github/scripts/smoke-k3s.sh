@@ -20,7 +20,7 @@ cleanup() {
         kubectl --request-timeout=10s -n runquill-system logs deployment/runquill || true
         kubectl --request-timeout=10s -n runquill-runners get events --sort-by=.lastTimestamp || true
     fi
-    "$K3D" cluster delete "$cluster" || result=1
+    "$K3D" cluster delete "$cluster" || result=$((result == 0 ? 1 : result))
     docker image rm "$fixture" "$tester" >/dev/null 2>&1 || true
     rm -r -- "$scratch"
     exit "$result"
@@ -57,7 +57,7 @@ kubectl -n runquill-system logs job/runquill-runtime-test
 
 # Use cluster privileges for cleanup checks outside the manager's create-only Secret RBAC.
 for ((attempt=0; attempt<20; attempt++)); do
-    resources=$(kubectl -n runquill-runners get pods,secrets -l app.kubernetes.io/managed-by=runquill -o name)
+    resources=$(kubectl -n runquill-runners get pods,secrets -o name)
     if [ -z "$resources" ]; then
         printf '%s\n' 'All runner Pods and credential Secrets were removed.'
         exit 0
