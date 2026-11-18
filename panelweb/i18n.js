@@ -4,6 +4,45 @@ const words = {
   "Overview": "개요",
   "First job setup": "첫 작업 설정",
   "Manage access": "접근 관리",
+  "Settings": "설정",
+  "Changes apply without restarting the manager.": "매니저를 재시작하지 않고 적용됩니다.",
+  "Reload saved settings": "저장된 설정 불러오기",
+  "Fleet slot limit": "전체 슬롯 한도",
+  "GitHub polling interval": "GitHub 폴링 주기",
+  "Default runner image": "기본 러너 이미지",
+  "Docker workers": "Docker 워커",
+  "Add worker": "워커 추가",
+  "SSH workers use the manager's configured SSH credentials. Outbound agents use deployment credentials.": "SSH 워커는 매니저에 등록된 SSH 인증을 사용합니다. 아웃바운드 에이전트는 배포에서 인증을 설정합니다.",
+  "Add pool": "풀 추가",
+  "Save settings": "설정 저장",
+  "Settings saved.": "설정을 저장했습니다.",
+  "Worker address": "워커 주소",
+  "Worker slot limit": "워커별 슬롯 한도",
+  "Use fleet limit": "전체 슬롯 한도 사용",
+  "Remove": "제거",
+  "Pool name": "풀 이름",
+  "CPU limit": "CPU 한도",
+  "Memory limit (MiB)": "메모리 한도(MiB)",
+  "Pool runner image": "풀의 러너 이미지",
+  "Use default image": "기본 이미지 사용",
+  "Worker addresses": "워커 주소 목록",
+  "One worker address per line": "한 줄에 워커 주소 하나",
+  "Restrict repositories": "저장소 접근 제한",
+  "Allowed repositories": "허용할 저장소",
+  "One OWNER/REPO per line": "한 줄에 OWNER/REPO 하나",
+  "Remove pool": "풀 제거",
+  "Use a different name for each worker pool.": "워커 풀마다 다른 이름을 입력하세요.",
+  "GitHub webhooks are enabled. Set polling to 0 for webhook-only discovery.": "GitHub 웹훅이 활성화되어 있습니다. 폴링에 0을 입력하면 웹훅으로만 작업을 받습니다.",
+  "GitHub webhooks are disabled. Keep polling enabled to receive jobs.": "GitHub 웹훅이 비활성화되어 있습니다. 작업을 받으려면 폴링을 켜 두세요.",
+  "Enable GitHub webhooks before disabling polling.": "폴링을 끄려면 먼저 GitHub 웹훅을 활성화하세요.",
+  "Enter a positive slot limit and a valid runner image.": "양수로 된 슬롯 한도와 유효한 러너 이미지를 입력하세요.",
+  "Enter a polling duration such as 30s, or 0 to disable polling.": "폴링 주기에 30s 같은 간격을 입력하세요. 0을 입력하면 폴링이 꺼집니다.",
+  "Set positive per-worker limits for configured workers only.": "등록된 워커의 슬롯 한도에 양수를 입력하세요.",
+  "Settings were changed in another session. Reload them and try again.": "다른 세션에서 설정이 변경됐습니다. 다시 불러온 뒤 수정하세요.",
+  "Pause assignments and let the worker finish its jobs before removing it.": "워커를 제거하기 전에 새 할당을 중지하고 실행 중인 작업을 끝내세요.",
+  "Check that the worker is reachable before removing it.": "워커를 제거하기 전에 연결 상태를 확인하세요.",
+  "The scheduler is using the current worker list. Try again shortly.": "스케줄러가 워커 목록을 사용하고 있습니다. 잠시 후 다시 시도하세요.",
+  "settings.update": "운영 설정 변경",
   "Sample fleet": "샘플 러너",
   "Sign out": "로그아웃",
   "Sign in to Runquill": "Runquill에 로그인",
@@ -318,14 +357,17 @@ export function localizeDocument() {
     toggle.lang = alternate;
   }
   if (language !== "ko") return;
-  const tree = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-  for (let part = tree.nextNode(); part; part = tree.nextNode()) {
-    const content = part.nodeValue.trim();
-    if (Object.hasOwn(words, content)) part.nodeValue = part.nodeValue.replace(content, words[content]);
-  }
-  for (const node of document.querySelectorAll("[aria-label], [placeholder]")) {
-    for (const attr of ["aria-label", "placeholder"]) {
-      if (node.hasAttribute(attr)) node.setAttribute(attr, tr(node.getAttribute(attr)));
+  const fragments = [...document.querySelectorAll("template")].map((element) => element.content);
+  for (const area of [document.body, ...fragments]) {
+    const tree = document.createTreeWalker(area, NodeFilter.SHOW_TEXT);
+    for (let part = tree.nextNode(); part; part = tree.nextNode()) {
+      const content = part.nodeValue.trim();
+      if (Object.hasOwn(words, content)) part.nodeValue = part.nodeValue.replace(content, words[content]);
+    }
+    for (const node of area.querySelectorAll("[aria-label], [placeholder]")) {
+      for (const attr of ["aria-label", "placeholder"]) {
+        if (node.hasAttribute(attr)) node.setAttribute(attr, tr(node.getAttribute(attr)));
+      }
     }
   }
 }

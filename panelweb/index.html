@@ -49,6 +49,7 @@
         <a href="#fleet-pools">Worker pools</a>
         <a href="#first-job">First job setup</a>
         <a id="access-nav" href="#access" hidden>Manage access</a>
+        <a id="settings-nav" href="#settings" hidden>Settings</a>
       </nav>
       <a class="sidebar-source" href="https://github.com/yakisoba0728/Runquill" target="_blank" rel="noopener noreferrer">Source on GitHub ↗</a>
     </aside>
@@ -220,6 +221,50 @@
             <ul class="control-list" id="audit-list"></ul>
             <p id="audit-message" class="inline-note" role="status" hidden></p>
           </section>
+        </section>
+        <section class="surface fleet-section" id="settings" aria-labelledby="settings-title" hidden>
+          <div class="section-head">
+            <div><h2 id="settings-title">Settings</h2><p>Changes apply without restarting the manager.</p></div>
+            <button class="button" id="settings-reload" type="button">Reload saved settings</button>
+          </div>
+          <form id="settings-form" class="settings-form" hidden>
+            <div class="settings-fields">
+              <label>Fleet slot limit<input name="slot_limit" inputmode="numeric" type="number" min="1" required></label>
+              <label>GitHub polling interval<input name="poll_interval" placeholder="30s" maxlength="32" required></label>
+              <label>Default runner image<input name="runner_image" maxlength="256" required></label>
+            </div>
+            <p class="settings-hint" id="settings-webhook"></p>
+            <div id="settings-docker" hidden>
+              <div class="settings-heading"><h3>Docker workers</h3><button class="button" id="settings-add-host" type="button">Add worker</button></div>
+              <p class="settings-hint">SSH workers use the manager's configured SSH credentials. Outbound agents use deployment credentials.</p>
+              <div class="settings-entries" id="settings-hosts"></div>
+              <div class="settings-heading"><h3>Worker pools</h3><button class="button" id="settings-add-pool" type="button">Add pool</button></div>
+              <div class="settings-entries" id="settings-pools"></div>
+            </div>
+            <button class="button primary" type="submit">Save settings</button>
+          </form>
+          <p id="settings-message" class="inline-note" role="status" hidden></p>
+          <template id="settings-host">
+            <div class="settings-entry settings-host">
+              <label>Worker address<input name="address" placeholder="local or ssh://user@host" maxlength="260" required></label>
+              <label>Worker slot limit<input name="limit" type="number" min="1" placeholder="Use fleet limit"></label>
+              <button class="button" type="button" data-remove>Remove</button>
+            </div>
+          </template>
+          <template id="settings-pool">
+            <fieldset class="settings-entry settings-pool">
+              <div class="settings-fields">
+                <label>Pool name<input name="pool_name" pattern="[a-z0-9][a-z0-9-]{0,31}" required></label>
+                <label>CPU limit<input name="cpus" type="number" min="0.01" step="any"></label>
+                <label>Memory limit (MiB)<input name="memory" type="number" min="6"></label>
+              </div>
+              <label>Pool runner image<input name="image" maxlength="256" placeholder="Use default image"></label>
+              <label>Worker addresses<textarea name="hosts" rows="2" placeholder="One worker address per line"></textarea></label>
+              <label class="settings-check"><input name="restrict" type="checkbox">Restrict repositories</label>
+              <label>Allowed repositories<textarea name="repositories" rows="2" placeholder="One OWNER/REPO per line"></textarea></label>
+              <button class="button" type="button" data-remove>Remove pool</button>
+            </fieldset>
+          </template>
         </section>
       </main>
     </div>

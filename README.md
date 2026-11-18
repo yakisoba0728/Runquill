@@ -307,6 +307,8 @@ The snapshot includes running runners, per-host slot usage and health, and direc
 
 The operations panel shows queue positions, wait times, and retry reasons. Filter jobs by repository, job ID, or pool. The worker and runner tables show host health, occupied and reserved slots, maintenance state, and observed runtimes. Pool capacity shows available worker slots before the fleet-wide limit. The overview shows how many of those slots the fleet can actually use.
 
+Administrators can open **Settings** to change the fleet limit, per-worker limits, GitHub polling interval, runner image, Docker workers, and pool rules. The settings are saved with the queue, recorded in the audit history, and applied to new assignments without restarting the manager. The deployment supplies the initial defaults. SSH workers use the deployment's SSH credentials, and outbound agents use the deployment's authorization file. Use the setup wizard for GitHub App, panel address, and Tailscale configuration.
+
 Use `docker compose exec -T manager runquill status --json` for scripts and monitoring. Schema version 1 includes `slot_limit`, `runners`, `hosts`, and `jobs`. Occupied slots are observed on reachable workers. Reserved slots account for offline workers and leases without an observed host. If Docker reports a conflicting topology, the snapshot still includes jobs and a `docker_error`, with `runners` set to `null` and a nonzero exit status.
 
 If GitHub shows a queued job that Runquill has not started, run `docker compose exec manager runquill diagnose OWNER/REPO`. It checks the App’s access using a repository-scoped read-only token, reports the last recorded poll, and explains invalid labels, retries, and worker capacity for queued jobs.
@@ -329,7 +331,7 @@ docker compose exec -T manager runquill backup --output /data/queue-backup.sqlit
 docker compose cp manager:/data/queue-backup.sqlite3 ./queue-backup.sqlite3
 ```
 
-The versioned snapshot is written with owner-only permissions to a new file. It contains queued jobs, runner leases, host maintenance state, and repository scan history. Treat it as private because it contains repository and job metadata. Keep the GitHub App PEM, configuration and OAuth secrets in your separate secret backup. Panel users, sessions, tokens and audit records are excluded. For a recovered panel, set `RUNQUILL_PANEL_BOOTSTRAP_ID` to the intended administrator's numeric GitHub ID, then enroll the team again and issue fresh tokens.
+The versioned snapshot is written with owner-only permissions to a new file. It contains queued jobs, runner leases, host maintenance state, repository scan history, and operational settings saved in the panel. Treat it as private because it contains repository and job metadata. Keep the GitHub App PEM, deployment configuration and OAuth secrets in your separate secret backup. Panel users, sessions, tokens and audit records are excluded. For a recovered panel, set `RUNQUILL_PANEL_BOOTSTRAP_ID` to the intended administrator's numeric GitHub ID, then enroll the team again and issue fresh tokens.
 
 Stop the previous manager and preserve its queue file. Use the same `RUNQUILL_OWNER` and `RUNQUILL_APP_ID` to prepare a new queue on the destination volume.
 

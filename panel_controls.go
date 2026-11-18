@@ -69,6 +69,12 @@ func (a *panelAccess) register(mux *http.ServeMux, panel *panelState) {
 	mux.HandleFunc("GET /api/audit", a.require("admin", a.audit))
 	mux.HandleFunc("POST /api/backup", a.require("admin", a.downloadBackup))
 	mux.HandleFunc("POST /api/diagnose", a.require("admin", panelDiagnose))
+	if panel.operations != nil {
+		mux.HandleFunc("GET /api/settings", a.require("admin", panel.operationSettings))
+		mux.HandleFunc("PUT /api/settings", a.require("admin", func(w http.ResponseWriter, r *http.Request, user panelIdentity) {
+			a.saveOperationSettings(w, r, user, panel)
+		}))
+	}
 	mux.HandleFunc("POST /api/hosts/cordon", a.require("hosts:write", func(w http.ResponseWriter, r *http.Request, user panelIdentity) {
 		a.cordon(w, r, user, panel)
 	}))
@@ -87,12 +93,16 @@ func panelJSON(w http.ResponseWriter, status int, value any) {
 }
 
 func decodePanelJSON(w http.ResponseWriter, r *http.Request, target any) bool {
+	return decodePanelJSONLimit(w, r, target, 8<<10)
+}
+
+func decodePanelJSONLimit(w http.ResponseWriter, r *http.Request, target any, limit int64) bool {
 	contentType, _, _ := strings.Cut(r.Header.Get("Content-Type"), ";")
 	if contentType != "application/json" {
 		http.Error(w, "Send application/json.", http.StatusUnsupportedMediaType)
 		return false
 	}
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10))
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(target) != nil || !errors.Is(decoder.Decode(new(any)), io.EOF) {
 		http.Error(w, "Invalid JSON request.", http.StatusBadRequest)

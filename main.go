@@ -270,16 +270,22 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if fleet, ok := runners.runtime.(*dockerFleet); ok && len(fleet.hosts) == 1 {
-		if err := fleet.prepare(ctx); err != nil {
-			return err
-		}
-	}
 	q, err := openQueue(env("RUNQUILL_DB", "runquill.sqlite3"))
 	if err != nil {
 		return err
 	}
 	defer q.close()
+	ops, err := loadOperations(ctx, q.DB, cfg, runners)
+	if err != nil {
+		return err
+	}
+	state := ops.current.Load()
+	runners = state.runners
+	if fleet, ok := runners.runtime.(*dockerFleet); ok && len(fleet.hosts) == 1 && state.policy.Revision == 0 {
+		if err := fleet.prepare(ctx); err != nil {
+			return err
+		}
+	}
 	var workerAgents *workerFleet
 	if fleet, ok := runners.runtime.(*dockerFleet); ok {
 		workerAgents = fleet.workers
@@ -303,7 +309,8 @@ func run(ctx context.Context) error {
 			return fmt.Errorf("initialize panel access: %w", err)
 		}
 		panel = newPanel(cfg)
-		panel.backend, panel.pools = runners.kind, runners.pools
+		panel.backend, panel.operations = runners.kind, ops
+		panel.snapshot.Polling = state.interval > 0
 		panelServer = panelHTTPServer(panel, access)
 		panelListener, err = net.Listen("tcp", addr)
 		if err != nil {
@@ -311,7 +318,7 @@ func run(ctx context.Context) error {
 		}
 		defer panelListener.Close()
 	}
-	s := &scheduler{queue: q, github: api, runtime: runners.runtime, limit: cfg.limit, hostLimits: runners.hostLimits, panel: panel, pools: runners.pools}
+	s := &scheduler{queue: q, github: api, panel: panel, operations: ops}
 	metrics, err := openMetrics(os.Getenv("RUNQUILL_METRICS_ADDR"), os.Getenv("RUNQUILL_METRICS_TOKEN_FILE"))
 	if err != nil {
 		return err
@@ -333,8 +340,8 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	slog.Info("Runquill listening", "address", listener.Addr(), "slots", cfg.limit, "version", version,
-		"webhook", cfg.secret != "", "poll_interval", cfg.pollInterval, "runner_backend", runners.kind, "runner_hosts", runners.hostCount)
+	slog.Info("Runquill listening", "address", listener.Addr(), "slots", state.policy.Limit, "version", version,
+		"webhook", cfg.secret != "", "poll_interval", state.interval, "runner_backend", runners.kind, "runner_hosts", runners.hostCount)
 	serverExit := make(chan error, 3)
 	go func() { serverExit <- server.Serve(listener) }()
 	if panelServer != nil {
@@ -347,15 +354,12 @@ func run(ctx context.Context) error {
 	}
 	workerCtx, stopWorker := context.WithCancel(ctx)
 	defer stopWorker()
-	var pollExit chan struct{}
-	if cfg.pollInterval > 0 {
-		pollExit = make(chan struct{})
-		p := &poller{github: api, queue: q, cache: make(map[string]pollPage), panel: panel}
-		go func() {
-			defer close(pollExit)
-			p.run(workerCtx, cfg.pollInterval)
-		}()
-	}
+	pollExit := make(chan struct{})
+	p := &poller{github: api, queue: q, cache: make(map[string]pollPage), panel: panel}
+	go func() {
+		defer close(pollExit)
+		p.run(workerCtx, ops)
+	}()
 	workerExit := make(chan struct{})
 	go func() {
 		defer close(workerExit)
@@ -400,9 +404,7 @@ func run(ctx context.Context) error {
 		serveErr = errors.Join(serveErr, err)
 	}
 	<-workerExit
-	if pollExit != nil {
-		<-pollExit
-	}
+	<-pollExit
 	return serveErr
 }
 

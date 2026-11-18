@@ -17,15 +17,24 @@ import (
 )
 
 func gc(ctx context.Context, out io.Writer) error {
-	runners, err := configureRunnerRuntime("")
-	if err != nil {
-		return err
-	}
 	db, err := openQueueDB(env("RUNQUILL_DB", "runquill.sqlite3"), "ro")
 	if err != nil {
 		return err
 	}
 	defer db.Close()
+	runners, err := configureRunnerRuntime("")
+	if err != nil {
+		return err
+	}
+	if _, saved, err := readOperationPolicy(ctx, db); err != nil {
+		return err
+	} else if saved {
+		state, err := appliedRunnerSettings(ctx, db, env("RUNQUILL_RUNNER_IMAGE", "runquill-runner:local"), 1)
+		if err != nil {
+			return err
+		}
+		runners = state.runners
+	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	hosts, err := runners.runtime.snapshot(ctx)

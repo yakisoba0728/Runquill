@@ -28,7 +28,18 @@ func doctor(ctx context.Context, out io.Writer, repo string) error {
 	}
 	cfg, err := loadConfig()
 	report("configuration", err)
-	if env("RUNQUILL_BACKEND", "docker") == "docker" {
+	saved, settingsErr := doctorOperationSettings(ctx, cfg)
+	if settingsErr != nil {
+		report("saved operation settings", settingsErr)
+	} else if saved != nil {
+		report("saved operation settings", nil)
+		switch fleet := saved.runners.runtime.(type) {
+		case *dockerFleet:
+			checkConfiguredDockerFleet(ctx, fleet, report)
+		case *kubeRunners:
+			fleet.check(ctx, report)
+		}
+	} else if env("RUNQUILL_BACKEND", "docker") == "docker" {
 		checkDockerFleet(ctx, cfg.runnerImage, report)
 	} else {
 		runners, err := configureRunnerRuntime(cfg.runnerImage)
@@ -57,6 +68,24 @@ func doctor(ctx context.Context, out io.Writer, repo string) error {
 		fmt.Fprintln(out, "Preflight passed. Run your first workflow to verify job discovery, runner assignment, and cleanup.")
 	}
 	return errors.Join(failures...)
+}
+
+func doctorOperationSettings(ctx context.Context, cfg config) (*operationState, error) {
+	path := env("RUNQUILL_DB", "runquill.sqlite3")
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	db, err := openQueueDB(path, "ro")
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	if _, saved, err := readOperationPolicy(ctx, db); err != nil || !saved {
+		return nil, err
+	}
+	return appliedRunnerSettings(ctx, db, cfg.runnerImage, cfg.limit)
 }
 
 func checkPanelListener(ctx context.Context, addr string, cfg panelOAuthConfig) error {
@@ -97,25 +126,29 @@ func checkDockerFleet(ctx context.Context, image string, report func(string, err
 	fleet, dockerErr := newDockerFleet(image, env("RUNQUILL_DOCKER_HOSTS", "local"))
 	if dockerErr != nil {
 		report("Docker hosts", dockerErr)
-	} else {
-		_, limitErr := fleet.limits(os.Getenv("RUNQUILL_DOCKER_HOST_LIMITS"))
-		report("Docker host runner limits", limitErr)
-		_, poolErr := fleet.configurePools(os.Getenv("RUNQUILL_WORKER_POOLS"))
-		report("Docker worker pools", poolErr)
-		for _, target := range fleet.hosts {
-			targetReport := report
-			if len(fleet.hosts) > 1 || target.host != "" {
-				targetReport = func(name string, err error) { report(target.label()+" "+name, err) }
-			}
-			if target.agentName() != "" {
-				targetReport("worker connection and runner image", fleet.workers.snapshot(ctx, target).Err)
-			} else {
-				checkDocker(ctx, target, targetReport)
-			}
+		return
+	}
+	_, limitErr := fleet.limits(os.Getenv("RUNQUILL_DOCKER_HOST_LIMITS"))
+	report("Docker host runner limits", limitErr)
+	_, poolErr := fleet.configurePools(os.Getenv("RUNQUILL_WORKER_POOLS"))
+	report("Docker worker pools", poolErr)
+	checkConfiguredDockerFleet(ctx, fleet, report)
+}
+
+func checkConfiguredDockerFleet(ctx context.Context, fleet *dockerFleet, report func(string, error)) {
+	for _, target := range fleet.hosts {
+		targetReport := report
+		if len(fleet.hosts) > 1 || target.host != "" {
+			targetReport = func(name string, err error) { report(target.label()+" "+name, err) }
 		}
-		if len(fleet.hosts) > 1 && poolErr == nil {
-			report("distinct Docker hosts with runner images", fleet.prepare(ctx))
+		if target.agentName() != "" {
+			targetReport("worker connection and runner image", fleet.workers.snapshot(ctx, target).Err)
+		} else {
+			checkDocker(ctx, target, targetReport)
 		}
+	}
+	if len(fleet.hosts) > 1 {
+		report("distinct Docker hosts with runner images", fleet.prepare(ctx))
 	}
 }
 

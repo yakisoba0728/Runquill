@@ -28,12 +28,107 @@ export function showLogin(error) {
   delete document.body.dataset.authenticated;
   document.title = tr("Sign in to Runquill");
   byID("access-nav").hidden = true;
+  byID("settings-nav").hidden = true;
   byID("signout").hidden = true;
   byID("token-secret").value = "";
   byID("issued-token").hidden = true;
   message("login-message", error);
   byID("sign-in").hidden = false;
   if (wasAuthenticated) byID("login-title").focus();
+}
+
+function bindSettings() {
+  const form = byID("settings-form");
+  const hostList = byID("settings-hosts");
+  const poolList = byID("settings-pools");
+  let revision = 0;
+
+  function addEntry(template, list) {
+    const row = byID(template).content.firstElementChild.cloneNode(true);
+    row.querySelector("[data-remove]").addEventListener("click", () => row.remove());
+    list.append(row);
+    return row;
+  }
+
+  function addHost(address = "", limit = "") {
+    const row = addEntry("settings-host", hostList);
+    const input = row.querySelector("[name=address]");
+    input.value = address;
+    row.querySelector("[name=limit]").value = limit;
+    if (address.startsWith("agent://")) {
+      input.readOnly = true;
+      row.querySelector("[data-remove]").hidden = true;
+    }
+    return input;
+  }
+
+  function addPool(name = "", pool = {}) {
+    const row = addEntry("settings-pool", poolList);
+    const field = (key) => row.querySelector("[name=" + key + "]");
+    field("pool_name").value = name;
+    field("cpus").value = pool.cpus || "";
+    field("memory").value = pool.memory_mib || "";
+    field("image").value = pool.image || "";
+    field("hosts").value = (pool.hosts || []).join("\n");
+    field("restrict").checked = Array.isArray(pool.repositories);
+    field("repositories").value = (pool.repositories || []).join("\n");
+    const sync = () => { field("repositories").disabled = !field("restrict").checked; };
+    field("restrict").addEventListener("change", sync);
+    sync();
+    return field("pool_name");
+  }
+
+  function populate({ backend, webhook_enabled, policy }) {
+    revision = policy.revision;
+    form.elements.slot_limit.value = policy.slot_limit;
+    form.elements.poll_interval.value = policy.poll_interval;
+    form.elements.runner_image.value = policy.runner_image;
+    byID("settings-webhook").textContent = tr(webhook_enabled ?
+      "GitHub webhooks are enabled. Set polling to 0 for webhook-only discovery." :
+      "GitHub webhooks are disabled. Keep polling enabled to receive jobs.");
+    byID("settings-docker").hidden = backend !== "docker";
+    hostList.replaceChildren();
+    poolList.replaceChildren();
+    for (const address of policy.docker_hosts || []) addHost(address, policy.host_limits?.[address]);
+    for (const [name, pool] of Object.entries(policy.worker_pools || {})) addPool(name, pool);
+    form.hidden = false;
+  }
+
+  async function load() {
+    populate(await panelRequest("./api/settings"));
+  }
+
+  function rows(list) {
+    return [...list.children].map((row) => Object.fromEntries([...row.querySelectorAll("[name]")]
+      .map((field) => [field.name, field.type === "checkbox" ? field.checked : field.value.trim()])));
+  }
+
+  const values = (value) => value.split(/[,\n]/).map((part) => part.trim()).filter(Boolean);
+  bindForm("settings-form", "settings-message", async (data) => {
+    const hosts = rows(hostList);
+    const pools = rows(poolList);
+    if (new Set(pools.map((pool) => pool.pool_name)).size !== pools.length) throw new Error(tr("Use a different name for each worker pool."));
+    const saved = await panelRequest("./api/settings", "PUT", {
+      revision,
+      slot_limit: Number(data.get("slot_limit")),
+      poll_interval: data.get("poll_interval").trim(),
+      runner_image: data.get("runner_image").trim(),
+      docker_hosts: hosts.map((row) => row.address),
+      host_limits: Object.fromEntries(hosts.filter((row) => row.limit).map((row) => [row.address, Number(row.limit)])),
+      worker_pools: Object.fromEntries(pools.map((row) => [row.pool_name, {
+        hosts: values(row.hosts), repositories: row.restrict ? values(row.repositories) : null,
+        cpus: Number(row.cpus), memory_mib: Number(row.memory), image: row.image,
+      }])),
+    }, 10000);
+    populate(saved);
+    message("settings-message", "Settings saved.");
+  });
+  byID("settings-reload").addEventListener("click", () => void report("settings-message", load));
+  byID("settings-add-host").addEventListener("click", () => addHost().focus());
+  byID("settings-add-pool").addEventListener("click", () => addPool().focus());
+  byID("settings").hidden = false;
+  byID("settings-nav").hidden = false;
+  void report("settings-message", load);
 }
 
 function listItem(parent, title, details, button, action) {
@@ -186,6 +281,7 @@ export async function initializeManagement() {
   });
   if (user.role === "admin") {
     bindOperations();
+    bindSettings();
     byID("team-panel").hidden = false;
     byID("audit-panel").hidden = false;
     bindForm("team-form", "team-message", async (form) => {

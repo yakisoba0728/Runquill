@@ -44,10 +44,11 @@ func inspectStatus(ctx context.Context, db *sql.DB) (*statusReport, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read runner host states: %w", err)
 	}
-	runners, err := configureRunnerRuntime(env("RUNQUILL_RUNNER_IMAGE", "runquill-runner:local"))
+	state, err := appliedRunnerSettings(ctx, db, env("RUNQUILL_RUNNER_IMAGE", "runquill-runner:local"), limit)
 	if err != nil {
 		return nil, err
 	}
+	runners, limit := state.runners, state.policy.Limit
 	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	snapshots, probeErr := runners.runtime.snapshot(probeCtx)

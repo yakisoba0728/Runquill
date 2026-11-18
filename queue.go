@@ -62,7 +62,12 @@ CREATE TABLE IF NOT EXISTS jobs (
 CREATE INDEX IF NOT EXISTS jobs_waiting ON jobs(sequence)
     WHERE phase = 0 AND runner_name IS NULL;
 CREATE INDEX IF NOT EXISTS jobs_leased ON jobs(runner_name)
-    WHERE runner_name IS NOT NULL;`
+    WHERE runner_name IS NOT NULL;
+CREATE TABLE IF NOT EXISTS operation_settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    revision INTEGER NOT NULL CHECK (revision > 0),
+    policy TEXT NOT NULL
+);`
 
 func openQueue(path string) (*queue, error) {
 	path, err := filepath.Abs(path)

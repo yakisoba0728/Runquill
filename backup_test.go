@@ -34,6 +34,10 @@ func TestBackupOnlineAndRestoreToFencedQueue(t *testing.T) {
 	if _, err := q.Exec("INSERT INTO repository_polls VALUES (9, 8, 123, 123, 0, '')"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := q.Exec("INSERT INTO operation_settings VALUES (1, 1, ?)",
+		`{"slot_limit":4,"poll_interval":"30s","runner_image":"runquill-runner:local","docker_hosts":["local"]}`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := q.Exec(panelAccessSchema + "INSERT INTO panel_users VALUES (42, 'operator', 'admin', 0); INSERT INTO panel_sessions VALUES (x'aaaa', 42, 9999999999); INSERT INTO panel_tokens (digest,user_id,name,scope,expires_at,created_at) VALUES (x'bbbb',42,'token','fleet:read',9999999999,1)"); err != nil {
 		t.Fatal(err)
 	}
@@ -103,6 +107,9 @@ func TestBackupOnlineAndRestoreToFencedQueue(t *testing.T) {
 	}
 	if err := restored.QueryRow("SELECT count(*) FROM repository_polls").Scan(&polls); err != nil || polls != 1 {
 		t.Fatalf("restored repository polls: %d, %v", polls, err)
+	}
+	if policy, set, err := readOperationPolicy(ctx, restored.DB); err != nil || !set || policy.Limit != 4 || policy.Revision != 1 {
+		t.Fatalf("restored operation settings: %+v, %v", policy, err)
 	}
 	if err := q.QueryRow("SELECT count(*) FROM jobs").Scan(&liveJobs); err != nil || liveJobs != 2 {
 		t.Fatalf("original queue was modified: got %d jobs, %v", liveJobs, err)

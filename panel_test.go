@@ -25,7 +25,7 @@ func TestPanelRoutesAndFirstJobEvidence(t *testing.T) {
 	p := newPanel(config{pollInterval: 30 * time.Second, repositoryScope: scopeSelected})
 	p.markPoll(now, true)
 	host := hostCapacity{dockerHostSnapshot: dockerHostSnapshot{Name: "local", Containers: map[string]string{"orphan": "exited"}}, Limit: 1, Cordoned: true}
-	p.capture(ctx, q, []hostCapacity{host}, 0, 1, nil)
+	p.capture(ctx, q, []hostCapacity{host}, 0, 1, nil, nil)
 
 	rec := httptest.NewRecorder()
 	access := panelAccessForTest(t, q)
@@ -57,7 +57,7 @@ func TestPanelRoutesAndFirstJobEvidence(t *testing.T) {
         runner_cleaned_host = ? WHERE job_id = ?`, completed, now.Unix(), now.Unix(), "local", j.id); err != nil {
 		t.Fatal(err)
 	}
-	p.capture(ctx, q, []hostCapacity{host}, 0, 1, nil)
+	p.capture(ctx, q, []hostCapacity{host}, 0, 1, nil, nil)
 	if got := p.snapshot; len(got.Fleet.Jobs) != 0 || len(got.Recent) != 1 ||
 		got.FirstJobClean == nil || got.FirstJobClean.URL != "https://github.com/owner/repository/actions/runs/12/job/13" {
 		t.Fatalf("first job cleanup: %+v", got)

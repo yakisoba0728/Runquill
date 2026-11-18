@@ -32,6 +32,18 @@ type dockerHostSnapshot struct {
 const dockerHostProbeTimeout = 5 * time.Second
 
 func newDockerFleet(image, hosts string) (*dockerFleet, error) {
+	fleet, err := parseDockerFleet(image, hosts)
+	if err != nil {
+		return nil, err
+	}
+	fleet.workers, err = loadWorkerFleet(fleet.hosts, os.Getenv("RUNQUILL_WORKER_AUTH_FILE"))
+	if err != nil {
+		return nil, err
+	}
+	return fleet, nil
+}
+
+func parseDockerFleet(image, hosts string) (*dockerFleet, error) {
 	fleet := &dockerFleet{}
 	seen := make(map[string]bool)
 	for _, host := range strings.Split(hosts, ",") {
@@ -64,11 +76,6 @@ func newDockerFleet(image, hosts string) (*dockerFleet, error) {
 		}
 		fleet.hosts = append(fleet.hosts, docker{image: image, host: host})
 	}
-	workers, err := loadWorkerFleet(fleet.hosts, os.Getenv("RUNQUILL_WORKER_AUTH_FILE"))
-	if err != nil {
-		return nil, err
-	}
-	fleet.workers = workers
 	return fleet, nil
 }
 

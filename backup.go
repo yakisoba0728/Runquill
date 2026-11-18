@@ -33,6 +33,7 @@ var queueBackupTables = []struct {
 		"retry_reason runner_host github_created_at discovered_at provisioned_at github_started_at discovery_source runner_cleaned_at runner_cleaned_host", 12},
 	{"docker_hosts", "host cordoned untracked_slots", 2},
 	{"repository_polls", "installation_id repository_id checked_at full_at active_at last_error", 6},
+	{"operation_settings", "id revision policy", 3},
 }
 
 func runQueueBackup(ctx context.Context, out io.Writer, command string, args []string) error {
@@ -233,7 +234,7 @@ func copyQueueFile(ctx context.Context, source, target string, identity queueBac
 func copyQueueTable(ctx context.Context, tx *sql.Tx, name string, columns []string, required int, fullSchema bool) error {
 	var kind string
 	err := tx.QueryRowContext(ctx, "SELECT type FROM pragma_table_list(?) WHERE schema='source' AND name=?", name, name).Scan(&kind)
-	if errors.Is(err, sql.ErrNoRows) && name != "jobs" && !fullSchema {
+	if errors.Is(err, sql.ErrNoRows) && (name == "operation_settings" || name != "jobs" && !fullSchema) {
 		return nil
 	}
 	if err != nil {

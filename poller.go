@@ -30,33 +30,53 @@ type pollPage struct {
 	usedAt     time.Time
 }
 
-func (p *poller) run(ctx context.Context, interval time.Duration) {
+func (p *poller) run(ctx context.Context, ops *operations) {
+	var last, rateBlockedUntil time.Time
 	var backoff time.Duration
 	for ctx.Err() == nil {
-		delay := interval
+		state := ops.current.Load()
+		if state.interval == 0 {
+			select {
+			case <-ctx.Done():
+				return
+			case <-state.pollEdited:
+				continue
+			}
+		}
+		next := last.Add(state.interval)
+		if rateBlockedUntil.After(next) {
+			next = rateBlockedUntil
+		}
+		if delay := time.Until(next); delay > 0 {
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-state.pollEdited:
+				timer.Stop()
+			case <-timer.C:
+			}
+			continue
+		}
 		err := p.sweep(ctx)
 		if ctx.Err() != nil {
 			return
 		}
+		last = time.Now()
 		if p.panel != nil {
-			p.panel.markPoll(time.Now(), err == nil)
+			p.panel.markPoll(last, err == nil)
 		}
+		rateBlockedUntil = time.Time{}
 		var apiErr *githubError
 		if errors.As(err, &apiErr) && !apiErr.retryAt.IsZero() {
 			backoff = min(max(time.Minute, 2*backoff), 10*time.Minute)
-			delay = max(delay, backoff, time.Until(apiErr.retryAt))
+			rateBlockedUntil = last.Add(max(backoff, time.Until(apiErr.retryAt)))
 		} else {
 			backoff = 0
 		}
 		if err != nil {
-			slog.Warn("GitHub poll failed", "error", err, "retry_in", delay)
-		}
-		timer := time.NewTimer(delay)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return
-		case <-timer.C:
+			slog.Warn("GitHub poll failed", "error", err, "retry_in", max(state.interval, time.Until(rateBlockedUntil)))
 		}
 	}
 }

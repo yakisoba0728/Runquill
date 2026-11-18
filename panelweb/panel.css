@@ -200,6 +200,25 @@ code { padding: 1px 3px; border-radius: 3px; color: var(--accent); background: v
 .issued input { font-family: var(--mono); }
 .issued button { justify-self: start; }
 .diagnose-result { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 19rem; overflow: auto; margin: 0 17px 14px; padding: 10px; background: var(--inset); border: 1px solid var(--line); border-radius: 6px; }
+#settings { scroll-margin-top: 16px; }
+.settings-form { display: grid; gap: 12px; padding: 16px 17px; }
+.settings-form > .button { justify-self: start; }
+.settings-fields { display: grid; grid-template-columns: 1fr 1fr 2fr; gap: 12px; }
+.settings-form label { display: grid; gap: 5px; min-width: 0; color: var(--muted); font-size: .8rem; font-weight: 650; }
+.settings-form :is(input:not([type="checkbox"]), textarea) {
+  width: 100%; min-height: 34px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line);
+  background: var(--inset); color: var(--ink); font: inherit;
+}
+.settings-form textarea { resize: vertical; }
+.settings-form .settings-check { display: flex; align-items: center; gap: 6px; }
+.settings-check input { accent-color: var(--accent); }
+.settings-form textarea:disabled { opacity: .65; }
+.settings-heading { display: flex; align-items: center; justify-content: space-between; gap: 9px; margin: 9px 0; }
+.settings-hint { margin: 0 0 4px; color: var(--muted); font-size: .8rem; }
+.settings-entries { display: grid; gap: 8px; margin-bottom: 13px; }
+.settings-host { display: grid; grid-template-columns: 2fr 1fr auto; align-items: end; gap: 9px; }
+.settings-pool { display: grid; gap: 9px; min-width: 0; margin: 0; padding: 12px; border: 1px solid var(--line); border-radius: 7px; }
+.settings-pool .button { justify-self: start; }
 
 @media (max-width: 1040px) {
   .panel-shell { grid-template-columns: minmax(0, 1fr); }
@@ -225,6 +244,8 @@ code { padding: 1px 3px; border-radius: 3px; color: var(--accent); background: v
   .section-head, td, th { padding-inline: 11px; }
   .checklist { grid-template-columns: minmax(0, 1fr); }
   .checklist li + li { border-left: 0; border-top: 1px solid var(--soft); }
+  .settings-fields, .settings-host { grid-template-columns: minmax(0, 1fr); }
+  .settings-host button { justify-self: start; }
 }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
 

@@ -48,7 +48,7 @@ type panelState struct {
 	snapshot        panelSnapshot
 	backend         string
 	repositoryScope string
-	pools           workerPools
+	operations      *operations
 }
 
 func newPanel(cfg config) *panelState {
@@ -73,7 +73,7 @@ func (p *panelState) markPoll(at time.Time, ok bool) {
 	}
 }
 
-func (p *panelState) capture(ctx context.Context, q *queue, hosts []hostCapacity, unassigned, limit int, probeErr error) {
+func (p *panelState) capture(ctx context.Context, q *queue, hosts []hostCapacity, unassigned, limit int, pools workerPools, probeErr error) {
 	ctx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
 	defer cancel()
 	jobs, err := readStatusJobs(ctx, q.DB)
@@ -89,13 +89,13 @@ func (p *panelState) capture(ctx context.Context, q *queue, hosts []hostCapacity
 		slog.Warn("read first job progress", "error", err)
 		return
 	}
-	recent, firstClean, err := readPanelCompleted(ctx, q, now, p.pools)
+	recent, firstClean, err := readPanelCompleted(ctx, q, now, pools)
 	if err != nil {
 		slog.Warn("read panel job history", "error", err)
 		return
 	}
 	report := summarizeStatus(jobs, hosts, unassigned, limit, now)
-	report.configure(p.backend, p.repositoryScope, p.pools, jobs, hosts)
+	report.configure(p.backend, p.repositoryScope, pools, jobs, hosts)
 	inventory := panelRunnerInventory(hosts, report.Jobs)
 	if probeErr != nil {
 		report.DockerError = "Runner host discovery failed. Check the manager logs."

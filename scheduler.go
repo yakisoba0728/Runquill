@@ -33,13 +33,26 @@ type scheduler struct {
 	panel      *panelState
 	pools      workerPools
 	metrics    *fleetMetrics
+	operations *operations
 }
 
 func (s *scheduler) tick(ctx context.Context, now time.Time) error {
+	if s.operations == nil {
+		return s.tickFleet(ctx, now, nil)
+	}
+	s.operations.topology.RLock()
+	defer s.operations.topology.RUnlock()
+	state := s.operations.current.Load()
+	tick := *s
+	tick.runtime, tick.pools, tick.hostLimits, tick.limit = state.runners.runtime, state.runners.pools, state.runners.hostLimits, state.policy.Limit
+	return tick.tickFleet(ctx, now, state)
+}
+
+func (s *scheduler) tickFleet(ctx context.Context, now time.Time, state *operationState) error {
 	snapshots, err := s.runtime.snapshot(ctx)
 	if err != nil {
 		if s.panel != nil && ctx.Err() == nil {
-			s.panel.capture(ctx, s.queue, nil, 0, s.limit, err)
+			s.panel.capture(ctx, s.queue, nil, 0, s.limit, s.pools, err)
 		}
 		return err
 	}
@@ -74,7 +87,7 @@ func (s *scheduler) tick(ctx context.Context, now time.Time) error {
 		}
 	}
 	if s.panel != nil {
-		s.panel.capture(ctx, s.queue, hosts, occupied, s.limit, nil)
+		s.panel.capture(ctx, s.queue, hosts, occupied, s.limit, s.pools, nil)
 	}
 	for _, host := range hosts {
 		occupied += host.Occupied
@@ -94,6 +107,9 @@ func (s *scheduler) tick(ctx context.Context, now time.Time) error {
 	}
 	var attempts int
 	for _, j := range waiting {
+		if state != nil && s.operations.current.Load() != state {
+			break
+		}
 		pool, err := s.pools.forJob(j)
 		if err != nil {
 			if err := s.retry(ctx, j, now, "select worker pool", err); err != nil {

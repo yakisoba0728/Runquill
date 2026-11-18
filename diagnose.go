@@ -26,6 +26,14 @@ func diagnose(ctx context.Context, out io.Writer, name string) error {
 		return err
 	}
 	defer db.Close()
+	if policy, saved, err := readOperationPolicy(ctx, db); err != nil {
+		return err
+	} else if saved {
+		cfg.pollInterval, err = time.ParseDuration(policy.PollInterval)
+		if err != nil {
+			return err
+		}
+	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	return diagnoseRepository(ctx, out, api, db, name, cfg.pollInterval != 0)
