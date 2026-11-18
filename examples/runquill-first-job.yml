@@ -1,0 +1,13 @@
+name: Runquill first job
+
+on: workflow_dispatch
+
+permissions: {}
+
+jobs:
+  first-job:
+    runs-on: ${{ format('runquill-{0}-{1}-first-job', github.run_id, github.run_attempt) }}
+    timeout-minutes: 5
+    steps:
+      - name: Show the runner
+        run: printf 'Runquill picked up this job on %s\n' "$RUNNER_NAME"
