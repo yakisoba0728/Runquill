@@ -14,10 +14,19 @@
   <header class="topbar">
     <div class="frame topbar-inner">
       <a class="wordmark" href="#overview"><span class="mark" aria-hidden="true"></span>runquill<span class="wordmark-divider">/</span><span class="product">Panel</span></a>
-      <nav aria-label="Panel"><a href="#overview">Overview</a><a href="#first-job">First job setup</a></nav>
+      <nav aria-label="Panel"><a href="#overview">Overview</a><a href="#first-job">First job setup</a><a id="access-nav" href="#access" hidden>Manage access</a></nav>
       <span id="mode" class="mode">Sample fleet</span>
+      <button class="signout" id="signout" type="button" hidden>Sign out</button>
     </div>
   </header>
+  <main class="frame" id="sign-in" hidden>
+    <section class="surface signin">
+      <h1>Sign in to Runquill<span>.</span></h1>
+      <p>Use the GitHub account your Runquill administrator enrolled.</p>
+      <a class="button primary" href="./auth/github">Continue with GitHub ↗</a>
+      <p id="login-message" role="status" hidden></p>
+    </section>
+  </main>
   <main class="frame" id="overview">
     <header class="page-head">
       <div>
@@ -71,6 +80,7 @@
         <section class="surface" aria-labelledby="hosts-title">
           <div class="section-head"><div><h2 id="hosts-title">Hosts</h2><p>Capacity by Docker engine</p></div></div>
           <div id="host-rows" class="host-rows"><p class="empty">Waiting for a fleet snapshot…</p></div>
+          <p id="host-action" class="inline-note" role="status" hidden></p>
         </section>
         <section class="surface" aria-labelledby="signals-title">
           <div class="section-head"><div><h2 id="signals-title">GitHub connection</h2><p>Observed delivery and polling</p></div></div>
@@ -93,6 +103,42 @@
         <li><span class="check" data-check="seen" aria-hidden="true"></span><div><h3>Run the first workflow</h3><p id="check-seen-instruction">In a private repository, run <code>runquill workflow init</code>. Commit the workflow and select <strong>Run workflow</strong> on GitHub.</p><p id="check-seen" hidden>Runquill discovered the first-job workflow.</p></div></li>
         <li><span class="check" data-check="clean" aria-hidden="true"></span><div><h3>Confirm cleanup</h3><p id="check-clean">When the job finishes, Runquill removes its runner. Check the job result on GitHub.</p><a id="check-link" target="_blank" rel="noopener noreferrer" hidden>View first job on GitHub ↗</a></div></li>
       </ol>
+    </section>
+    <section class="management" id="access" aria-labelledby="access-title" hidden>
+      <div class="management-heading"><h2 id="access-title">Manage access</h2><p id="current-user"></p></div>
+      <div class="management-grid">
+        <section class="surface" id="token-panel" aria-labelledby="tokens-title">
+          <div class="section-head"><div><h2 id="tokens-title">API tokens</h2><p>Scoped credentials for scripts and integrations</p></div></div>
+          <form id="token-form" class="control-form">
+            <label>Token name<input name="name" maxlength="80" required placeholder="Metrics collector"></label>
+            <label>Scope<select name="scope"><option value="fleet:read">Read fleet status</option><option id="maint-scope" value="hosts:write">Manage host maintenance</option></select></label>
+            <label>Valid for days<input name="days" type="number" min="1" max="90" value="30" required></label>
+            <button class="button primary" type="submit">Create token</button>
+          </form>
+          <div id="issued-token" class="issued" hidden>
+            <label for="token-secret">Copy your token now. Its value is shown once.</label>
+            <input id="token-secret" type="text" readonly>
+            <button class="button" id="hide-token" type="button">Hide token</button>
+          </div>
+          <ul class="control-list" id="token-list"></ul>
+          <p id="token-message" class="inline-note" role="status" hidden></p>
+        </section>
+        <section class="surface" id="team-panel" aria-labelledby="team-title" hidden>
+          <div class="section-head"><div><h2 id="team-title">Team</h2><p>Enroll a teammate by their numeric GitHub account ID</p></div></div>
+          <form id="team-form" class="control-form">
+            <label>GitHub ID<input name="github_id" inputmode="numeric" pattern="[0-9]+" maxlength="19" required></label>
+            <label>Role<select name="role" aria-label="Role"><option value="viewer">Viewer</option><option value="operator">Operator</option><option value="admin">Admin</option></select></label>
+            <button class="button primary" type="submit">Save team member</button>
+          </form>
+          <ul class="control-list" id="team-list"></ul>
+          <p id="team-message" class="inline-note" role="status" hidden></p>
+        </section>
+      </div>
+      <section class="surface" id="audit-panel" aria-labelledby="audit-title" hidden>
+        <div class="section-head"><div><h2 id="audit-title">Audit history</h2><p>Recent sign-ins and management actions</p></div><button class="button" id="refresh-audit" type="button">Refresh</button></div>
+        <ul class="control-list" id="audit-list"></ul>
+        <p id="audit-message" class="inline-note" role="status" hidden></p>
+      </section>
     </section>
   </main>
   <footer class="frame footer"><span>Runquill</span><a href="https://github.com/yakisoba0728/Runquill" target="_blank" rel="noopener noreferrer">Source on GitHub ↗</a></footer>

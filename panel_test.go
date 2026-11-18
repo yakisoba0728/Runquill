@@ -28,8 +28,15 @@ func TestPanelRoutesAndFirstJobEvidence(t *testing.T) {
 	p.capture(ctx, q, []hostCapacity{host}, 0, 1, nil)
 
 	rec := httptest.NewRecorder()
-	live := panelHandler(p)
-	live.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://localhost:8081/snapshot", nil))
+	access := panelAccessForTest(t, q)
+	key, err := access.startSession(ctx, panelIdentity{GitHubID: 101, Login: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := panelHandler(p, access)
+	request := httptest.NewRequest(http.MethodGet, "http://localhost:8081/snapshot", nil)
+	request.AddCookie(&http.Cookie{Name: access.cookieName("session"), Value: key})
+	live.ServeHTTP(rec, request)
 	if rec.Code != http.StatusOK || rec.Header().Get("Cache-Control") != "no-store" ||
 		!strings.Contains(rec.Header().Get("Content-Security-Policy"), "frame-ancestors 'none'") {
 		t.Fatalf("snapshot response: %d %v", rec.Code, rec.Header())
@@ -53,7 +60,7 @@ func TestPanelRoutesAndFirstJobEvidence(t *testing.T) {
 		t.Fatalf("first job cleanup: %+v", got)
 	}
 
-	demo := panelHandler(nil)
+	demo := panelHandler(nil, nil)
 	for _, tc := range []struct {
 		h                 http.Handler
 		method, url, body string

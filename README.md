@@ -207,17 +207,35 @@ The example pins both actions to exact commits, uses read-only repository permis
 
 ## Operate and upgrade
 
-### Read-only web panel
+### Web panel and team access
 
-Start a sample fleet with `go run . panel --demo` from a source checkout, or `./runquill panel --demo` with the compiled binary. Open [localhost:8081](http://127.0.0.1:8081/) and switch between first-job cleanup, webhook recovery and an offline worker. A static host can serve `panelweb/` as a standalone demo with the same sample data.
+Start a sample fleet with `go run . panel --demo` from a source checkout, or `./runquill panel --demo` with the compiled binary. Open [127.0.0.1:8081](http://127.0.0.1:8081/) to try first-job cleanup, webhook recovery, and an offline worker. The `panelweb/` directory can be served as a static demo.
 
-To show your own fleet, build the manager with the panel overlay. The overlay publishes the dashboard on loopback port 8081. The existing port 8080 continues to serve GitHub webhooks and the health check.
+For a live fleet, create a dedicated [GitHub OAuth App](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app) for panel sign-in. The existing runner GitHub App continues to handle provisioning. Register the exact panel origin as the homepage and append `/auth/github/callback` for the authorization callback. Use the GitHub account's numeric ID for the first administrator. The account holder can retrieve it with `gh api user --jq .id`.
+
+```dotenv
+RUNQUILL_PANEL_URL=http://127.0.0.1:8081
+RUNQUILL_PANEL_GITHUB_CLIENT_ID=your-oauth-client-id
+RUNQUILL_PANEL_GITHUB_CLIENT_SECRET=your-oauth-client-secret
+RUNQUILL_PANEL_BOOTSTRAP_ID=12345678
+```
+
+Add those variables to your manager configuration and build with the panel overlay. It publishes port 8081 on loopback while port 8080 remains the webhook service.
 
 ```sh
 RUNQUILL_MANAGER_IMAGE=runquill-manager:local docker compose -f compose.yaml -f compose.panel.yaml up -d --build
 ```
 
-Open [localhost:8081](http://127.0.0.1:8081/). For a remote server, use an SSH tunnel such as `ssh -L 8081:127.0.0.1:8081 user@server`. For multi-host Compose installs, include `-f compose.ssh.yaml` as well. For a manager run directly, set `RUNQUILL_PANEL_ADDR=127.0.0.1:8081` before starting it. The panel reports recent observations and the jobs whose runner cleanup was confirmed. It has no sign-in, so keep the panel port on loopback and configure public HTTPS forwarding only for the webhook service.
+For multi-host Compose installs, include `-f compose.ssh.yaml`. If the manager runs directly, also set `RUNQUILL_PANEL_ADDR=127.0.0.1:8081`. Use an SSH tunnel for remote loopback access. For a shared panel, set `RUNQUILL_PANEL_URL` to an HTTPS origin and forward it to port 8081 through an HTTPS reverse proxy that preserves the public Host header. Use a separate origin for the public webhook.
+
+| Role | Panel access |
+| --- | --- |
+| Viewer | View job, runner, and host status. Create a scoped fleet-reader API token. |
+| Operator | Viewer access plus pause and resume host assignments. |
+| Admin | Operator access plus enroll or disable team users, manage tokens, and read audit history. |
+
+Team users sign in with their enrolled GitHub account. Tokens expire after 1–90 days, have one scope, and can be revoked from the panel. The secret is shown only when issued. Send `Authorization: Bearer <token>` with `GET /snapshot` for `fleet:read` or `POST /api/hosts/cordon` for `hosts:write`. The latter accepts `{"host":"local","cordoned":true}`. You can pause new work on a host without interrupting its active runners. Audit history records sign-ins and management changes.
+
 
 ### Status and upgrades
 

@@ -7,6 +7,8 @@ let view = "active";
 let selected = null;
 let current = null;
 let refreshError = false;
+let management = null;
+let user = null;
 
 function node(tag, value, css) {
   const result = document.createElement(tag);
@@ -72,6 +74,17 @@ function renderHosts(hosts) {
     bar.dataset.reserved = String(host.reserved_slots > 0);
     bar.setAttribute("aria-label", host.name + " capacity");
     row.append(name, capacity, bar);
+    if (user && user.role !== "viewer") {
+      const control = node("button", host.cordoned ? "Resume assignments" : "Pause assignments", "button host-control");
+      control.type = "button";
+      control.setAttribute("aria-label", control.textContent + " on " + host.name);
+      control.addEventListener("click", async () => {
+        control.disabled = true;
+        await management.updateHost(host);
+        control.disabled = false;
+      });
+      row.append(control);
+    }
     target.append(row);
   }
 }
@@ -223,6 +236,10 @@ for (const button of viewButtons) {
 async function refresh() {
   try {
     const response = await fetch("./snapshot", { cache: "no-store", signal: AbortSignal.timeout(5000) });
+    if (response.status === 401) {
+      management.showLogin("Your session ended. Sign in again to view the fleet.");
+      return;
+    }
     if (!response.ok) throw new Error("snapshot unavailable");
     current = await response.json();
     refreshError = false;
@@ -253,7 +270,8 @@ if (demoMode) {
   for (const button of demoButtons) button.addEventListener("click", () => scenario(button.dataset.scenario));
   scenario("first");
 } else {
-  text("mode", "Read-only");
   text("intro", "Track job discovery, runner capacity and cleanup.");
-  refresh();
+  management = await import("./manage.js");
+  user = await management.initializeManagement();
+  if (user) refresh();
 }

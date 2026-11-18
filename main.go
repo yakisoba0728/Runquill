@@ -251,8 +251,16 @@ func run(ctx context.Context) error {
 	var panelServer *http.Server
 	var panelListener net.Listener
 	if addr := os.Getenv("RUNQUILL_PANEL_ADDR"); addr != "" {
+		settings, err := loadPanelOAuthConfig()
+		if err != nil {
+			return err
+		}
+		access, err := newPanelAccess(ctx, q.DB, settings)
+		if err != nil {
+			return fmt.Errorf("initialize panel access: %w", err)
+		}
 		panel = newPanel(cfg)
-		panelServer = panelHTTPServer(panel)
+		panelServer = panelHTTPServer(panel, access)
 		panelListener, err = net.Listen("tcp", addr)
 		if err != nil {
 			return fmt.Errorf("listen for panel: %w", err)

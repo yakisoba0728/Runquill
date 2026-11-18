@@ -205,17 +205,29 @@ runs-on: ${{ format('runquill-{0}-{1}-test-{2}', github.run_id, github.run_attem
 
 ## 대기열과 작업 환경
 
-### 읽기 전용 웹 패널
+### 웹 패널과 팀 권한
 
-소스 체크아웃에서 `go run . panel --demo`를 실행하거나 빌드한 바이너리로 `./runquill panel --demo`를 실행합니다. [localhost:8081](http://127.0.0.1:8081/)에서 첫 작업 정리, 웹훅 누락 후 복구, 워커 오프라인 시나리오를 볼 수 있습니다. `panelweb/` 디렉터리를 정적 호스팅에 올려 같은 샘플 데모를 제공할 수도 있습니다.
+소스 체크아웃에서 `go run . panel --demo`를 실행하거나 빌드한 바이너리로 `./runquill panel --demo`를 실행합니다. [127.0.0.1:8081](http://127.0.0.1:8081/)에서 첫 작업 정리, 웹훅 누락 후 복구, 워커 오프라인 시나리오를 볼 수 있습니다. `panelweb/` 디렉터리를 정적 호스팅에 올리면 같은 데모를 제공할 수 있습니다.
 
-내 서버의 상태를 보려면 패널 오버레이로 매니저를 빌드합니다. 패널은 로컬 8081 포트에 열리고 기존 8080 포트에서는 GitHub 웹훅과 헬스 체크가 동작합니다.
+실제 플릿 패널용으로 [GitHub OAuth App](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app)을 만듭니다. 기존 러너용 GitHub App은 러너 등록에 계속 사용합니다. OAuth App의 홈페이지 주소에 패널 주소를 넣고, 콜백 주소에는 `/auth/github/callback`을 붙입니다. 첫 관리자는 GitHub의 숫자 계정 ID로 지정합니다. 해당 계정에서 `gh api user --jq .id`로 확인할 수 있습니다.
+
+```dotenv
+RUNQUILL_PANEL_URL=http://127.0.0.1:8081
+RUNQUILL_PANEL_GITHUB_CLIENT_ID=your-oauth-client-id
+RUNQUILL_PANEL_GITHUB_CLIENT_SECRET=your-oauth-client-secret
+RUNQUILL_PANEL_BOOTSTRAP_ID=12345678
+```
+
+매니저 설정에 위 값을 추가하고 패널 오버레이로 빌드합니다. 패널은 로컬 8081 포트에 열리고 기존 8080 포트는 웹훅 서비스에 사용됩니다.
 
 ```sh
 RUNQUILL_MANAGER_IMAGE=runquill-manager:local docker compose -f compose.yaml -f compose.panel.yaml up -d --build
 ```
 
-[localhost:8081](http://127.0.0.1:8081/)로 접속합니다. 원격 서버에는 `ssh -L 8081:127.0.0.1:8081 user@server`처럼 SSH 터널을 사용합니다. 멀티 서버 설치에는 `-f compose.ssh.yaml`도 함께 전달합니다. 매니저 바이너리를 직접 띄운다면 `RUNQUILL_PANEL_ADDR=127.0.0.1:8081`을 설정합니다. 패널에서 관측 시각, 최근 러너 정리 기록과 첫 작업 체크리스트를 확인할 수 있습니다. 패널에는 로그인 기능이 없으므로 로컬 포트로 유지하고, 공개 HTTPS는 웹훅 서비스에 연결하세요.
+멀티 서버 설정에서는 `-f compose.ssh.yaml`도 전달합니다. 바이너리를 직접 실행하는 경우 `RUNQUILL_PANEL_ADDR=127.0.0.1:8081`을 설정합니다. 원격 루프백 접속에는 SSH 터널을 이용하세요. 팀이 공유할 때는 `RUNQUILL_PANEL_URL`에 HTTPS 주소를 지정하고, HTTPS 역프록시에서 원래 Host 헤더를 유지해 패널의 8081 포트로 전달합니다. 공개 웹훅에는 별도 주소를 씁니다.
+
+Viewer는 상태를 보고 읽기 토큰을 만들 수 있습니다. Operator는 워커에 새 작업을 배정하거나 잠시 멈출 수 있습니다. Admin은 팀 사용자와 권한, 토큰, 감사 기록을 관리합니다. 토큰은 1~90일 뒤 만료되며 원문은 발급 시 한 번 표시됩니다. 워커 정비를 활성화해도 실행 중인 작업은 계속 처리됩니다.
+
 
 ### 슬롯과 상태 확인
 

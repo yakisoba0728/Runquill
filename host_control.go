@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"io"
 )
@@ -20,10 +21,7 @@ func setHostCordon(ctx context.Context, out io.Writer, name string, cordoned boo
 		return err
 	}
 	defer db.Close()
-	_, err = db.ExecContext(ctx, `
-        INSERT INTO docker_hosts (host, cordoned) VALUES (?, ?)
-        ON CONFLICT (host) DO UPDATE SET cordoned = excluded.cordoned`, name, cordoned)
-	if err != nil {
+	if err := writeHostCordon(ctx, db, name, cordoned); err != nil {
 		return fmt.Errorf("update Docker host state in %s (start the manager to initialize the queue): %w", path, err)
 	}
 	mode := "uncordoned"
@@ -31,5 +29,14 @@ func setHostCordon(ctx context.Context, out io.Writer, name string, cordoned boo
 		mode = "cordoned"
 	}
 	_, err = fmt.Fprintf(out, "Docker host %s %s.\n", name, mode)
+	return err
+}
+
+func writeHostCordon(ctx context.Context, db interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}, name string, cordoned bool) error {
+	_, err := db.ExecContext(ctx, `
+        INSERT INTO docker_hosts (host, cordoned) VALUES (?, ?)
+        ON CONFLICT (host) DO UPDATE SET cordoned = excluded.cordoned`, name, cordoned)
 	return err
 }

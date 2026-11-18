@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"embed"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -16,7 +15,7 @@ import (
 	"time"
 )
 
-//go:embed panelweb/index.html panelweb/panel.css panelweb/panel.js panelweb/demo.js
+//go:embed panelweb/index.html panelweb/panel.css panelweb/panel.js panelweb/demo.js panelweb/manage.js
 var panelAssets embed.FS
 
 type panelSnapshot struct {
@@ -147,14 +146,14 @@ func readPanelCompleted(ctx context.Context, q *queue, now time.Time) ([]panelCo
 	return recent, firstClean, rows.Err()
 }
 
-func panelHTTPServer(panel *panelState) *http.Server {
+func panelHTTPServer(panel *panelState, access *panelAccess) *http.Server {
 	return &http.Server{
-		Handler: panelHandler(panel), ReadHeaderTimeout: 5 * time.Second,
+		Handler: panelHandler(panel, access), ReadHeaderTimeout: 5 * time.Second,
 		WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10,
 	}
 }
 
-func panelHandler(panel *panelState) http.Handler {
+func panelHandler(panel *panelState, access *panelAccess) http.Handler {
 	assets, err := fs.Sub(panelAssets, "panelweb")
 	if err != nil {
 		panic(err)
@@ -178,24 +177,21 @@ func panelHandler(panel *panelState) http.Handler {
 	mux.Handle("GET /panel.js", files)
 	if panel == nil {
 		mux.Handle("GET /demo.js", files)
-	} else {
-		mux.HandleFunc("GET /snapshot", func(w http.ResponseWriter, r *http.Request) {
-			panel.mu.RLock()
-			snapshot := panel.snapshot
-			panel.mu.RUnlock()
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(snapshot)
-		})
+	} else if access != nil {
+		mux.Handle("GET /manage.js", files)
+		access.register(mux, panel)
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Local Host validation also prevents DNS rebinding against the panel.
 		host, _, err := net.SplitHostPort(r.Host)
 		if err != nil {
 			host = r.Host
 		}
-		ip := net.ParseIP(host)
-		if !strings.EqualFold(host, "localhost") && (ip == nil || !ip.IsLoopback()) {
-			http.Error(w, "Use a localhost URL or an SSH tunnel", http.StatusForbidden)
+		validHost := isPanelLoopback(host)
+		if access != nil {
+			validHost = strings.EqualFold(r.Host, access.cfg.host)
+		}
+		if !validHost {
+			http.Error(w, "Use the configured panel address.", http.StatusForbidden)
 			return
 		}
 		w.Header().Set("Cache-Control", "no-store")
@@ -211,7 +207,7 @@ func runPanelDemo(ctx context.Context, port uint) error {
 	if err != nil {
 		return err
 	}
-	server := panelHTTPServer(nil)
+	server := panelHTTPServer(nil, nil)
 	fmt.Printf("Runquill panel demo at http://%s\n", listener.Addr())
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(listener) }()
