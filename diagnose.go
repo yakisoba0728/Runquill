@@ -44,17 +44,17 @@ func diagnoseRepository(ctx context.Context, out io.Writer, api *github, db *sql
 	if err != nil {
 		return err
 	}
-	var target struct{ ID int64 }
-	if err := api.request(ctx, http.MethodGet, "/repos/"+name+"/installation", jwt, nil, &target); err != nil {
+	if _, err := api.repositoryInstallation(ctx, jwt, name, inst.ID); err != nil {
+		if errors.Is(err, errRepositoryOutsideInstallation) && inst.RepositorySelection == scopeSelected {
+			return fmt.Errorf("check GitHub App access to %s: %w. Add it at https://github.com/settings/installations/%d", name, err, inst.ID)
+		}
 		return fmt.Errorf("check GitHub App access to %s: %w", name, err)
 	}
-	if target.ID != inst.ID {
-		return fmt.Errorf("%s does not belong to the configured GitHub App installation", name)
-	}
 	fmt.Fprintf(out, "GitHub App installation covers %s\n", name)
-	scopeErr, permissionErr := inst.accessErrors()
+	scopeErr, permissionErr := inst.accessErrors(api.repositoryScope)
+	fmt.Fprintf(out, "Repository access: %s\n", repositoryScopeLabel(inst.RepositorySelection))
 	if scopeErr != nil {
-		fmt.Fprintf(out, "Repository access: %s\n", scopeErr)
+		return errors.Join(scopeErr, permissionErr)
 	}
 	if permissionErr != nil {
 		fmt.Fprintf(out, "App permissions: %s\n", strings.Join(strings.Fields(permissionErr.Error()), " "))

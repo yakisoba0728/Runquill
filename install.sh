@@ -6,17 +6,18 @@ tag=
 directory=./runquill
 webhook=
 listen_port=
+repository_scope=
 download_only=false
 panel=false
 panel_url=
 
 usage() {
-    printf '%s\n' 'Usage: sh install.sh [--version vX.Y.Z] [--dir PATH] [--webhook-url URL] [--listen-port PORT] [--download-only] [--panel [--panel-url URL]]'
+    printf '%s\n' 'Usage: sh install.sh [--version vX.Y.Z] [--dir PATH] [--webhook-url URL] [--listen-port PORT] [--repository-scope all|selected] [--download-only] [--panel [--panel-url URL]]'
 }
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --version|--dir|--webhook-url|--listen-port|--panel-url)
+        --version|--dir|--webhook-url|--listen-port|--panel-url|--repository-scope)
             if [ "$#" -lt 2 ] || [ -z "$2" ]; then usage >&2; exit 2; fi
             case "$1" in
                 --version) tag=$2 ;;
@@ -24,6 +25,9 @@ while [ "$#" -gt 0 ]; do
                 --webhook-url) webhook=$2 ;;
                 --listen-port) listen_port=$2 ;;
                 --panel-url) panel_url=$2 ;;
+                --repository-scope)
+                    case "$2" in all|selected) repository_scope=$2 ;; *) usage >&2; exit 2 ;; esac
+                    ;;
             esac
             shift 2
             ;;
@@ -111,6 +115,13 @@ if [ "$download_only" = true ]; then exit 0; fi
 set -- setup
 if [ -n "$webhook" ]; then set -- "$@" --webhook-url "$webhook"; fi
 if [ -n "$listen_port" ]; then set -- "$@" --listen-port "$listen_port"; fi
+if [ -n "$repository_scope" ]; then
+    if ! ./runquill setup --help 2>&1 | grep -q -- '--repository-scope'; then
+        printf '%s\n' 'This release does not support selecting repository scope. Select a newer release.' >&2
+        exit 1
+    fi
+    set -- "$@" --repository-scope "$repository_scope"
+fi
 if [ "$panel" = true ]; then
     if [ ! -f compose.panel.yaml ] || ! ./runquill setup --help 2>&1 | grep -q -- '--panel'; then
         printf '%s\n' 'This release does not support guided panel setup. Select a newer release.' >&2

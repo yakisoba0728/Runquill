@@ -2,7 +2,7 @@
 
 English · [한국어](README.ko.md)
 
-Runquill runs GitHub Actions jobs from your personal account's private repositories on your Linux Docker servers or K3s cluster. Install one GitHub App with **All repositories** access, then opt jobs in through `runs-on`. New private repositories use the same installation.
+Runquill runs GitHub Actions jobs from your personal account's private repositories on your Linux Docker servers or K3s cluster. Install one GitHub App, then opt jobs in through `runs-on`. The default **All repositories** installation discovers new private repositories automatically. You can also [connect selected repositories](#connect-selected-repositories).
 
 [Quickstart](#quickstart) · [First job](#verify-your-first-job) · [Sample panel](#sample-panel) · [Team panel](#web-panel-and-team-access) · [Release downloads](https://github.com/yakisoba0728/Runquill/releases)
 
@@ -64,6 +64,20 @@ Rerun `setup` to resume App installation once the files have been saved. The gen
 
 [GitHub App manifest](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest) · [Installing a GitHub App you created](https://docs.github.com/en/apps/using-github-apps/installing-your-own-github-app)
 
+### Connect selected repositories
+
+For a new installation, use the same setup with the selected repository scope.
+
+```sh
+sh install.sh --dir "$HOME/runquill" --repository-scope selected
+# With a standalone binary in the installation directory:
+./runquill setup --repository-scope selected
+```
+
+On GitHub, choose **Only select repositories** and select the private repositories you want to use. GitHub stores that list and the setup saves `RUNQUILL_REPOSITORY_SCOPE=selected` in `.env`. Add or remove repositories through the GitHub App installation settings. With polling enabled, the next sweep can discover jobs in newly approved repositories without restarting the manager. With webhook-only configuration, jobs are discovered through deliveries from GitHub. Run `runquill doctor --repo OWNER/REPO` in the manager environment to check coverage before your first run. [Change GitHub App repository access](https://docs.github.com/en/apps/using-github-apps/reviewing-and-modifying-installed-github-apps)
+
+To switch an existing installation between **All repositories** and **Only select repositories**, change its GitHub settings and set `RUNQUILL_REPOSITORY_SCOPE` to the corresponding `all` or `selected` in the manager configuration. Recreate the Compose manager or update the K3s Secret and restart the Deployment. A configuration without this setting defaults to `all`.
+
 ### Start the manager
 
 From a source checkout, build the runner image and start the manager.
@@ -103,7 +117,7 @@ docker compose logs -f manager
 
 ### Use an existing GitHub App or configure webhooks
 
-For a manually configured App, select **Only on this account**, grant **Actions → Read-only** and **Administration → Read and write**, and create a private key. Install the App on your personal account with **All repositories** access. Copy [.env.example](.env.example) to `.env`, fill in your GitHub login, App ID, and key path, and set both files to mode `0600`. For polling, disable webhooks in the App settings and leave `RUNQUILL_WEBHOOK_SECRET` empty. [GitHub App installation](https://docs.github.com/en/apps/using-github-apps/installing-your-own-github-app) · [Repository JIT runner API](https://docs.github.com/en/rest/actions/self-hosted-runners#create-configuration-for-a-just-in-time-runner-for-a-repository)
+For a manually configured App, select **Only on this account**, grant **Actions → Read-only** and **Administration → Read and write**, and create a private key. Install the App on your personal account. Copy [.env.example](.env.example) to `.env`, fill in your GitHub login, App ID, and key path, and set both files to mode `0600`. Set `RUNQUILL_REPOSITORY_SCOPE=selected` if you chose **Only select repositories**. For polling, disable webhooks in the App settings and leave `RUNQUILL_WEBHOOK_SECRET` empty. [GitHub App installation](https://docs.github.com/en/apps/using-github-apps/installing-your-own-github-app) · [Repository JIT runner API](https://docs.github.com/en/rest/actions/self-hosted-runners#create-configuration-for-a-just-in-time-runner-for-a-repository)
 
 To use published images with a manual `.env`, set the manager and runner image names from the example to the same release tag. Pull the runner image before starting Compose.
 

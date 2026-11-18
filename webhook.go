@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -51,7 +52,7 @@ type workflowEvent struct {
 	} `json:"installation"`
 }
 
-func webhook(q *queue, owner string, secret []byte, panel *panelState) http.Handler {
+func webhook(q *queue, api *github, secret []byte, panel *panelState) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		if err := q.PingContext(r.Context()); err != nil {
@@ -87,12 +88,26 @@ func webhook(q *queue, owner string, secret []byte, panel *panelState) http.Hand
 				w.WriteHeader(http.StatusBadRequest)
 				return
 			}
-			job, eligible, err := event.Job.queueJob(owner, event.Repository, event.Installation.ID, event.Action)
+			job, eligible, err := event.Job.queueJob(api.owner, event.Repository, event.Installation.ID, event.Action)
 			if err != nil {
 				w.WriteHeader(http.StatusBadRequest)
 				return
 			}
 			if eligible {
+				if api.repositoryScope == scopeSelected {
+					ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+					err := api.checkSelectedRepository(ctx, job)
+					cancel()
+					if errors.Is(err, errRepositoryOutsideInstallation) {
+						w.WriteHeader(http.StatusAccepted)
+						return
+					}
+					if err != nil {
+						slog.Warn("verify webhook repository access", "job", job.id, "error", err)
+						w.WriteHeader(http.StatusServiceUnavailable)
+						return
+					}
+				}
 				job.discoverySource = "webhook"
 				changed, err := q.record(r.Context(), job, time.Now())
 				if err != nil {

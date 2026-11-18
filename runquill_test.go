@@ -31,7 +31,7 @@ func TestWebhook(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(q.close)
-	handler := webhook(q, "owner", []byte("secret"), nil)
+	handler := webhook(q, &github{owner: "owner"}, []byte("secret"), nil)
 
 	for _, test := range []struct {
 		id      int64

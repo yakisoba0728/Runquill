@@ -74,7 +74,9 @@ func (p *poller) sweep(ctx context.Context) (err error) {
 			}
 		}
 	}()
-	if p.token.Token == "" || !p.token.ExpiresAt.After(now.Add(5*time.Minute)) {
+	// A selected installation can gain repositories before an issued token expires.
+	selected := p.github.repositoryScope == scopeSelected
+	if selected || p.token.Token == "" || !p.token.ExpiresAt.After(now.Add(5*time.Minute)) {
 		jwt, err := p.github.jwt(now)
 		if err != nil {
 			return err
@@ -82,6 +84,11 @@ func (p *poller) sweep(ctx context.Context) (err error) {
 		inst, err := p.github.installation(ctx, jwt)
 		if err != nil {
 			return err
+		}
+		if selected {
+			if err := inst.checkRepositoryScope(scopeSelected); err != nil {
+				return err
+			}
 		}
 		// Keep the account-wide discovery token read-only. The scheduler still mints
 		// a separate repository-scoped token when it needs to register a runner.

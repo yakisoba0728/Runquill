@@ -165,8 +165,8 @@ func (g *github) checkInstallation(ctx context.Context, repo string, webhooks bo
 	if err != nil {
 		return
 	}
-	scopeErr, permissionErr := inst.accessErrors()
-	report("GitHub App repository access", scopeErr)
+	scopeErr, permissionErr := inst.accessErrors(g.repositoryScope)
+	report("GitHub App repository access ("+repositoryScopeLabel(inst.RepositorySelection)+")", scopeErr)
 	report("GitHub App permissions", permissionErr)
 	if webhooks {
 		var eventErr error
@@ -196,10 +196,9 @@ func (g *github) checkInstallation(ctx context.Context, repo string, webhooks bo
 			report("test repository", errors.New("use OWNER/REPO for a repository owned by RUNQUILL_OWNER"))
 			return
 		}
-		var target struct{ ID int64 }
-		err := g.request(ctx, http.MethodGet, "/repos/"+name+"/installation", jwt, nil, &target)
-		if err == nil && target.ID != inst.ID {
-			err = errors.New("the repository does not belong to the expected GitHub App installation")
+		_, err := g.repositoryInstallation(ctx, jwt, name, inst.ID)
+		if errors.Is(err, errRepositoryOutsideInstallation) && inst.RepositorySelection == scopeSelected {
+			err = fmt.Errorf("%w. Add %s at https://github.com/settings/installations/%d", err, name, inst.ID)
 		}
 		report("GitHub App covers "+name, err)
 	}

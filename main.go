@@ -66,8 +66,9 @@ func main() {
 		flags.BoolVar(&options.panel, "panel", false, "guide GitHub OAuth and web panel configuration")
 		flags.StringVar(&options.panelURL, "panel-url", "", "panel origin (defaults to http://127.0.0.1:8081)")
 		flags.BoolVar(&options.kubernetes, "k3s", false, "print Kubernetes deployment instructions after setup")
+		flags.StringVar(&options.repositoryScope, "repository-scope", "", "GitHub App repository access: all (default for new setups) or selected")
 		flags.Usage = func() {
-			fmt.Fprintln(flags.Output(), "Usage: runquill setup [--webhook-url URL] [--listen-port PORT] [--k3s] [--panel [--panel-url URL]]")
+			fmt.Fprintln(flags.Output(), "Usage: runquill setup [--webhook-url URL] [--listen-port PORT] [--k3s] [--repository-scope all|selected] [--panel [--panel-url URL]]")
 			fmt.Fprintln(flags.Output(), "Connect a personal GitHub App and create .env and github-app.pem in the current directory.")
 			flags.PrintDefaults()
 		}
@@ -158,6 +159,7 @@ func main() {
 
 type config struct {
 	owner, appID, secret, keyPath, runnerImage string
+	repositoryScope                            string
 	limit                                      int
 	pollInterval                               time.Duration
 }
@@ -187,6 +189,10 @@ func loadConfig() (config, error) {
 		return cfg, err
 	}
 	cfg.limit = limit
+	cfg.repositoryScope, err = parseRepositoryScope(os.Getenv(repositoryScopeEnv))
+	if err != nil {
+		return cfg, fmt.Errorf("%s: %w", repositoryScopeEnv, err)
+	}
 	cfg.pollInterval, err = time.ParseDuration(env("RUNQUILL_POLL_INTERVAL", "30s"))
 	if err != nil || cfg.pollInterval < 0 {
 		return cfg, errors.New("RUNQUILL_POLL_INTERVAL must be a duration such as 30s, or 0 to disable polling")
@@ -215,7 +221,7 @@ func (cfg config) github() (*github, error) {
 		return nil, fmt.Errorf("parse GitHub App key: %w", err)
 	}
 	return &github{client: &http.Client{Timeout: 10 * time.Second}, base: githubAPIBase,
-		appID: cfg.appID, key: key, owner: cfg.owner}, nil
+		appID: cfg.appID, key: key, owner: cfg.owner, repositoryScope: cfg.repositoryScope}, nil
 }
 
 func run(ctx context.Context) error {
@@ -266,7 +272,7 @@ func run(ctx context.Context) error {
 	s := &scheduler{queue: q, github: api, runtime: runners.runtime, limit: cfg.limit, hostLimits: runners.hostLimits, panel: panel, pools: runners.pools}
 	server := &http.Server{
 		Addr:              net.JoinHostPort(env("RUNQUILL_BIND", "127.0.0.1"), env("RUNQUILL_PORT", "8080")),
-		Handler:           webhook(q, cfg.owner, []byte(cfg.secret), panel),
+		Handler:           webhook(q, api, []byte(cfg.secret), panel),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       8 * time.Second,
 		WriteTimeout:      10 * time.Second,

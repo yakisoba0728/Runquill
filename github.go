@@ -22,12 +22,43 @@ import (
 
 const githubAPIBase = "https://api.github.com"
 
+const (
+	repositoryScopeEnv = "RUNQUILL_REPOSITORY_SCOPE"
+	scopeAll           = "all"
+	scopeSelected      = "selected"
+)
+
+var errRepositoryOutsideInstallation = errors.New("repository is outside the configured GitHub App installation")
+
 type github struct {
-	client *http.Client
-	base   string
-	appID  string
-	key    *rsa.PrivateKey
-	owner  string
+	client          *http.Client
+	base            string
+	appID           string
+	key             *rsa.PrivateKey
+	owner           string
+	repositoryScope string
+}
+
+func parseRepositoryScope(value string) (string, error) {
+	switch value {
+	case "", scopeAll:
+		return scopeAll, nil
+	case scopeSelected:
+		return scopeSelected, nil
+	default:
+		return "", errors.New("repository scope must be all or selected")
+	}
+}
+
+func repositoryScopeLabel(scope string) string {
+	switch scope {
+	case scopeAll:
+		return "All repositories"
+	case scopeSelected:
+		return "Only select repositories"
+	default:
+		return "unknown repository scope"
+	}
 }
 
 func parseKey(data []byte) (*rsa.PrivateKey, error) {
@@ -171,10 +202,19 @@ type githubInstallation struct {
 	Events              []string
 }
 
-func (inst githubInstallation) accessErrors() (scopeErr, permissionErr error) {
-	if inst.RepositorySelection != "all" {
-		scopeErr = errors.New("select All repositories to include new repositories automatically")
+func (inst githubInstallation) checkRepositoryScope(expected string) error {
+	if expected == "" {
+		expected = scopeAll
 	}
+	if inst.RepositorySelection != expected {
+		return fmt.Errorf("GitHub uses %s. Select %s in the App installation or update %s in the Runquill configuration",
+			repositoryScopeLabel(inst.RepositorySelection), repositoryScopeLabel(expected), repositoryScopeEnv)
+	}
+	return nil
+}
+
+func (inst githubInstallation) accessErrors(expected string) (scopeErr, permissionErr error) {
+	scopeErr = inst.checkRepositoryScope(expected)
 	if actions := inst.Permissions["actions"]; actions != "read" && actions != "write" {
 		permissionErr = errors.New("set Actions to at least Read-only")
 	}
@@ -203,6 +243,33 @@ func (g *github) installation(ctx context.Context, jwt string) (githubInstallati
 	return inst, nil
 }
 
+func (g *github) repositoryInstallation(ctx context.Context, jwt, name string, installationID int64) (githubInstallation, error) {
+	var inst githubInstallation
+	err := g.request(ctx, http.MethodGet, "/repos/"+name+"/installation", jwt, nil, &inst)
+	if githubNotFound(err) || err == nil && inst.ID != installationID {
+		return inst, errRepositoryOutsideInstallation
+	}
+	if err == nil && inst.SuspendedAt != nil {
+		return inst, errors.New("the GitHub App installation is suspended")
+	}
+	return inst, err
+}
+
+func (g *github) checkSelectedRepository(ctx context.Context, j job) error {
+	if g.repositoryScope != scopeSelected {
+		return nil
+	}
+	jwt, err := g.jwt(time.Now())
+	if err != nil {
+		return err
+	}
+	inst, err := g.repositoryInstallation(ctx, jwt, j.repository, j.installationID)
+	if err != nil {
+		return err
+	}
+	return inst.checkRepositoryScope(scopeSelected)
+}
+
 type installationToken struct {
 	Token     string    `json:"token"`
 	ExpiresAt time.Time `json:"expires_at"`
@@ -229,6 +296,15 @@ func (g *github) token(ctx context.Context, j job) (string, error) {
 		RepositoryIDs []int64 `json:"repository_ids"`
 	}{[]int64{j.repositoryID}}
 	out, err := g.mintToken(ctx, jwt, j.installationID, body)
+	var apiErr *githubError
+	if g.repositoryScope == scopeSelected && errors.As(err, &apiErr) &&
+		(apiErr.status == http.StatusNotFound || apiErr.status == http.StatusUnprocessableEntity ||
+			apiErr.status == http.StatusForbidden && apiErr.retryAt.IsZero()) {
+		// A token request can fail while a repository is being removed from the installation.
+		if _, lookupErr := g.repositoryInstallation(ctx, jwt, j.repository, j.installationID); errors.Is(lookupErr, errRepositoryOutsideInstallation) {
+			return "", lookupErr
+		}
+	}
 	return out.Token, err
 }
 
@@ -270,7 +346,7 @@ func (g *github) provision(ctx context.Context, j job, name, token string) (int6
 func (g *github) remove(ctx context.Context, j job) error {
 	token, err := g.token(ctx, j)
 	if err != nil {
-		if githubNotFound(err) {
+		if githubNotFound(err) || errors.Is(err, errRepositoryOutsideInstallation) {
 			return nil
 		}
 		return err

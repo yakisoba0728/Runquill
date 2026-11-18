@@ -2,7 +2,7 @@
 
 [English](README.md) · 한국어
 
-개인 GitHub 계정의 비공개 저장소에서 요청한 Actions 작업을 내 서버에서 실행합니다. GitHub App을 **All repositories**로 한 번 설치하면 이후에 만드는 비공개 저장소도 같은 설치로 처리됩니다. 서버에서 관리할 저장소 목록은 필요 없습니다.
+개인 GitHub 계정의 비공개 저장소에서 요청한 Actions 작업을 내 서버에서 실행합니다. 기본 설치 범위인 **All repositories**를 고르면 이후에 만드는 비공개 저장소도 자동으로 감지합니다. 원한다면 [선택한 저장소만 연결](#선택한-저장소만-연결)할 수 있습니다.
 
 [빠른 시작](#빠른-시작) · [첫 작업](#첫-작업-확인) · [샘플 패널](#샘플-패널) · [팀 패널](#웹-패널과-팀-권한) · [릴리스 다운로드](https://github.com/yakisoba0728/Runquill/releases)
 
@@ -64,6 +64,20 @@ chmod +x ./runquill-linux-amd64
 
 [GitHub App 매니페스트](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest) · [GitHub App 설치](https://docs.github.com/en/apps/using-github-apps/installing-your-own-github-app)
 
+### 선택한 저장소만 연결
+
+새 설치에서 일부 비공개 저장소만 연결하려면 아래 옵션을 사용합니다.
+
+```sh
+sh install.sh --dir "$HOME/runquill" --repository-scope selected
+# 설치 디렉터리에 실행 파일이 있는 경우
+./runquill setup --repository-scope selected
+```
+
+GitHub에서 **Only select repositories**를 고르고 사용할 비공개 저장소를 선택합니다. 저장소 목록은 GitHub가 관리하고, `setup`은 `.env`에 `RUNQUILL_REPOSITORY_SCOPE=selected`를 기록합니다. 나중에 GitHub App 설치 설정에서 저장소를 추가하면 매니저를 재시작하지 않아도 다음 폴링에서 해당 작업을 발견할 수 있습니다. 웹훅 전용 설정에서는 GitHub가 보내는 이벤트를 통해 작업을 감지합니다. 첫 작업을 실행하기 전 매니저 환경에서 `runquill doctor --repo OWNER/REPO`로 접근을 확인하세요. [GitHub App 저장소 접근 변경](https://docs.github.com/en/apps/using-github-apps/reviewing-and-modifying-installed-github-apps)
+
+기존 앱의 설치 범위를 바꾸려면 GitHub 설정을 변경한 뒤 매니저 설정의 `RUNQUILL_REPOSITORY_SCOPE`도 `all` 또는 `selected`로 맞춥니다. Compose 매니저를 다시 만들거나 k3s 설정 Secret을 갱신하고 Deployment를 재시작하세요. 이 값을 생략하면 기본값은 `all`입니다.
+
 ### 매니저 시작
 
 소스에서 설치할 때는 러너 이미지를 빌드한 뒤 매니저를 시작합니다.
@@ -103,7 +117,7 @@ docker compose logs -f manager
 
 ### 기존 GitHub App 또는 웹훅 사용
 
-앱을 수동으로 만들 때는 **Only on this account**를 선택하고 **Actions → Read-only**와 **Administration → Read and write** 권한을 부여합니다. 발급한 PEM 키를 보관하고 앱을 개인 계정에 **All repositories**로 설치합니다. [환경 변수 예제](.env.example)를 `.env`로 복사해 GitHub 로그인, App ID, PEM 키 경로를 입력하고 두 파일의 권한을 `0600`으로 설정합니다. 폴링으로 연결할 때는 앱의 웹훅을 끄고 `RUNQUILL_WEBHOOK_SECRET`을 비워둡니다. [저장소 러너 JIT API](https://docs.github.com/en/rest/actions/self-hosted-runners#create-configuration-for-a-just-in-time-runner-for-a-repository)
+앱을 수동으로 만들 때는 **Only on this account**를 선택하고 **Actions → Read-only**와 **Administration → Read and write** 권한을 부여합니다. 발급한 PEM 키를 보관하고 앱을 개인 계정에 설치합니다. [환경 변수 예제](.env.example)를 `.env`로 복사해 GitHub 로그인, App ID, PEM 키 경로를 입력하고 두 파일의 권한을 `0600`으로 설정합니다. **Only select repositories**로 설치했다면 `RUNQUILL_REPOSITORY_SCOPE=selected`를 설정합니다. 폴링으로 연결할 때는 앱의 웹훅을 끄고 `RUNQUILL_WEBHOOK_SECRET`을 비워둡니다. [저장소 러너 JIT API](https://docs.github.com/en/rest/actions/self-hosted-runners#create-configuration-for-a-just-in-time-runner-for-a-repository)
 
 수동으로 작성한 `.env`에 릴리스 이미지를 사용하려면 예제에 있는 매니저와 러너 이미지 이름을 같은 버전 태그로 맞춥니다. 러너 이미지를 먼저 내려받은 뒤 Compose를 시작합니다.
 

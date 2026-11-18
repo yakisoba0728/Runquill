@@ -24,6 +24,11 @@ import (
 )
 
 func TestSetupCreatesComposeConfiguration(t *testing.T) {
+	t.Run("all by default", func(t *testing.T) { testSetupCreatesComposeConfiguration(t, "") })
+	t.Run("selected", func(t *testing.T) { testSetupCreatesComposeConfiguration(t, scopeSelected) })
+}
+
+func testSetupCreatesComposeConfiguration(t *testing.T, scope string) {
 	dir := t.TempDir()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -32,13 +37,17 @@ func TestSetupCreatesComposeConfiguration(t *testing.T) {
 	pemData := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
 	const webhookURL = "https://runner.example.com/webhook"
 	const webhookSecret = "generated-webhook-test-secret"
+	selected, err := parseRepositoryScope(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
 	service := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/app-manifests/create-test-app/conversions":
 			w.WriteHeader(http.StatusCreated)
 			fmt.Fprintf(w, `{"id":123,"slug":"runquill-test","pem":%q,"webhook_secret":%q,"owner":{"login":"owner","type":"User"}}`, pemData, webhookSecret)
 		case "/users/owner/installation":
-			fmt.Fprint(w, `{"id":1,"account":{"type":"User","login":"owner"},"repository_selection":"all","permissions":{"actions":"read","administration":"write"}}`)
+			fmt.Fprintf(w, `{"id":1,"account":{"type":"User","login":"owner"},"repository_selection":%q,"permissions":{"actions":"read","administration":"write"}}`, selected)
 		default:
 			t.Errorf("unexpected GitHub call %s", r.URL.Path)
 			http.NotFound(w, r)
@@ -51,7 +60,7 @@ func TestSetupCreatesComposeConfiguration(t *testing.T) {
 	out := make(manifestTestOutput, 16)
 	done := make(chan error, 1)
 	go func() {
-		done <- setup(ctx, out, dir, service.Client(), service.URL, setupOptions{webhookURL: webhookURL})
+		done <- setup(ctx, out, dir, service.Client(), service.URL, setupOptions{webhookURL: webhookURL, repositoryScope: scope})
 	}()
 	var browserURL string
 	select {
@@ -92,8 +101,12 @@ func TestSetupCreatesComposeConfiguration(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
+	expectedEnv := setupEnvironment("owner", 123, releaseImage, version)
+	if scope != "" {
+		expectedEnv += "RUNQUILL_REPOSITORY_SCOPE=" + scope + "\n"
+	}
 	want := map[string][]byte{
-		setupEnvFile: []byte(setupEnvironment("owner", 123, releaseImage, version) +
+		setupEnvFile: []byte(expectedEnv +
 			"RUNQUILL_WEBHOOK_URL=" + webhookURL + "\nRUNQUILL_WEBHOOK_SECRET=" + webhookSecret + "\nRUNQUILL_POLL_INTERVAL=30s\n"),
 		setupKeyFile: pemData,
 	}
@@ -101,6 +114,19 @@ func TestSetupCreatesComposeConfiguration(t *testing.T) {
 		data, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil || !bytes.Equal(data, expected) {
 			t.Errorf("unexpected generated %s: %v", name, err)
+		}
+	}
+	if scope == scopeSelected {
+		var resumed bytes.Buffer
+		if err := setup(t.Context(), &resumed, dir, service.Client(), service.URL, setupOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(resumed.String(), "Only select repositories") {
+			t.Fatal("resumed setup must report selected repository access")
+		}
+		err := setup(t.Context(), io.Discard, dir, service.Client(), service.URL, setupOptions{repositoryScope: scopeAll})
+		if err == nil || !strings.Contains(err.Error(), repositoryScopeEnv) {
+			t.Fatalf("expected actionable scope mismatch on resume, got %v", err)
 		}
 	}
 }

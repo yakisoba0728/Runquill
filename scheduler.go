@@ -231,7 +231,14 @@ func retryMessage(operation string, cause error) string {
 }
 
 func (s *scheduler) launch(ctx context.Context, j job, host, pool string, now time.Time) (bool, error) {
-	token, err := s.github.token(ctx, j)
+	err := s.github.checkSelectedRepository(ctx, j)
+	var token string
+	if err == nil {
+		token, err = s.github.token(ctx, j)
+	}
+	if errors.Is(err, errRepositoryOutsideInstallation) {
+		return false, s.discardOutsideInstallation(ctx, j)
+	}
 	if err != nil {
 		return false, err
 	}
@@ -304,6 +311,7 @@ func (s *scheduler) launch(ctx context.Context, j job, host, pool string, now ti
 
 func (s *scheduler) reconcile(ctx context.Context, j job, containers map[string]string, now time.Time) error {
 	state := containers[j.runnerName]
+	outsideInstallation := false
 	if state == "running" || state == "pending" || state == "paused" || state == "restarting" {
 		switch j.phase {
 		case completed:
@@ -316,6 +324,10 @@ func (s *scheduler) reconcile(ctx context.Context, j job, containers map[string]
 				return nil
 			}
 			token, err := s.github.token(ctx, j)
+			if errors.Is(err, errRepositoryOutsideInstallation) {
+				outsideInstallation = true
+				break
+			}
 			if err != nil {
 				return err
 			}
@@ -346,14 +358,15 @@ func (s *scheduler) reconcile(ctx context.Context, j job, containers map[string]
 		}
 		delete(containers, j.runnerName)
 	}
-	if j.phase != completed {
+	if j.phase != completed && !outsideInstallation {
 		// A runner can exit before GitHub has sent its final job event, including in polling-only mode.
 		token, err := s.github.token(ctx, j)
 		var observed workflowJob
 		if err == nil {
 			observed, err = s.github.jobDetails(ctx, j, token)
 		}
-		if err != nil && !githubNotFound(err) {
+		outsideInstallation = errors.Is(err, errRepositoryOutsideInstallation)
+		if err != nil && !githubNotFound(err) && !outsideInstallation {
 			return err
 		}
 		if observed.Status == "completed" || githubNotFound(err) {
@@ -370,7 +383,11 @@ func (s *scheduler) reconcile(ctx context.Context, j job, containers map[string]
 			return err
 		}
 	}
-	if err := s.github.remove(ctx, j); err != nil {
+	if outsideInstallation {
+		if err := s.discardOutsideInstallation(ctx, j); err != nil {
+			return err
+		}
+	} else if err := s.github.remove(ctx, j); err != nil {
 		return err
 	}
 	_, err := s.queue.ExecContext(ctx, `UPDATE jobs SET runner_name = NULL, runner_host = NULL, runner_id = NULL,
@@ -379,10 +396,20 @@ func (s *scheduler) reconcile(ctx context.Context, j job, containers map[string]
         runner_cleaned_host = CASE WHEN phase = ? THEN runner_host END,
         retry_reason = CASE WHEN phase = ? THEN coalesce(nullif(retry_reason, ''),
             'runner became unavailable while the job was queued') ELSE '' END
-        WHERE job_id = ?`, now.Add(retryDelay).Unix(), completed, time.Now().Unix(), completed, queued, j.id)
+        WHERE job_id = ? AND runner_name = ?`, now.Add(retryDelay).Unix(), completed, time.Now().Unix(), completed, queued, j.id, j.runnerName)
 	if err != nil {
 		return err
 	}
 	slog.Info("runner removed", "runner", j.runnerName, "repository", j.repository, "job", j.id)
 	return nil
+}
+
+func (s *scheduler) discardOutsideInstallation(ctx context.Context, j job) error {
+	// A later approval can rediscover the same GitHub job if it is still queued.
+	_, err := s.queue.ExecContext(ctx, `DELETE FROM jobs
+        WHERE job_id = ? AND coalesce(runner_name, '') = ? AND phase < ?`, j.id, j.runnerName, completed)
+	if err == nil {
+		slog.Info("discarded job outside GitHub App installation", "repository", j.repository, "job", j.id)
+	}
+	return err
 }

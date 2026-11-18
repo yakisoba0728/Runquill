@@ -33,14 +33,18 @@ var setupImage = regexp.MustCompile(`^[a-z0-9][a-z0-9./_-]*:[a-zA-Z0-9_][a-zA-Z0
 var setupSecret = regexp.MustCompile(`^[a-zA-Z0-9_-]{16,256}$`)
 
 type setupOptions struct {
-	webhookURL string
-	port       int
-	kubernetes bool
-	panel      bool
-	panelURL   string
+	webhookURL      string
+	port            int
+	kubernetes      bool
+	panel           bool
+	panelURL        string
+	repositoryScope string
 }
 
 func (opts setupOptions) validate() error {
+	if _, err := parseRepositoryScope(opts.repositoryScope); err != nil {
+		return fmt.Errorf("--repository-scope: %w", err)
+	}
 	if opts.port < 0 || opts.port > 65535 {
 		return errors.New("listen port must be between 0 and 65535")
 	}
@@ -93,6 +97,14 @@ func setup(ctx context.Context, out io.Writer, dir string, client *http.Client, 
 	if opts.webhookURL != "" && values["RUNQUILL_WEBHOOK_URL"] != opts.webhookURL {
 		return errors.New("this directory has an App configuration with a different webhook URL; update the existing App or use a new directory")
 	}
+	scope, err := parseRepositoryScope(values[repositoryScopeEnv])
+	if err != nil {
+		return fmt.Errorf("%s: %w", repositoryScopeEnv, err)
+	}
+	if opts.repositoryScope != "" && opts.repositoryScope != scope {
+		return fmt.Errorf("this directory is configured for %s. Change the App installation and update %s to switch this installation",
+			repositoryScopeLabel(scope), repositoryScopeEnv)
+	}
 	keyPath := values["RUNQUILL_KEY_FILE"]
 	if !filepath.IsAbs(keyPath) {
 		keyPath = filepath.Join(dir, keyPath)
@@ -105,12 +117,13 @@ func setup(ctx context.Context, out io.Writer, dir string, client *http.Client, 
 	if err != nil {
 		return fmt.Errorf("parse setup key: %w", err)
 	}
-	api := &github{client: client, base: apiBase, appID: values["RUNQUILL_APP_ID"], owner: values["RUNQUILL_OWNER"], key: key}
+	api := &github{client: client, base: apiBase, appID: values["RUNQUILL_APP_ID"], owner: values["RUNQUILL_OWNER"], key: key, repositoryScope: scope}
 	fmt.Fprintf(out, "Configuration ready for %s in %s.\n", api.owner, filepath.Join(dir, setupEnvFile))
 	installation, err := waitForSetupInstallation(ctx, out, api)
 	if err != nil {
 		return fmt.Errorf("check GitHub App installation (rerun runquill setup to resume): %w", err)
 	}
+	fmt.Fprintf(out, "GitHub App installed with %s access.\n", repositoryScopeLabel(scope))
 	var panel panelOAuthConfig
 	if opts.panel {
 		panel, err = configurePanelSetup(ctx, out, filepath.Join(dir, setupEnvFile), envData, values, opts, installation.Account.ID)
@@ -121,7 +134,7 @@ func setup(ctx context.Context, out io.Writer, dir string, client *http.Client, 
 	}
 
 	if opts.kubernetes {
-		fmt.Fprintln(out, "GitHub App installed with access to all repositories. Apply runquill-k3s.yaml to the intended Kubernetes context.")
+		fmt.Fprintln(out, "Apply runquill-k3s.yaml to the intended Kubernetes context.")
 		fmt.Fprintln(out, "  kubectl apply -f runquill-k3s.yaml")
 		fmt.Fprintln(out, "  kubectl -n runquill-system create secret generic runquill-config --from-env-file=.env")
 		fmt.Fprintln(out, "  kubectl -n runquill-system create secret generic runquill-github-key --from-file=github-app.pem")
@@ -138,7 +151,7 @@ func setup(ctx context.Context, out io.Writer, dir string, client *http.Client, 
 		return nil
 	}
 
-	fmt.Fprintln(out, "GitHub App installed with access to all repositories. Run these commands from the Runquill project directory:")
+	fmt.Fprintln(out, "Run these commands from the Runquill project directory:")
 	compose := "docker compose"
 	if opts.panel {
 		compose += " -f compose.yaml -f compose.panel.yaml"
@@ -204,6 +217,9 @@ func setupFiles(ctx context.Context, out io.Writer, dir string, client *http.Cli
 		pending = pendingSetup{
 			Env: setupEnvironment(app.Owner.Login, app.ID, releaseImage, version),
 			PEM: app.PEM,
+		}
+		if opts.repositoryScope != "" {
+			pending.Env += fmt.Sprintf("%s=%s\n", repositoryScopeEnv, opts.repositoryScope)
 		}
 		if opts.webhookURL != "" {
 			if !setupSecret.MatchString(app.WebhookSecret) {
@@ -322,7 +338,7 @@ func waitForSetupInstallation(ctx context.Context, out io.Writer, api *github) (
 		}
 		inst, err := api.installation(ctx, jwt)
 		if err == nil {
-			err := errors.Join(inst.accessErrors())
+			err := errors.Join(inst.accessErrors(api.repositoryScope))
 			if err != nil {
 				fmt.Fprintf(out, "Review the App installation at https://github.com/settings/installations/%d\n", inst.ID)
 			}
@@ -339,7 +355,10 @@ func waitForSetupInstallation(ctx context.Context, out io.Writer, api *github) (
 			if app.Slug == "" {
 				return githubInstallation{}, errors.New("GitHub did not return an App slug")
 			}
-			fmt.Fprintf(out, "Install the App on %s and select All repositories:\n  https://github.com/apps/%s/installations/new\n", api.owner, url.PathEscape(app.Slug))
+			fmt.Fprintf(out, "Install the App on %s and choose %s:\n  https://github.com/apps/%s/installations/new\n", api.owner, repositoryScopeLabel(api.repositoryScope), url.PathEscape(app.Slug))
+			if api.repositoryScope == scopeSelected {
+				fmt.Fprintln(out, "Choose the private repositories that should run jobs on Runquill.")
+			}
 			fmt.Fprintln(out, "Waiting for installation. You can rerun setup to resume.")
 			instructionsShown = true
 		}

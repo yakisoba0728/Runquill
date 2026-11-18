@@ -73,7 +73,7 @@ func TestPanelRoutesAndFirstJobEvidence(t *testing.T) {
 		{demo, "GET", "http://127.0.0.1:8081/", "data-mode=\"demo\"", 200},
 		{demo, "GET", "http://127.0.0.1:8081/demo.js", "", 200},
 		{demo, "GET", "http://127.0.0.1:8081/snapshot", "", 404},
-		{webhook(q, "owner", []byte("key"), p), "GET", "http://localhost:8080/snapshot", "", 404},
+		{webhook(q, &github{owner: "owner"}, []byte("key"), p), "GET", "http://localhost:8080/snapshot", "", 404},
 	} {
 		rec := httptest.NewRecorder()
 		tc.h.ServeHTTP(rec, httptest.NewRequest(tc.method, tc.url, nil))
