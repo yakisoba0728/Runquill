@@ -21,7 +21,7 @@ var version = "dev"
 func main() {
 	showVersion := flag.Bool("version", false, "print the Runquill version")
 	flag.Usage = func() {
-		fmt.Fprintln(flag.CommandLine.Output(), "Usage: runquill [--version] | runquill setup [--webhook-url URL] | runquill doctor [--repo OWNER/REPO] | runquill status")
+		fmt.Fprintln(flag.CommandLine.Output(), "Usage: runquill [--version] | runquill setup [--webhook-url URL] | runquill doctor [--repo OWNER/REPO] | runquill status | runquill host {cordon|uncordon} HOST")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -55,6 +55,18 @@ func main() {
 	if flag.NArg() == 1 && flag.Arg(0) == "status" {
 		if err := status(ctx, os.Stdout); err != nil {
 			slog.Error("runquill status", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if flag.Arg(0) == "host" {
+		action := flag.Arg(1)
+		if flag.NArg() != 3 || (action != "cordon" && action != "uncordon") {
+			fmt.Fprintln(os.Stderr, "Usage: runquill host {cordon|uncordon} HOST")
+			os.Exit(2)
+		}
+		if err := setHostCordon(ctx, os.Stdout, flag.Arg(2), action == "cordon"); err != nil {
+			slog.Error("runquill host", "error", err)
 			os.Exit(1)
 		}
 		return
@@ -157,8 +169,14 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := runtime.prepare(ctx); err != nil {
+	hostLimits, err := runtime.limits(os.Getenv("RUNQUILL_DOCKER_HOST_LIMITS"))
+	if err != nil {
 		return err
+	}
+	if len(runtime.hosts) == 1 {
+		if err := runtime.prepare(ctx); err != nil {
+			return err
+		}
 	}
 	q, err := openQueue(env("RUNQUILL_DB", "runquill.sqlite3"))
 	if err != nil {
@@ -166,7 +184,7 @@ func run(ctx context.Context) error {
 	}
 	defer q.close()
 
-	s := &scheduler{queue: q, github: api, runtime: runtime, limit: cfg.limit}
+	s := &scheduler{queue: q, github: api, runtime: runtime, limit: cfg.limit, hostLimits: hostLimits}
 	server := &http.Server{
 		Addr:              net.JoinHostPort(env("RUNQUILL_BIND", "127.0.0.1"), env("RUNQUILL_PORT", "8080")),
 		Handler:           webhook(q, cfg.owner, []byte(cfg.secret)),

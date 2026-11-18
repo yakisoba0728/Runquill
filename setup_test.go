@@ -94,7 +94,7 @@ func TestSetupCreatesComposeConfiguration(t *testing.T) {
 	}
 	want := map[string][]byte{
 		setupEnvFile: []byte(setupEnvironment("owner", 123, releaseImage, version) +
-			"RUNQUILL_WEBHOOK_URL=" + webhookURL + "\nRUNQUILL_WEBHOOK_SECRET=" + webhookSecret + "\nRUNQUILL_POLL_INTERVAL=0\n"),
+			"RUNQUILL_WEBHOOK_URL=" + webhookURL + "\nRUNQUILL_WEBHOOK_SECRET=" + webhookSecret + "\nRUNQUILL_POLL_INTERVAL=30s\n"),
 		setupKeyFile: pemData,
 	}
 	for name, expected := range want {
@@ -112,7 +112,8 @@ func TestSetupRecoversAndReusesConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 	config := pendingSetup{
-		Env: setupEnvironment("owner", 123, "ghcr.io/owner/runquill", "v0.1.0"),
+		Env: setupEnvironment("owner", 123, "ghcr.io/owner/runquill", "v0.1.0") +
+			"RUNQUILL_WEBHOOK_URL=https://runner.example.com/webhook\nRUNQUILL_WEBHOOK_SECRET=generated-webhook-test-secret\nRUNQUILL_POLL_INTERVAL=0\n",
 		PEM: string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})),
 	}
 	pendingPath := filepath.Join(dir, setupPendingFile)
@@ -178,6 +179,9 @@ func TestSetupRecoversAndReusesConfiguration(t *testing.T) {
 	out.Reset()
 	if err := setup(t.Context(), &out, dir, service.Client(), service.URL, setupOptions{}); err != nil {
 		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(envPath); err != nil || string(data) != config.Env {
+		t.Fatalf("setup rerun changed the saved webhook-only configuration: %v", err)
 	}
 	for _, want := range []string{"docker pull ghcr.io/owner/runquill-runner:v0.1.0", "docker compose up -d --no-build", "docker compose exec manager runquill doctor"} {
 		if !strings.Contains(out.String(), want) {

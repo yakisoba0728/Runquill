@@ -29,6 +29,7 @@ type job struct {
 	phase                            phase
 	changedAt, launchedAt            int64
 	runnerName                       string
+	runnerHost                       string
 	runnerID                         int64
 	retryAt                          int64
 	retryReason                      string
@@ -76,7 +77,7 @@ func openQueue(path string) (*queue, error) {
 		lock.Close()
 		return nil, fmt.Errorf("lock queue %s: %w", path, err)
 	}
-	db, err := openQueueDB(path, false)
+	db, err := openQueueDB(path, "rwc")
 	if err != nil {
 		lock.Close()
 		return nil, err
@@ -87,36 +88,57 @@ func openQueue(path string) (*queue, error) {
 		q.close()
 		return nil, fmt.Errorf("initialize queue: %w", err)
 	}
-	hasReason, err := hasRetryReason(context.Background(), q.DB)
-	if err == nil && !hasReason {
-		_, err = q.Exec(`ALTER TABLE jobs ADD COLUMN retry_reason TEXT NOT NULL DEFAULT ''`)
-	}
-	if err != nil {
+	if err := q.migrate(); err != nil {
 		q.close()
 		return nil, fmt.Errorf("migrate queue: %w", err)
 	}
 	return q, nil
 }
 
-func openQueueDB(path string, readOnly bool) (*sql.DB, error) {
+func (q *queue) migrate() error {
+	for _, column := range []struct{ name, definition string }{
+		{"retry_reason", "TEXT NOT NULL DEFAULT ''"},
+		{"runner_host", "TEXT"},
+	} {
+		present, err := hasJobColumn(context.Background(), q.DB, column.name)
+		if err != nil {
+			return err
+		}
+		if !present {
+			if _, err := q.Exec("ALTER TABLE jobs ADD COLUMN " + column.name + " " + column.definition); err != nil {
+				return err
+			}
+		}
+	}
+	_, err := q.Exec(`CREATE TABLE IF NOT EXISTS docker_hosts (
+        host TEXT PRIMARY KEY NOT NULL,
+        cordoned INTEGER NOT NULL DEFAULT 0,
+        untracked_slots INTEGER CHECK (untracked_slots >= 0)
+    )`)
+	return err
+}
+
+func openQueueDB(path, mode string) (*sql.DB, error) {
 	path, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
 	}
-	dsn := url.URL{Scheme: "file", Path: path, RawQuery: "_pragma=busy_timeout(5000)"}
-	if readOnly {
-		dsn.RawQuery += "&mode=ro"
-	} else {
+	dsn := url.URL{Scheme: "file", Path: path, RawQuery: "_pragma=busy_timeout(5000)&mode=" + mode}
+	if mode == "rwc" {
 		dsn.RawQuery += "&_pragma=journal_mode(WAL)"
 	}
 	return sql.Open("sqlite", dsn.String())
 }
 
 func hasRetryReason(ctx context.Context, db *sql.DB) (bool, error) {
+	return hasJobColumn(ctx, db, "retry_reason")
+}
+
+func hasJobColumn(ctx context.Context, db *sql.DB, name string) (bool, error) {
 	var present bool
 	err := db.QueryRowContext(ctx, `SELECT EXISTS (
-        SELECT 1 FROM pragma_table_info('jobs') WHERE name = 'retry_reason'
-    )`).Scan(&present)
+        SELECT 1 FROM pragma_table_info('jobs') WHERE name = ?
+    )`, name).Scan(&present)
 	return present, err
 }
 
@@ -143,7 +165,8 @@ func (q *queue) record(ctx context.Context, j job, now time.Time) (bool, error) 
 func (q *queue) jobs(ctx context.Context, condition string, args ...any) ([]job, error) {
 	rows, err := q.QueryContext(ctx, `
         SELECT job_id, repository, repository_id, installation_id, route, phase, changed_at,
-               coalesce(runner_name, ''), coalesce(runner_id, 0), coalesce(launched_at, 0), retry_at
+               coalesce(runner_name, ''), coalesce(runner_host, ''), coalesce(runner_id, 0),
+               coalesce(launched_at, 0), retry_at
         FROM jobs `+condition, args...)
 	if err != nil {
 		return nil, err
@@ -153,7 +176,7 @@ func (q *queue) jobs(ctx context.Context, condition string, args ...any) ([]job,
 	for rows.Next() {
 		var j job
 		err := rows.Scan(&j.id, &j.repository, &j.repositoryID, &j.installationID, &j.route, &j.phase,
-			&j.changedAt, &j.runnerName, &j.runnerID, &j.launchedAt, &j.retryAt)
+			&j.changedAt, &j.runnerName, &j.runnerHost, &j.runnerID, &j.launchedAt, &j.retryAt)
 		if err != nil {
 			return nil, err
 		}

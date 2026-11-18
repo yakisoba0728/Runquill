@@ -42,6 +42,7 @@ func dockerCommand(ctx context.Context, input []byte, args ...string) (string, e
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd.WaitDelay = time.Second
 	if input != nil {
 		cmd.Stdin = bytes.NewReader(input)
 	}

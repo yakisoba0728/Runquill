@@ -164,7 +164,7 @@ func setupFiles(ctx context.Context, out io.Writer, dir string, client *http.Cli
 			if !setupSecret.MatchString(app.WebhookSecret) {
 				return nil, errors.New("GitHub did not return a usable webhook secret")
 			}
-			pending.Env += fmt.Sprintf("RUNQUILL_WEBHOOK_URL=%s\nRUNQUILL_WEBHOOK_SECRET=%s\nRUNQUILL_POLL_INTERVAL=0\n", opts.webhookURL, app.WebhookSecret)
+			pending.Env += fmt.Sprintf("RUNQUILL_WEBHOOK_URL=%s\nRUNQUILL_WEBHOOK_SECRET=%s\nRUNQUILL_POLL_INTERVAL=30s\n", opts.webhookURL, app.WebhookSecret)
 		}
 		newApp = true
 	default:

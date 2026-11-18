@@ -21,7 +21,7 @@ curl -fsSLO https://github.com/yakisoba0728/Runquill/releases/latest/download/in
 sh install.sh
 ```
 
-The installer verifies release downloads, runs browser setup, pulls matching images, and starts Compose in `./runquill`. Use `--dir PATH` for a different directory, `--version v0.1.0` to pin a release, or `--download-only` to download the binary and Compose files first.
+The installer verifies release downloads, runs browser setup, pulls matching images, and starts Compose in `./runquill`. Use `--dir PATH` for a different directory, `--version v0.1.1` to pin a release, or `--download-only` to download the binary and Compose files first.
 
 ### Create and install the GitHub App
 
@@ -82,7 +82,7 @@ For a manually configured App, select **Only on this account**, grant **Actions 
 
 To use published images with a manual `.env`, set the manager and runner image names from the example to the same release tag. Pull the runner image before starting Compose.
 
-For a fresh App, use `sh install.sh --webhook-url https://runquill.example.com/webhook` or pass the same option to `runquill setup`. Setup subscribes to `workflow_job`, stores GitHub's webhook secret, and sets the polling interval to zero. Set `RUNQUILL_POLL_INTERVAL=30s` in `.env` if you want polling alongside webhooks.
+For a fresh App, use `sh install.sh --webhook-url https://runquill.example.com/webhook` or pass the same option to `runquill setup`. Setup subscribes to `workflow_job`, stores GitHub's webhook secret, and sets `RUNQUILL_POLL_INTERVAL=30s` to recover missed deliveries. Set the interval to `0` in `.env` for webhook-only operation.
 
 For an existing App, subscribe to **Workflow job**, set its public HTTPS webhook URL, and set the same secret in GitHub and `RUNQUILL_WEBHOOK_SECRET`. Forward `/webhook` to the manager on port 8080. With Caddy on the same server, use the following configuration.
 
@@ -92,12 +92,40 @@ runquill.example.com {
 }
 ```
 
+### Use Tailscale Funnel for the webhook
+
+Funnel gives GitHub a public HTTPS address for a manager behind NAT. Run it on the host that publishes the Compose manager at `127.0.0.1:8080`. Enable MagicDNS and HTTPS for your tailnet and allow this node to use Funnel in its policy. The example uses HTTPS port 443. [Tailscale Funnel requirements](https://tailscale.com/docs/features/tailscale-funnel)
+
+```sh
+tailscale funnel status
+tailscale funnel --bg --https=443 http://127.0.0.1:8080
+```
+
+Append `/webhook` to the HTTPS address printed by Funnel. Pass that URL to the installer you downloaded above or to `./runquill setup`. For an existing App, update its webhook URL in GitHub and use its configured webhook secret.
+
+```sh
+sh install.sh --webhook-url https://runquill.example-tailnet.ts.net/webhook
+```
+
+After Compose starts, request `https://runquill.example-tailnet.ts.net/healthz` from outside the tailnet and expect HTTP 200. Run the smoke workflow and check for HTTP 202 on its queued event in the App's **Advanced → Recent deliveries**. If a delivery times out, use **Redeliver** there. On an existing installation with polling disabled, set `RUNQUILL_POLL_INTERVAL=30s` in `.env` and apply it with your usual Compose command to recover missed jobs automatically. [GitHub App webhook redelivery](https://docs.github.com/en/webhooks/testing-and-troubleshooting-webhooks/redelivering-webhooks#redelivering-github-app-webhooks)
+
+Use the command below to remove this Funnel listener. Funnel exposes the manager's HTTP endpoints over the internet. Keep the setup browser endpoint and Docker sockets on their local or private networks.
+
+```sh
+tailscale funnel --https=443 off
+tailscale funnel status
+```
+
+Workers on your tailnet can use their MagicDNS names in `ssh://` entries if the manager container can resolve those names and reach SSH. [Tailscale Funnel CLI](https://tailscale.com/docs/reference/tailscale-cli/funnel)
+
 ### Add Docker worker servers
 
 List the Docker engines served by one manager in `.env`. Each worker needs rootful Docker on Linux with cgroup v2, the image named by `RUNQUILL_RUNNER_IMAGE`, and an SSH account allowed to use its Docker socket. Use a dedicated SSH key and verify the worker's host key when populating `known_hosts`.
 
 ```dotenv
 RUNQUILL_DOCKER_HOSTS=local,ssh://builder@worker.example.com
+RUNQUILL_MAX_RUNNERS=3
+RUNQUILL_DOCKER_HOST_LIMITS=local=2,ssh://builder@worker.example.com=1
 RUNQUILL_SSH_DIR=/path/to/runquill-ssh
 ```
 
@@ -108,7 +136,17 @@ docker compose -f compose.yaml -f compose.ssh.yaml up -d
 docker compose -f compose.yaml -f compose.ssh.yaml exec manager runquill doctor
 ```
 
-The manager assigns each runner to the least occupied engine and applies `RUNQUILL_MAX_RUNNERS` across the group. If a worker disconnects, it keeps existing leases and pauses scheduling until it reconnects.
+The manager picks the eligible engine with the fewest occupied slots. `RUNQUILL_MAX_RUNNERS` caps the group and `RUNQUILL_DOCKER_HOST_LIMITS` optionally caps individual engines. Each entry uses the exact host name from `RUNQUILL_DOCKER_HOSTS`.
+
+If a worker disconnects, its runner leases and last observed untracked runner slots count toward the global limit. Healthy workers can take jobs in the remaining slots. A worker that has never been reached reserves its configured limit, or the global limit if it has no host-specific limit.
+
+Use `cordon` before maintenance to stop new assignments to a worker while existing jobs finish. `status` shows the worker's connectivity, mode, and slot usage. Wait for its slots to clear before removing it from the fleet. Run `uncordon` to resume assignments. The queue volume preserves this setting across manager restarts.
+
+```sh
+docker compose -f compose.yaml -f compose.ssh.yaml exec manager runquill host cordon ssh://builder@worker.example.com
+docker compose -f compose.yaml -f compose.ssh.yaml exec manager runquill status
+docker compose -f compose.yaml -f compose.ssh.yaml exec manager runquill host uncordon ssh://builder@worker.example.com
+```
 
 ## Choose a runner
 
@@ -134,7 +172,7 @@ Pass the expression as the job's single `runs-on` label. Start the suffix with a
 docker compose exec manager runquill status
 ```
 
-The snapshot includes running runner containers, occupied slots, and direct GitHub job links. `WAITING` positions follow queue order among jobs ready to start. `RETRY` shows the time until the next attempt and the latest failure or reconciliation reason when available. When using the standalone binary, run `runquill status` with the manager's `RUNQUILL_DB` and `RUNQUILL_MAX_RUNNERS` settings.
+The snapshot includes running runner containers, per-host slot usage and health, and direct GitHub job links. `WAITING` positions follow queue order among jobs ready to start. `RETRY` shows the time until the next attempt and the latest failure or reconciliation reason when available. When using the standalone binary, run `runquill status` with the manager's queue and Docker environment settings.
 
 - `RUNQUILL_MAX_RUNNERS` defaults to 2. Provisioning failures retry after 15 seconds and allow later jobs to use available slots. GitHub fails self-hosted jobs that remain queued for more than 24 hours. [GitHub runner routing](https://docs.github.com/en/actions/reference/runners/self-hosted-runners#routing-precedence-for-self-hosted-runners)
 - `docker compose logs -f manager` shows admissions, cleanup, and API errors. The GitHub workflow retains step output as usual.

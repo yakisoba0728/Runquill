@@ -19,20 +19,21 @@ const (
 )
 
 type runnerRuntime interface {
-	containers(context.Context) (map[string]string, error)
-	start(context.Context, string, string) error
-	remove(context.Context, string) error
+	snapshot(context.Context) ([]dockerHostSnapshot, error)
+	startOn(context.Context, string, string, string) error
+	removeOn(context.Context, string, string) error
 }
 
 type scheduler struct {
-	queue   *queue
-	github  *github
-	runtime runnerRuntime
-	limit   int
+	queue      *queue
+	github     *github
+	runtime    runnerRuntime
+	limit      int
+	hostLimits map[string]int
 }
 
 func (s *scheduler) tick(ctx context.Context, now time.Time) error {
-	containers, err := s.runtime.containers(ctx)
+	snapshots, err := s.runtime.snapshot(ctx)
 	if err != nil {
 		return err
 	}
@@ -40,15 +41,12 @@ func (s *scheduler) tick(ctx context.Context, now time.Time) error {
 	if err != nil {
 		return err
 	}
-	for _, j := range active {
-		if j.retryAt > now.Unix() {
-			continue
-		}
-		if err := s.reconcile(ctx, j, containers, now); err != nil {
-			if err := s.retry(ctx, j, now, "reconcile runner", err); err != nil {
-				return err
-			}
-		}
+	states, err := readHostStates(ctx, s.queue.DB)
+	if err != nil {
+		return err
+	}
+	if err := s.reconcileFleet(ctx, active, snapshots, states, now); err != nil {
+		return err
 	}
 
 	_, err = s.queue.ExecContext(ctx, `UPDATE jobs SET phase = ?, changed_at = ?
@@ -63,14 +61,11 @@ func (s *scheduler) tick(ctx context.Context, now time.Time) error {
 		return err
 	}
 
-	var occupied int
-	// Charge Docker capacity for containers that can run, even if the queue volume was replaced.
-	for _, state := range containers {
-		if runnerOccupiesSlot(state) {
-			occupied++
-		}
+	hosts, occupied := fleetCapacity(snapshots, states, active, s.hostLimits, s.limit)
+	for _, host := range hosts {
+		occupied += host.Occupied
 	}
-	if occupied >= s.limit {
+	if occupied >= s.limit || availableHost(hosts) == nil {
 		return nil
 	}
 	waiting, err := s.queue.jobs(ctx, `
@@ -80,8 +75,98 @@ func (s *scheduler) tick(ctx context.Context, now time.Time) error {
 		return err
 	}
 	for _, j := range waiting {
-		if err := s.launch(ctx, j, now); err != nil {
+		host := availableHost(hosts)
+		if host == nil {
+			break
+		}
+		claimed, err := s.launch(ctx, j, host.Name, now)
+		if claimed {
+			host.Occupied++
+		}
+		if err != nil {
 			if err := s.retry(ctx, j, now, "provision runner", err); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func availableHost(hosts []hostCapacity) *hostCapacity {
+	var best *hostCapacity
+	for i := range hosts {
+		host := &hosts[i]
+		if host.Containers == nil || host.Err != nil || host.Cordoned || host.Occupied >= host.Limit {
+			continue
+		}
+		if best == nil || host.Occupied < best.Occupied {
+			best = host
+		}
+	}
+	return best
+}
+
+func (s *scheduler) reconcileFleet(ctx context.Context, active []job, snapshots []dockerHostSnapshot, states map[string]hostState, now time.Time) error {
+	containers := make(map[string]map[string]string, len(snapshots))
+	seenOn := make(map[string]string)
+	allObserved := true
+	for _, host := range snapshots {
+		containers[host.Name] = host.Containers
+		allObserved = allObserved && host.Containers != nil
+		for name := range host.Containers {
+			seenOn[name] = host.Name
+		}
+	}
+	for name, state := range states {
+		if _, configured := containers[name]; !configured && state.untrackedSlots.Int64 > 0 {
+			allObserved = false
+		}
+	}
+	for _, j := range active {
+		if _, configured := containers[j.runnerHost]; j.runnerHost != "" && !configured {
+			allObserved = false
+		}
+	}
+
+	owners := make(map[string]string, len(active))
+	for i := range active {
+		j := &active[i]
+		seen := seenOn[j.runnerName]
+		if j.runnerHost == "" && seen != "" {
+			// Adopt runners that predate persisted Docker host ownership.
+			_, err := s.queue.ExecContext(ctx, "UPDATE jobs SET runner_host = ? WHERE job_id = ?", seen, j.id)
+			if err != nil {
+				return err
+			}
+			j.runnerHost = seen
+		}
+		owners[j.runnerName] = j.runnerHost
+		if j.retryAt > now.Unix() || (seen != "" && j.runnerHost != seen) {
+			continue
+		}
+		hostContainers := containers[j.runnerHost]
+		if hostContainers == nil && (j.runnerHost != "" || !allObserved) {
+			continue
+		}
+		if err := s.reconcile(ctx, *j, hostContainers, now); err != nil {
+			if err := s.retry(ctx, *j, now, "reconcile runner", err); err != nil {
+				return err
+			}
+		}
+	}
+
+	for _, host := range snapshots {
+		if host.Containers == nil {
+			continue
+		}
+		var untracked int
+		for name, state := range host.Containers {
+			if owners[name] != host.Name && runnerOccupiesSlot(state) {
+				untracked++
+			}
+		}
+		if previous := states[host.Name].untrackedSlots; !previous.Valid || previous.Int64 != int64(untracked) {
+			if err := s.queue.observeHostSlots(ctx, host.Name, untracked); err != nil {
 				return err
 			}
 		}
@@ -121,64 +206,66 @@ func retryMessage(operation string, cause error) string {
 	return operation + ": " + string(detail)
 }
 
-func (s *scheduler) launch(ctx context.Context, j job, now time.Time) error {
+func (s *scheduler) launch(ctx context.Context, j job, host string, now time.Time) (bool, error) {
 	token, err := s.github.token(ctx, j)
 	if err != nil {
-		return err
+		return false, err
 	}
 	eligible, err := s.github.eligible(ctx, j, token)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if !eligible {
-		return s.queue.advance(ctx, j.id, completed, now)
+		return false, s.queue.advance(ctx, j.id, completed, now)
 	}
 	status, err := s.github.jobStatus(ctx, j, token)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if status != "queued" {
 		if p, known := phases[status]; known {
-			return s.queue.advance(ctx, j.id, p, now)
+			return false, s.queue.advance(ctx, j.id, p, now)
 		}
-		return fmt.Errorf("waiting for GitHub to queue job, status %q", status)
+		return false, fmt.Errorf("waiting for GitHub to queue job, status %q", status)
 	}
 	var nonce [6]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
-		return err
+		return false, err
 	}
 	name := fmt.Sprintf("runquill-%d-%s", j.id, hex.EncodeToString(nonce[:]))
 	claim, err := s.queue.ExecContext(ctx, `
-        UPDATE jobs SET runner_name = ?, launched_at = ?
-        WHERE job_id = ? AND phase = ? AND runner_name IS NULL`, name, now.Unix(), j.id, queued)
+        UPDATE jobs SET runner_name = ?, runner_host = ?, launched_at = ?
+        WHERE job_id = ? AND phase = ? AND runner_name IS NULL
+        AND NOT EXISTS (SELECT 1 FROM docker_hosts WHERE host = ? AND cordoned = 1)`,
+		name, host, now.Unix(), j.id, queued, host)
 	if err != nil {
-		return err
+		return false, err
 	}
 	count, err := claim.RowsAffected()
 	if err != nil || count == 0 {
-		return err
+		return false, err
 	}
 	runnerID, jit, err := s.github.provision(ctx, j, name, token)
 	if err != nil {
-		return err
+		return true, err
 	}
 	_, err = s.queue.ExecContext(ctx, "UPDATE jobs SET runner_id = ? WHERE job_id = ?", runnerID, j.id)
 	if err != nil {
-		return err
+		return true, err
 	}
 	var current phase
 	if err := s.queue.QueryRowContext(ctx, "SELECT phase FROM jobs WHERE job_id = ?", j.id).Scan(&current); err != nil {
-		return err
+		return true, err
 	}
 	if current == queued {
-		if err := s.runtime.start(ctx, name, jit); err != nil {
-			return err
+		if err := s.runtime.startOn(ctx, host, name, jit); err != nil {
+			return true, err
 		}
-		slog.Info("runner started", "runner", name, "repository", j.repository, "job", j.id)
+		slog.Info("runner started", "runner", name, "docker_host", host, "repository", j.repository, "job", j.id)
 		_, err = s.queue.ExecContext(ctx, "UPDATE jobs SET retry_at = 0, retry_reason = '' WHERE job_id = ?", j.id)
-		return err
+		return true, err
 	}
-	return nil
+	return true, nil
 }
 
 func (s *scheduler) reconcile(ctx context.Context, j job, containers map[string]string, now time.Time) error {
@@ -216,7 +303,7 @@ func (s *scheduler) reconcile(ctx context.Context, j job, containers map[string]
 		}
 	}
 	if state != "" {
-		if err := s.runtime.remove(ctx, j.runnerName); err != nil {
+		if err := s.runtime.removeOn(ctx, j.runnerHost, j.runnerName); err != nil {
 			return err
 		}
 		delete(containers, j.runnerName)
@@ -245,7 +332,7 @@ func (s *scheduler) reconcile(ctx context.Context, j job, containers map[string]
 	if err := s.github.remove(ctx, j); err != nil {
 		return err
 	}
-	_, err := s.queue.ExecContext(ctx, `UPDATE jobs SET runner_name = NULL, runner_id = NULL,
+	_, err := s.queue.ExecContext(ctx, `UPDATE jobs SET runner_name = NULL, runner_host = NULL, runner_id = NULL,
         launched_at = NULL, retry_at = ?,
         retry_reason = CASE WHEN phase = ? THEN coalesce(nullif(retry_reason, ''),
             'runner became unavailable while the job was queued') ELSE '' END

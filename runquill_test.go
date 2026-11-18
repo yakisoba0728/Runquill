@@ -11,6 +11,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -70,32 +72,42 @@ func TestWebhook(t *testing.T) {
 }
 
 type testRuntime struct {
-	states  map[string]string
+	hosts   []dockerHostSnapshot
 	started []string
 	removed []string
 }
 
-func (r *testRuntime) containers(context.Context) (map[string]string, error) {
-	states := make(map[string]string)
-	for name, state := range r.states {
-		states[name] = state
+func (r *testRuntime) snapshot(context.Context) ([]dockerHostSnapshot, error) {
+	hosts := slices.Clone(r.hosts)
+	for i := range hosts {
+		hosts[i].Containers = maps.Clone(hosts[i].Containers)
 	}
-	return states, nil
+	return hosts, nil
 }
 
-func (r *testRuntime) start(_ context.Context, name, jit string) error {
+func (r *testRuntime) startOn(_ context.Context, host, name, jit string) error {
 	if jit != "test-config" {
 		return fmt.Errorf("unexpected test runner config")
 	}
-	r.started = append(r.started, name)
-	r.states[name] = "running"
-	return nil
+	for _, target := range r.hosts {
+		if target.Name == host && target.Containers != nil && target.Err == nil {
+			r.started = append(r.started, name)
+			target.Containers[name] = "running"
+			return nil
+		}
+	}
+	return fmt.Errorf("start on unavailable test host %s", host)
 }
 
-func (r *testRuntime) remove(_ context.Context, name string) error {
-	r.removed = append(r.removed, name)
-	delete(r.states, name)
-	return nil
+func (r *testRuntime) removeOn(_ context.Context, host, name string) error {
+	for _, target := range r.hosts {
+		if target.Name == host && target.Containers[name] != "" {
+			r.removed = append(r.removed, name)
+			delete(target.Containers, name)
+			return nil
+		}
+	}
+	return fmt.Errorf("remove runner %s on unavailable test host %s", name, host)
 }
 
 func TestSchedulerRestoresLeasesAndMaintainsFIFO(t *testing.T) {
@@ -169,7 +181,12 @@ func TestSchedulerRestoresLeasesAndMaintainsFIFO(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx, now := t.Context(), time.Now()
-	runtime := &testRuntime{states: make(map[string]string)}
+	const worker = "ssh://runner@worker"
+	localRunners, workerRunners := make(map[string]string), make(map[string]string)
+	runtime := &testRuntime{hosts: []dockerHostSnapshot{
+		{Name: "local", Containers: localRunners},
+		{Name: worker, Containers: workerRunners},
+	}}
 	gh := &github{base: api.URL, client: api.Client(), key: key, appID: "123", owner: "owner"}
 	s := &scheduler{queue: q, github: gh, runtime: runtime, limit: 2}
 	for _, id := range []int64{70, 20, 40} {
@@ -183,7 +200,8 @@ func TestSchedulerRestoresLeasesAndMaintainsFIFO(t *testing.T) {
 	err = s.tick(ctx, now)
 	q.close()
 	if err != nil || len(runtime.started) != 2 ||
-		!strings.HasPrefix(runtime.started[0], "runquill-70-") || !strings.HasPrefix(runtime.started[1], "runquill-20-") {
+		!strings.HasPrefix(runtime.started[0], "runquill-70-") || !strings.HasPrefix(runtime.started[1], "runquill-20-") ||
+		localRunners[runtime.started[0]] != "running" || workerRunners[runtime.started[1]] != "running" {
 		t.Fatalf("first tick: started %v, error %v", runtime.started, err)
 	}
 	q, err = openQueue(path)
@@ -192,22 +210,61 @@ func TestSchedulerRestoresLeasesAndMaintainsFIFO(t *testing.T) {
 	}
 	t.Cleanup(q.close)
 	s.queue = q
+	runtime.hosts[1].Containers = nil
+	runtime.hosts[1].Err = fmt.Errorf("worker disconnected")
+	leases, err := q.jobs(ctx, "WHERE runner_name IS NOT NULL ORDER BY sequence")
+	if err != nil || len(leases) != 2 || leases[0].runnerHost != "local" || leases[1].runnerHost != worker {
+		t.Fatalf("restored host leases: %+v, error %v", leases, err)
+	}
+	if err := q.advance(ctx, 20, completed, now); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.tick(ctx, now); err != nil || len(runtime.started) != 2 {
-		t.Fatalf("after restart: started %v, error %v", runtime.started, err)
+		t.Fatalf("after restart with offline worker: started %v, error %v", runtime.started, err)
 	}
 	if err := q.advance(ctx, 70, completed, now); err != nil {
 		t.Fatal(err)
 	}
 	finished := runtime.started[0]
-	runtime.states[finished] = "exited"
+	localRunners[finished] = "exited"
 	if err := s.tick(ctx, now.Add(time.Second)); err != nil || deleted.Load() != 1 ||
 		!slices.Equal(runtime.removed, []string{finished}) || len(runtime.started) != 3 ||
 		!strings.HasPrefix(runtime.started[2], "runquill-40-") {
 		t.Fatalf("cleanup: started %v, removed %v, deleted %v, error %v",
 			runtime.started, runtime.removed, deleted.Load(), err)
 	}
-	if err := s.tick(ctx, now.Add(time.Second+retryDelay)); err != nil || deleted.Load() != 2 {
+	if err := s.tick(ctx, now.Add(time.Second+retryDelay)); err != nil || deleted.Load() != 2 || len(runtime.removed) != 1 {
 		t.Fatalf("runner registration cleanup retry: deletes=%d, error=%v", deleted.Load(), err)
+	}
+	runtime.hosts[1].Containers = workerRunners
+	runtime.hosts[1].Err = nil
+	if err := s.tick(ctx, now.Add(completionGrace)); err != nil || deleted.Load() != 3 ||
+		!slices.Equal(runtime.removed, []string{finished, runtime.started[1]}) {
+		t.Fatalf("cleanup after reconnection: removed %v, deletes=%d, error=%v", runtime.removed, deleted.Load(), err)
+	}
+
+	t.Setenv("RUNQUILL_DB", path)
+	t.Setenv("RUNQUILL_DOCKER_HOSTS", "local,"+worker)
+	s.hostLimits = map[string]int{"local": 1}
+	if err := setHostCordon(ctx, io.Discard, worker, true); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []int64{50, 60} {
+		j := job{id: id, repository: "owner/repo", repositoryID: 2, installationID: 1,
+			route: fmt.Sprintf("runquill-17-1-ci-%d", id)}
+		if _, err := q.record(ctx, j, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.tick(ctx, now.Add(completionGrace)); err != nil || len(runtime.started) != 3 {
+		t.Fatalf("host at limit and worker cordoned: started %v, error %v", runtime.started, err)
+	}
+	if err := setHostCordon(ctx, io.Discard, worker, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.tick(ctx, now.Add(completionGrace)); err != nil || len(runtime.started) != 4 ||
+		!strings.HasPrefix(runtime.started[3], "runquill-50-") || workerRunners[runtime.started[3]] != "running" {
+		t.Fatalf("worker uncordoned: started %v, error %v", runtime.started, err)
 	}
 }
 

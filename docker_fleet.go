@@ -4,21 +4,28 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 var sshName = regexp.MustCompile(`^[a-zA-Z0-9_][a-zA-Z0-9_.-]*$`)
 
 type dockerFleet struct {
-	hosts    []docker
-	runners  map[string]int
-	states   map[string]string
-	occupied []int
+	hosts []docker
 }
+
+type dockerHostSnapshot struct {
+	Name       string
+	Containers map[string]string
+	Err        error
+}
+
+const dockerHostProbeTimeout = 5 * time.Second
 
 func newDockerFleet(image, hosts string) (*dockerFleet, error) {
 	fleet := &dockerFleet{}
@@ -53,84 +60,131 @@ func (f *dockerFleet) prepare(ctx context.Context) error {
 	engines := make(map[string]bool, len(f.hosts))
 	for _, host := range f.hosts {
 		if len(f.hosts) > 1 {
-			id, err := host.command(ctx, nil, "info", "--format", "{{.ID}}")
+			id, err := host.engineID(ctx)
 			if err != nil {
 				return err
 			}
-			id = strings.TrimSpace(id)
-			if id == "" || engines[id] {
+			if engines[id] {
 				return errors.New("each configured Docker host must identify a distinct engine")
 			}
 			engines[id] = true
 		}
-		if _, err := host.command(ctx, nil, "image", "inspect", host.image, "--format", "{{.Id}}"); err != nil {
-			return fmt.Errorf("runner image %s is required on each Docker host: %w", host.image, err)
+		if err := host.checkRunnerImage(ctx); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-func (f *dockerFleet) containers(ctx context.Context) (map[string]string, error) {
-	runners := make(map[string]int)
-	states := make(map[string]string)
-	occupied := make([]int, len(f.hosts))
-	for index, host := range f.hosts {
-		containers, err := host.containers(ctx)
-		if err != nil {
-			// Keep leases until all engines can be checked for their containers.
-			return nil, err
+func (f *dockerFleet) limits(raw string) (map[string]int, error) {
+	limits := make(map[string]int)
+	if strings.TrimSpace(raw) == "" {
+		return limits, nil
+	}
+	for item := range strings.SplitSeq(raw, ",") {
+		name, value, ok := strings.Cut(item, "=")
+		name = strings.TrimSpace(name)
+		count, err := strconv.Atoi(strings.TrimSpace(value))
+		if !ok || err != nil || count < 1 {
+			return nil, errors.New("RUNQUILL_DOCKER_HOST_LIMITS must list host=positive_count pairs")
 		}
-		for name, state := range containers {
-			if _, found := runners[name]; found {
+		if _, err := f.host(name); err != nil {
+			return nil, fmt.Errorf("RUNQUILL_DOCKER_HOST_LIMITS: %w", err)
+		}
+		if _, exists := limits[name]; exists {
+			return nil, fmt.Errorf("duplicate runner limit for Docker host %q", name)
+		}
+		limits[name] = count
+	}
+	return limits, nil
+}
+
+func (f *dockerFleet) snapshot(ctx context.Context) ([]dockerHostSnapshot, error) {
+	hosts := make([]dockerHostSnapshot, len(f.hosts))
+	engineIDs := make([]string, len(f.hosts))
+	var probes sync.WaitGroup
+	for i, host := range f.hosts {
+		probes.Go(func() {
+			ctx, cancel := context.WithTimeout(ctx, dockerHostProbeTimeout)
+			defer cancel()
+			result := &hosts[i]
+			result.Name = host.label()
+			if len(f.hosts) > 1 {
+				engineIDs[i], result.Err = host.engineID(ctx)
+				if result.Err != nil {
+					return
+				}
+			}
+			result.Containers, result.Err = host.containers(ctx)
+			if result.Err == nil && host.image != "" {
+				result.Err = host.checkRunnerImage(ctx)
+			}
+		})
+	}
+	probes.Wait()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	engines := make(map[string]string)
+	runners := make(map[string]bool)
+	for index, host := range hosts {
+		if id := engineIDs[index]; id != "" {
+			if existing, exists := engines[id]; exists {
+				return nil, fmt.Errorf("Docker hosts %q and %q identify the same engine", existing, host.Name)
+			}
+			engines[id] = host.Name
+		}
+		for name := range host.Containers {
+			if runners[name] {
 				return nil, fmt.Errorf("runner %q exists on multiple Docker hosts", name)
 			}
-			runners[name], states[name] = index, state
-			if runnerOccupiesSlot(state) {
-				occupied[index]++
-			}
+			runners[name] = true
 		}
 	}
-	// The scheduler mutates its copy as it reconciles containers.
-	f.runners, f.states, f.occupied = runners, states, occupied
-	result := make(map[string]string, len(states))
-	for name, state := range states {
-		result[name] = state
-	}
-	return result, nil
+	return hosts, nil
 }
 
-func (f *dockerFleet) start(ctx context.Context, name, jit string) error {
-	index := 0
-	for i, count := range f.occupied {
-		if count < f.occupied[index] {
-			index = i
+func (f *dockerFleet) host(name string) (docker, error) {
+	for _, host := range f.hosts {
+		if host.label() == name {
+			return host, nil
 		}
 	}
-	host := f.hosts[index]
-	// Charge the attempt even if Docker fails after creating a container.
-	f.occupied[index]++
-	if err := host.start(ctx, name, jit); err != nil {
-		return err
-	}
-	if len(f.hosts) > 1 {
-		slog.Info("runner placed", "runner", name, "docker_host", host.label())
-	}
-	return nil
+	return docker{}, fmt.Errorf("unknown Docker host %q", name)
 }
 
-func (f *dockerFleet) remove(ctx context.Context, name string) error {
-	index, ok := f.runners[name]
-	if !ok {
-		return fmt.Errorf("runner %q is not in the Docker snapshot", name)
-	}
-	if err := f.hosts[index].remove(ctx, name); err != nil {
+func (f *dockerFleet) startOn(ctx context.Context, target, name, jit string) error {
+	host, err := f.host(target)
+	if err != nil {
 		return err
 	}
-	if runnerOccupiesSlot(f.states[name]) {
-		f.occupied[index]--
+	return host.start(ctx, name, jit)
+}
+
+func (f *dockerFleet) removeOn(ctx context.Context, target, name string) error {
+	host, err := f.host(target)
+	if err != nil {
+		return err
 	}
-	delete(f.runners, name)
-	delete(f.states, name)
+	return host.remove(ctx, name)
+}
+
+func (d docker) engineID(ctx context.Context) (string, error) {
+	output, err := d.command(ctx, nil, "info", "--format", "{{.ID}}")
+	if err != nil {
+		return "", err
+	}
+	id := strings.TrimSpace(output)
+	if id == "" {
+		return "", fmt.Errorf("Docker host %q did not report an engine ID", d.label())
+	}
+	return id, nil
+}
+
+func (d docker) checkRunnerImage(ctx context.Context) error {
+	if _, err := d.command(ctx, nil, "image", "inspect", d.image, "--format", "{{.Id}}"); err != nil {
+		return fmt.Errorf("runner image %s on Docker host %q: %w", d.image, d.label(), err)
+	}
 	return nil
 }
 

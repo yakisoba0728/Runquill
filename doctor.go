@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -29,6 +30,8 @@ func doctor(ctx context.Context, out io.Writer, repo string) error {
 	if dockerErr != nil {
 		report("Docker hosts", dockerErr)
 	} else {
+		_, limitErr := fleet.limits(os.Getenv("RUNQUILL_DOCKER_HOST_LIMITS"))
+		report("Docker host runner limits", limitErr)
 		for _, target := range fleet.hosts {
 			targetReport := report
 			if len(fleet.hosts) > 1 || target.host != "" {

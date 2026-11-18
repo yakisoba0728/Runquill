@@ -15,7 +15,7 @@ curl -fsSLO https://github.com/yakisoba0728/Runquill/releases/latest/download/in
 sh install.sh
 ```
 
-설치 스크립트는 다운로드 체크섬을 확인하고, 브라우저 설정을 거쳐 같은 버전의 이미지를 받은 뒤 `./runquill`에서 Compose를 시작합니다. `--dir PATH`로 경로를 바꾸고, `--version v0.1.0`으로 버전을 지정하거나, `--download-only`로 바이너리와 Compose 파일만 받을 수 있습니다.
+설치 스크립트는 다운로드 체크섬을 확인하고, 브라우저 설정을 거쳐 같은 버전의 이미지를 받은 뒤 `./runquill`에서 Compose를 시작합니다. `--dir PATH`로 경로를 바꾸고, `--version v0.1.1`으로 버전을 지정하거나, `--download-only`로 바이너리와 Compose 파일만 받을 수 있습니다.
 
 ### GitHub App 연결
 
@@ -84,7 +84,33 @@ runquill.example.com {
 
 ### HTTPS 웹훅으로 연결
 
-새 App을 만들 때 `sh install.sh --webhook-url https://runquill.example.com/webhook`을 실행하거나 `runquill setup`에 같은 옵션을 전달합니다. App이 `workflow_job`을 구독하고, `setup`이 웹훅 시크릿을 저장하고 폴링 간격을 `0`으로 설정합니다. HTTPS 프록시에서 `/webhook`을 위 예시처럼 로컬 매니저로 전달합니다. 폴링도 같이 쓰려면 `.env`에 `RUNQUILL_POLL_INTERVAL=30s`를 설정합니다.
+새 App을 만들 때 `sh install.sh --webhook-url https://runquill.example.com/webhook`을 실행하거나 `runquill setup`에 같은 옵션을 전달합니다. App이 `workflow_job`을 구독하고, `setup`은 웹훅 시크릿과 놓친 작업 복구에 쓰는 `RUNQUILL_POLL_INTERVAL=30s`를 저장합니다. HTTPS 프록시에서 `/webhook`을 위 예시처럼 로컬 매니저로 전달합니다. 웹훅만 쓰려면 `.env`에서 폴링 간격을 `0`으로 설정합니다.
+
+### Tailscale Funnel로 웹훅 연결
+
+공유기 뒤의 서버에도 Funnel로 GitHub가 접근할 수 있는 공개 HTTPS 주소를 만들 수 있습니다. Compose 매니저를 `127.0.0.1:8080`으로 내보내는 서버에서 실행합니다. Tailnet에서 MagicDNS와 HTTPS를 활성화하고, 정책에서 해당 서버의 Funnel 사용을 허용합니다. 예제는 기본 HTTPS 포트인 443을 사용합니다. [Tailscale Funnel 요구사항](https://tailscale.com/docs/features/tailscale-funnel)
+
+```sh
+tailscale funnel status
+tailscale funnel --bg --https=443 http://127.0.0.1:8080
+```
+
+Funnel이 출력한 HTTPS 주소에 `/webhook`을 붙여 위에서 받은 설치 스크립트나 `./runquill setup`에 전달합니다. 기존 App을 사용한다면 GitHub에서 웹훅 URL을 바꾸고 해당 App의 시크릿을 사용합니다.
+
+```sh
+sh install.sh --webhook-url https://runquill.example-tailnet.ts.net/webhook
+```
+
+Compose가 뜬 뒤 tailnet 외부에서 `https://runquill.example-tailnet.ts.net/healthz`가 HTTP 200을 반환하는지 확인합니다. 스모크 워크플로를 실행하고 App의 **Advanced → Recent deliveries**에서 대기 이벤트에 HTTP 202가 기록되는지 확인합니다. 전송이 타임아웃되면 해당 화면에서 **Redeliver**를 사용할 수 있습니다. 폴링이 꺼진 기존 설치에서 놓친 작업을 자동으로 복구하려면 `.env`에 `RUNQUILL_POLL_INTERVAL=30s`를 설정하고 기존 Compose 명령으로 반영합니다. [GitHub App 웹훅 재전송](https://docs.github.com/en/webhooks/testing-and-troubleshooting-webhooks/redelivering-webhooks#redelivering-github-app-webhooks)
+
+다음 명령으로 이 Funnel 주소를 닫습니다. Funnel은 매니저의 HTTP 엔드포인트를 인터넷에 공개합니다. 브라우저 설정 포트와 Docker 소켓은 로컬이나 사설망에서 사용합니다.
+
+```sh
+tailscale funnel --https=443 off
+tailscale funnel status
+```
+
+작업 서버가 같은 tailnet에 있다면, 매니저 컨테이너가 서버 이름을 확인하고 SSH에 연결할 수 있도록 설정한 뒤 `ssh://` 주소에 작업 서버의 MagicDNS 이름을 쓰면 됩니다. [Tailscale Funnel CLI](https://tailscale.com/docs/reference/tailscale-cli/funnel)
 
 ### Docker 작업 서버 추가
 
@@ -92,6 +118,8 @@ runquill.example.com {
 
 ```dotenv
 RUNQUILL_DOCKER_HOSTS=local,ssh://builder@worker.example.com
+RUNQUILL_MAX_RUNNERS=3
+RUNQUILL_DOCKER_HOST_LIMITS=local=2,ssh://builder@worker.example.com=1
 RUNQUILL_SSH_DIR=/path/to/runquill-ssh
 ```
 
@@ -102,7 +130,17 @@ docker compose -f compose.yaml -f compose.ssh.yaml up -d
 docker compose -f compose.yaml -f compose.ssh.yaml exec manager runquill doctor
 ```
 
-매니저는 사용 중인 슬롯이 가장 적은 서버에 새 러너를 배치합니다. 동시 실행 한도는 서버 전체에 적용됩니다. 서버 연결이 끊기면 기존 러너 기록을 보존하고 다시 연결될 때까지 배치를 기다립니다.
+매니저는 배정 가능한 서버 중 사용 중인 슬롯이 가장 적은 곳에 새 러너를 배치합니다. `RUNQUILL_MAX_RUNNERS`는 전체 한도이고, `RUNQUILL_DOCKER_HOST_LIMITS`는 서버별 한도입니다. 서버별 설정에서는 `RUNQUILL_DOCKER_HOSTS`에 적은 서버 이름을 그대로 씁니다.
+
+서버 연결이 끊기면 해당 서버의 러너 기록과 마지막으로 확인한 미추적 러너 슬롯을 전체 한도에 반영합니다. 정상 서버는 남는 슬롯으로 작업을 계속 받습니다. 연결한 적이 없는 서버의 슬롯은 서버별 한도만큼 예약하며, 서버별 한도가 없으면 전체 한도만큼 예약합니다.
+
+정비 전 `cordon`을 실행하면 해당 서버의 새 작업 배정이 멈추고 기존 작업은 계속 실행됩니다. `status`에서 서버 연결 상태, 정비 상태, 슬롯 사용량을 확인할 수 있습니다. 서버를 목록에서 빼기 전에는 해당 서버의 슬롯이 모두 비었는지 확인하세요. 새 작업을 다시 받으려면 `uncordon`을 실행합니다. 정비 상태는 매니저를 재시작해도 유지됩니다.
+
+```sh
+docker compose -f compose.yaml -f compose.ssh.yaml exec manager runquill host cordon ssh://builder@worker.example.com
+docker compose -f compose.yaml -f compose.ssh.yaml exec manager runquill status
+docker compose -f compose.yaml -f compose.ssh.yaml exec manager runquill host uncordon ssh://builder@worker.example.com
+```
 
 ## 워크플로에서 러너 선택
 
@@ -135,7 +173,7 @@ runs-on: ${{ format('runquill-{0}-{1}-test-{2}', github.run_id, github.run_attem
 docker compose exec manager runquill status
 ```
 
-실행 중인 러너 수와 사용 중인 슬롯 수, GitHub 작업 링크를 한 번에 확인할 수 있습니다. `WAITING`은 바로 실행할 수 있는 작업의 대기 순서를 표시합니다. `RETRY`에는 다음 시도까지 남은 시간과 기록된 재시도 이유가 표시됩니다. 바이너리를 직접 실행하는 경우 매니저와 같은 `RUNQUILL_DB`, `RUNQUILL_MAX_RUNNERS` 설정으로 `runquill status`를 실행합니다.
+실행 중인 러너 수와 서버별 상태·슬롯 사용량, GitHub 작업 링크를 한 번에 확인할 수 있습니다. `WAITING`은 바로 실행할 수 있는 작업의 대기 순서를 표시합니다. `RETRY`에는 다음 시도까지 남은 시간과 기록된 재시도 이유가 표시됩니다. 바이너리를 직접 실행하는 경우 매니저와 같은 큐 및 Docker 환경 설정으로 `runquill status`를 실행합니다.
 
 매니저 로그는 `docker compose logs -f manager`로 확인합니다. 새 GitHub 러너 버전을 적용하려면 `docker build --pull -t runquill-runner:local runner`를 다시 실행합니다. 이미 실행 중인 작업은 사용하던 이미지로 마무리됩니다.
 

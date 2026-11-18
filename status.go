@@ -18,7 +18,7 @@ func status(ctx context.Context, out io.Writer) error {
 		return err
 	}
 	path := env("RUNQUILL_DB", "runquill.sqlite3")
-	db, err := openQueueDB(path, true)
+	db, err := openQueueDB(path, "ro")
 	if err != nil {
 		return err
 	}
@@ -27,17 +27,34 @@ func status(ctx context.Context, out io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("read queue %s (start the manager to initialize the queue): %w", path, err)
 	}
-	runtime, err := newDockerFleet("", env("RUNQUILL_DOCKER_HOSTS", "local"))
+	states, err := readHostStates(ctx, db)
+	if err != nil {
+		return fmt.Errorf("read Docker host states: %w", err)
+	}
+	runtime, err := newDockerFleet(env("RUNQUILL_RUNNER_IMAGE", "runquill-runner:local"), env("RUNQUILL_DOCKER_HOSTS", "local"))
+	if err != nil {
+		return err
+	}
+	limits, err := runtime.limits(env("RUNQUILL_DOCKER_HOST_LIMITS", ""))
 	if err != nil {
 		return err
 	}
 	dockerCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	containers, dockerErr := runtime.containers(dockerCtx)
+	snapshots, dockerErr := runtime.snapshot(dockerCtx)
 	if dockerErr != nil {
-		dockerErr = fmt.Errorf("list runner containers: %w", dockerErr)
+		return errors.Join(writeStatus(out, jobs, nil, 0, limit, time.Now()), fmt.Errorf("list runner containers: %w", dockerErr))
 	}
-	return errors.Join(writeStatus(out, jobs, containers, limit, time.Now()), dockerErr)
+	hosts, unassigned := fleetCapacity(snapshots, states, jobs, limits, limit)
+	var hostErrors []error
+	for _, host := range hosts {
+		if host.Containers != nil {
+			hostErrors = nil
+			break
+		}
+		hostErrors = append(hostErrors, host.Err)
+	}
+	return errors.Join(writeStatus(out, jobs, hosts, unassigned, limit, time.Now()), errors.Join(hostErrors...))
 }
 
 func readStatusJobs(ctx context.Context, db *sql.DB) ([]job, error) {
@@ -49,8 +66,16 @@ func readStatusJobs(ctx context.Context, db *sql.DB) ([]job, error) {
 	if hasReason {
 		reason = "retry_reason"
 	}
+	hasHost, err := hasJobColumn(ctx, db, "runner_host")
+	if err != nil {
+		return nil, err
+	}
+	host := "''"
+	if hasHost {
+		host = "coalesce(runner_host, '')"
+	}
 	rows, err := db.QueryContext(ctx, `
-        SELECT job_id, repository, route, phase, coalesce(runner_name, ''), retry_at, `+reason+`
+        SELECT job_id, repository, route, phase, coalesce(runner_name, ''), retry_at, `+reason+`, `+host+`
         FROM jobs WHERE phase = ? OR runner_name IS NOT NULL ORDER BY sequence`, queued)
 	if err != nil {
 		return nil, err
@@ -59,7 +84,7 @@ func readStatusJobs(ctx context.Context, db *sql.DB) ([]job, error) {
 	var jobs []job
 	for rows.Next() {
 		var j job
-		if err := rows.Scan(&j.id, &j.repository, &j.route, &j.phase, &j.runnerName, &j.retryAt, &j.retryReason); err != nil {
+		if err := rows.Scan(&j.id, &j.repository, &j.route, &j.phase, &j.runnerName, &j.retryAt, &j.retryReason, &j.runnerHost); err != nil {
 			return nil, err
 		}
 		jobs = append(jobs, j)
@@ -67,30 +92,61 @@ func readStatusJobs(ctx context.Context, db *sql.DB) ([]job, error) {
 	return jobs, rows.Err()
 }
 
-func writeStatus(out io.Writer, jobs []job, containers map[string]string, limit int, now time.Time) error {
+func writeStatus(out io.Writer, jobs []job, hosts []hostCapacity, unassigned, limit int, now time.Time) error {
 	table := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	if containers == nil {
+	if len(hosts) == 0 {
 		fmt.Fprintln(table, "Runners: unavailable (Docker query failed)")
 	} else {
-		var running, occupied int
-		for _, state := range containers {
-			if state == "running" {
-				running++
+		occupied := unassigned
+		var running, offline int
+		for _, host := range hosts {
+			occupied += host.Occupied
+			if host.Containers == nil {
+				offline++
 			}
-			if runnerOccupiesSlot(state) {
-				occupied++
+			for _, state := range host.Containers {
+				if state == "running" {
+					running++
+				}
 			}
 		}
-		fmt.Fprintf(table, "Runners: %d running, %d/%d slots occupied\n", running, occupied, limit)
+		if offline > 0 {
+			fmt.Fprintf(table, "Runners: %d known running, %d/%d slots occupied or reserved\n", running, occupied, limit)
+		} else {
+			fmt.Fprintf(table, "Runners: %d running, %d/%d slots occupied\n", running, occupied, limit)
+		}
+		if unassigned > 0 {
+			fmt.Fprintf(table, "Slots reserved without a known host: %d\n", unassigned)
+		}
+		fmt.Fprintln(table, "\nHOST\tSTATUS\tMODE\tSLOTS\tDETAIL")
+		for _, host := range hosts {
+			health, mode, detail := "UP", "ACTIVE", ""
+			slots := fmt.Sprintf("%d/%d", host.Occupied, host.Limit)
+			if host.Err != nil {
+				health = "UNAVAILABLE"
+				detail = strings.Join(strings.Fields(host.Err.Error()), " ")
+			}
+			if host.Containers == nil {
+				health = "OFFLINE"
+				slots += " reserved"
+			}
+			if host.Cordoned {
+				mode = "CORDONED"
+			}
+			fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\n", host.Name, health, mode, slots, detail)
+		}
+		if err := table.Flush(); err != nil {
+			return err
+		}
 	}
 	if len(jobs) == 0 {
-		fmt.Fprintln(table, "No queued jobs or runner leases.")
+		fmt.Fprintln(table, "\nNo queued jobs or runner leases.")
 		return table.Flush()
 	}
 	fmt.Fprintln(table, "\nSTATE\tPOSITION\tJOB\tDETAIL")
 	position := 0
 	for _, j := range jobs {
-		state, detail := statusRow(j, containers, now)
+		state, detail := statusRow(j, hosts, now)
 		rank := "-"
 		if state == "WAITING" {
 			position++
@@ -104,7 +160,7 @@ func writeStatus(out io.Writer, jobs []job, containers map[string]string, limit 
 	return table.Flush()
 }
 
-func statusRow(j job, containers map[string]string, now time.Time) (string, string) {
+func statusRow(j job, hosts []hostCapacity, now time.Time) (string, string) {
 	remaining := j.retryAt - now.Unix()
 	if remaining > 0 || j.runnerName != "" && j.retryAt > 0 && j.retryReason != "" {
 		detail := "due now"
@@ -123,21 +179,45 @@ func statusRow(j job, containers map[string]string, now time.Time) (string, stri
 		}
 		return "WAITING", detail
 	}
+	detail := j.runnerName
+	if j.runnerHost != "" {
+		detail += " on " + j.runnerHost
+	}
+	known := len(hosts) > 0 && j.runnerHost == ""
+	var containerState string
+	for _, host := range hosts {
+		if j.runnerHost != "" {
+			if host.Name != j.runnerHost {
+				continue
+			}
+			if host.Containers == nil {
+				return "OFFLINE", detail
+			}
+			known = true
+		}
+		if host.Containers == nil {
+			known = false
+		}
+		if state, exists := host.Containers[j.runnerName]; exists {
+			known, containerState = true, state
+			break
+		}
+	}
+	if !known {
+		return "UNKNOWN", detail
+	}
 	if j.phase == completed {
-		return "CLEANUP", j.runnerName
+		return "CLEANUP", detail
 	}
-	if containers == nil {
-		return "UNKNOWN", j.runnerName
-	}
-	switch containers[j.runnerName] {
+	switch containerState {
 	case "running":
-		return "RUNNING", j.runnerName
+		return "RUNNING", detail
 	case "paused":
-		return "PAUSED", j.runnerName
+		return "PAUSED", detail
 	case "exited", "dead":
-		return "CLEANUP", j.runnerName
+		return "CLEANUP", detail
 	default:
-		return "STARTING", j.runnerName
+		return "STARTING", detail
 	}
 }
 
