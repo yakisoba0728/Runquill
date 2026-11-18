@@ -32,6 +32,8 @@ func doctor(ctx context.Context, out io.Writer, repo string) error {
 	} else {
 		_, limitErr := fleet.limits(os.Getenv("RUNQUILL_DOCKER_HOST_LIMITS"))
 		report("Docker host runner limits", limitErr)
+		_, poolErr := fleet.configurePools(os.Getenv("RUNQUILL_WORKER_POOLS"))
+		report("Docker worker pools", poolErr)
 		for _, target := range fleet.hosts {
 			targetReport := report
 			if len(fleet.hosts) > 1 || target.host != "" {

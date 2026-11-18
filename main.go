@@ -191,6 +191,10 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	pools, err := runtime.configurePools(os.Getenv("RUNQUILL_WORKER_POOLS"))
+	if err != nil {
+		return err
+	}
 	if len(runtime.hosts) == 1 {
 		if err := runtime.prepare(ctx); err != nil {
 			return err
@@ -202,7 +206,7 @@ func run(ctx context.Context) error {
 	}
 	defer q.close()
 
-	s := &scheduler{queue: q, github: api, runtime: runtime, limit: cfg.limit, hostLimits: hostLimits}
+	s := &scheduler{queue: q, github: api, runtime: runtime, limit: cfg.limit, hostLimits: hostLimits, pools: pools}
 	server := &http.Server{
 		Addr:              net.JoinHostPort(env("RUNQUILL_BIND", "127.0.0.1"), env("RUNQUILL_PORT", "8080")),
 		Handler:           webhook(q, cfg.owner, []byte(cfg.secret)),

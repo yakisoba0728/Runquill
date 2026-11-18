@@ -108,12 +108,16 @@ func diagnoseRepository(ctx context.Context, out io.Writer, api *github, db *sql
 			return nil
 		}
 		seen[candidate.ID] = true
-		_, eligible, err := candidate.queueJob(api.owner, repo, inst.ID, candidate.Status)
+		routed, eligible, err := candidate.queueJob(api.owner, repo, inst.ID, candidate.Status)
 		if err != nil {
 			return err
 		}
 		local, found := byID[candidate.ID]
 		reason := missingJobReason(candidate, poll, polling, report != nil)
+		var poolErr error
+		if eligible && report != nil {
+			_, poolErr = report.pools.forJob(routed)
+		}
 		switch {
 		case !eligible:
 			reason = "uses labels outside Runquill"
@@ -124,6 +128,8 @@ func diagnoseRepository(ctx context.Context, out io.Writer, api *github, db *sql
 			}
 		case permissionErr != nil:
 			reason = "required GitHub App permissions are missing"
+		case poolErr != nil:
+			reason = poolErr.Error()
 		case found:
 			reason = localJobReason(local, report)
 		}
@@ -178,8 +184,11 @@ func localJobReason(j statusJob, report *statusReport) string {
 			return "waiting for capacity (manager runner limit reached)"
 		}
 		if !slices.ContainsFunc(report.Hosts, func(host statusHost) bool {
-			return host.Status == "UP" && !host.Cordoned && host.OccupiedSlots < host.SlotLimit
+			return (j.Pool == "" || j.Pool == host.Pool) && host.Status == "UP" && !host.Cordoned && host.OccupiedSlots < host.SlotLimit
 		}) {
+			if j.Pool != "" {
+				return fmt.Sprintf("waiting for an available slot in worker pool %q", j.Pool)
+			}
 			return "waiting for a worker with an available slot"
 		}
 		return fmt.Sprintf("in the Runquill queue at position %d", j.QueuePosition)

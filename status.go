@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -51,6 +52,10 @@ func inspectStatus(ctx context.Context, db *sql.DB) (*statusReport, error) {
 	if err != nil {
 		return nil, err
 	}
+	pools, err := runtime.configurePools(os.Getenv("RUNQUILL_WORKER_POOLS"))
+	if err != nil {
+		return nil, err
+	}
 	dockerCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	snapshots, dockerErr := runtime.snapshot(dockerCtx)
@@ -71,6 +76,14 @@ func inspectStatus(ctx context.Context, db *sql.DB) (*statusReport, error) {
 		dockerErr = fmt.Errorf("list runner containers: %w", dockerErr)
 	}
 	report := summarizeStatus(jobs, hosts, unassigned, limit, time.Now())
+	report.pools = pools
+	for i, j := range jobs {
+		pool, err := pools.forJob(j)
+		report.Jobs[i].Pool = pool
+		if err != nil {
+			report.Jobs[i].PoolError = err.Error()
+		}
+	}
 	if dockerErr != nil {
 		report.DockerError = strings.Join(strings.Fields(dockerErr.Error()), " ")
 	}
@@ -128,6 +141,7 @@ type statusReport struct {
 	Hosts         []statusHost   `json:"hosts"`
 	Jobs          []statusJob    `json:"jobs"`
 	DockerError   string         `json:"docker_error,omitempty"`
+	pools         workerPools
 }
 
 type statusRunners struct {
@@ -140,6 +154,7 @@ type statusRunners struct {
 
 type statusHost struct {
 	Name          string `json:"name"`
+	Pool          string `json:"pool,omitempty"`
 	Status        string `json:"status"`
 	Cordoned      bool   `json:"cordoned"`
 	SlotLimit     int    `json:"slot_limit"`
@@ -157,6 +172,8 @@ type statusJob struct {
 	RetryReason   string           `json:"retry_reason,omitempty"`
 	Runner        string           `json:"runner,omitempty"`
 	RunnerHost    string           `json:"runner_host,omitempty"`
+	Pool          string           `json:"pool,omitempty"`
+	PoolError     string           `json:"pool_error,omitempty"`
 	URL           string           `json:"url,omitempty"`
 	Timing        *statusJobTiming `json:"timing,omitempty"`
 	detail        string
@@ -239,7 +256,7 @@ func summarizeStatus(jobs []job, hosts []hostCapacity, unassigned, limit int, no
 	if len(hosts) > 0 {
 		runners := &statusRunners{ReservedSlots: unassigned, UnassignedReservedSlots: unassigned}
 		for _, host := range hosts {
-			row := statusHost{Name: host.Name, Status: "UP", Cordoned: host.Cordoned, SlotLimit: host.Limit}
+			row := statusHost{Name: host.Name, Pool: host.Pool, Status: "UP", Cordoned: host.Cordoned, SlotLimit: host.Limit}
 			if host.Err != nil {
 				row.Status = "UNAVAILABLE"
 				row.Error = strings.Join(strings.Fields(host.Err.Error()), " ")
@@ -309,7 +326,11 @@ func (r statusReport) writeText(out io.Writer) error {
 			if host.Cordoned {
 				mode = "CORDONED"
 			}
-			fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\n", host.Name, host.Status, mode, slots, host.Error)
+			detail := host.Error
+			if host.Pool != "" {
+				detail = strings.TrimSpace("pool=" + host.Pool + " " + detail)
+			}
+			fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\n", host.Name, host.Status, mode, slots, detail)
 		}
 		if err := table.Flush(); err != nil {
 			return err
@@ -328,6 +349,11 @@ func (r statusReport) writeText(out io.Writer) error {
 		fmt.Fprintf(table, "%s\t%s\t%d\t%s\n", j.Status, rank, j.ID, j.detail)
 		if j.URL != "" {
 			fmt.Fprintf(table, "\t\t\t%s\n", j.URL)
+		}
+		if j.PoolError != "" {
+			fmt.Fprintf(table, "\t\t\t%s\n", j.PoolError)
+		} else if j.Pool != "" {
+			fmt.Fprintf(table, "\t\t\tpool=%s\n", j.Pool)
 		}
 		if j.Timing != nil {
 			if timing := j.Timing.text(); timing != "" {

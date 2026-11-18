@@ -30,6 +30,7 @@ type scheduler struct {
 	runtime    runnerRuntime
 	limit      int
 	hostLimits map[string]int
+	pools      workerPools
 }
 
 func (s *scheduler) tick(ctx context.Context, now time.Time) error {
@@ -65,20 +66,33 @@ func (s *scheduler) tick(ctx context.Context, now time.Time) error {
 	for _, host := range hosts {
 		occupied += host.Occupied
 	}
-	if occupied >= s.limit || availableHost(hosts) == nil {
+	if occupied >= s.limit || availableHost(hosts, "") == nil {
 		return nil
 	}
-	waiting, err := s.queue.jobs(ctx, `
-        WHERE phase = 0 AND runner_name IS NULL AND retry_at <= ?
-        ORDER BY sequence LIMIT ?`, now.Unix(), s.limit-occupied)
+	condition := "WHERE phase = 0 AND runner_name IS NULL AND retry_at <= ? ORDER BY sequence"
+	args := []any{now.Unix()}
+	if s.pools == nil {
+		condition += " LIMIT ?"
+		args = append(args, s.limit-occupied)
+	}
+	waiting, err := s.queue.jobs(ctx, condition, args...)
 	if err != nil {
 		return err
 	}
+	var attempts int
 	for _, j := range waiting {
-		host := availableHost(hosts)
-		if host == nil {
-			break
+		pool, err := s.pools.forJob(j)
+		if err != nil {
+			if err := s.retry(ctx, j, now, "select worker pool", err); err != nil {
+				return err
+			}
+			continue
 		}
+		host := availableHost(hosts, pool)
+		if host == nil {
+			continue
+		}
+		attempts++
 		claimed, err := s.launch(ctx, j, host.Name, now)
 		if claimed {
 			host.Occupied++
@@ -88,15 +102,18 @@ func (s *scheduler) tick(ctx context.Context, now time.Time) error {
 				return err
 			}
 		}
+		if attempts >= s.limit-occupied {
+			break
+		}
 	}
 	return nil
 }
 
-func availableHost(hosts []hostCapacity) *hostCapacity {
+func availableHost(hosts []hostCapacity, pool string) *hostCapacity {
 	var best *hostCapacity
 	for i := range hosts {
 		host := &hosts[i]
-		if host.Containers == nil || host.Err != nil || host.Cordoned || host.Occupied >= host.Limit {
+		if pool != "" && host.Pool != pool || host.Containers == nil || host.Err != nil || host.Cordoned || host.Occupied >= host.Limit {
 			continue
 		}
 		if best == nil || host.Occupied < best.Occupied {
