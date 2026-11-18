@@ -82,7 +82,7 @@ func doctorOperationSettings(ctx context.Context, cfg config) (*operationState, 
 		return nil, err
 	}
 	defer db.Close()
-	if _, saved, err := readOperationPolicy(ctx, db); err != nil || !saved {
+	if _, saved, err := readOperationPolicy(ctx, db, operationPolicy{}); err != nil || !saved {
 		return nil, err
 	}
 	return appliedRunnerSettings(ctx, db, cfg.runnerImage, cfg.limit)

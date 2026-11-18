@@ -26,7 +26,7 @@ func diagnose(ctx context.Context, out io.Writer, name string) error {
 		return err
 	}
 	defer db.Close()
-	if policy, saved, err := readOperationPolicy(ctx, db); err != nil {
+	if policy, saved, err := readOperationPolicy(ctx, db, operationPolicy{PollInterval: cfg.pollInterval.String()}); err != nil {
 		return err
 	} else if saved {
 		cfg.pollInterval, err = time.ParseDuration(policy.PollInterval)

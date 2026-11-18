@@ -26,7 +26,7 @@ func gc(ctx context.Context, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if _, saved, err := readOperationPolicy(ctx, db); err != nil {
+	if _, saved, err := readOperationPolicy(ctx, db, operationPolicy{}); err != nil {
 		return err
 	} else if saved {
 		state, err := appliedRunnerSettings(ctx, db, env("RUNQUILL_RUNNER_IMAGE", "runquill-runner:local"), 1)

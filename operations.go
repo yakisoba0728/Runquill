@@ -36,6 +36,7 @@ type operations struct {
 	updates  sync.Mutex
 	topology sync.RWMutex
 	base     runnerConfiguration
+	defaults operationPolicy
 	webhook  bool
 }
 
@@ -47,8 +48,8 @@ func loadOperations(ctx context.Context, db *sql.DB, cfg config, base runnerConf
 			defaults.Hosts = append(defaults.Hosts, host.label())
 		}
 	}
-	ops := &operations{base: base, webhook: cfg.secret != ""}
-	policy, set, err := readOperationPolicy(ctx, db)
+	ops := &operations{base: base, defaults: defaults, webhook: cfg.secret != ""}
+	policy, set, err := readOperationPolicy(ctx, db, defaults)
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +65,7 @@ func loadOperations(ctx context.Context, db *sql.DB, cfg config, base runnerConf
 	return ops, nil
 }
 
-func readOperationPolicy(ctx context.Context, db *sql.DB) (operationPolicy, bool, error) {
+func readOperationPolicy(ctx context.Context, db *sql.DB, defaults operationPolicy) (operationPolicy, bool, error) {
 	var policy operationPolicy
 	var hasTable bool
 	if err := db.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM sqlite_schema WHERE type='table' AND name='operation_settings')").Scan(&hasTable); err != nil || !hasTable {
@@ -79,11 +80,58 @@ func readOperationPolicy(ctx context.Context, db *sql.DB) (operationPolicy, bool
 	if err != nil {
 		return policy, false, err
 	}
-	if err := json.Unmarshal([]byte(raw), &policy); err != nil {
+	fields, err := policyFields(defaults)
+	if err != nil {
+		return policy, false, err
+	}
+	// Decode into a separate map so a stored map or null replaces the default.
+	var overrides map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &overrides); err != nil || overrides == nil {
+		return policy, false, errors.New("saved operation settings are invalid")
+	}
+	maps.Copy(fields, overrides)
+	effective, err := json.Marshal(fields)
+	if err != nil {
+		return policy, false, err
+	}
+	if err := json.Unmarshal(effective, &policy); err != nil {
 		return policy, false, errors.New("saved operation settings are invalid")
 	}
 	policy.Revision = revision
 	return policy, true, nil
+}
+
+func policyFields(policy operationPolicy) (map[string]json.RawMessage, error) {
+	// Empty maps and nil maps have the same meaning at the policy boundary.
+	if len(policy.HostLimits) == 0 {
+		policy.HostLimits = nil
+	}
+	if len(policy.Pools) == 0 {
+		policy.Pools = nil
+	}
+	data, err := json.Marshal(policy)
+	if err != nil {
+		return nil, err
+	}
+	var fields map[string]json.RawMessage
+	err = json.Unmarshal(data, &fields)
+	delete(fields, "revision")
+	return fields, err
+}
+
+func (ops *operations) encodeOverrides(policy operationPolicy) ([]byte, error) {
+	defaults, err := policyFields(ops.defaults)
+	if err != nil {
+		return nil, err
+	}
+	fields, err := policyFields(policy)
+	if err != nil {
+		return nil, err
+	}
+	maps.DeleteFunc(fields, func(name string, value json.RawMessage) bool {
+		return string(value) == string(defaults[name])
+	})
+	return json.Marshal(fields)
 }
 
 func (ops *operations) resolve(policy operationPolicy) (*operationState, error) {

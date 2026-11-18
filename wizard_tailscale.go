@@ -8,6 +8,7 @@ import (
 	"net"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -112,10 +113,24 @@ func (network wizardNetwork) apply(ctx context.Context, enabled bool) error {
 	if name != network.host {
 		return errors.New("the Tailscale host changed after setup; confirm the configuration again")
 	}
+	var changed []wizardRoute
 	for _, route := range network.routes() {
-		if err := network.setRoute(ctx, route, enabled); err != nil {
-			return err
+		attempted, err := network.setRoute(ctx, route, enabled)
+		if attempted {
+			changed = append(changed, route)
 		}
+		if err == nil {
+			continue
+		}
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		slices.Reverse(changed)
+		for _, previous := range changed {
+			if _, rollbackErr := network.setRoute(cleanup, previous, !enabled); rollbackErr != nil {
+				err = errors.Join(err, fmt.Errorf("restore Tailscale %s on port %s: %w", previous.command, previous.port, rollbackErr))
+			}
+		}
+		return err
 	}
 	return nil
 }
@@ -129,17 +144,17 @@ func readTailscaleMappings(ctx context.Context) (tailscaleMappings, error) {
 	return configuration, err
 }
 
-func (network wizardNetwork) setRoute(ctx context.Context, route wizardRoute, enabled bool) error {
+func (network wizardNetwork) setRoute(ctx context.Context, route wizardRoute, enabled bool) (bool, error) {
 	mapping, err := readTailscaleMappings(ctx)
 	if err != nil {
-		return fmt.Errorf("read Tailscale listeners: %w", err)
+		return false, fmt.Errorf("read Tailscale listeners: %w", err)
 	}
 	exists, matches := mapping.routeState(network.host, route)
 	if exists && !matches {
-		return fmt.Errorf("Tailscale port %s is already used by a different listener", route.port)
+		return false, fmt.Errorf("Tailscale port %s is already used by a different listener", route.port)
 	}
 	if exists == enabled {
-		return nil
+		return false, nil
 	}
 	args := []string{route.command, "--https=" + route.port, "--set-path=" + route.path}
 	if enabled {
@@ -148,16 +163,16 @@ func (network wizardNetwork) setRoute(ctx context.Context, route wizardRoute, en
 		args = append(args, "off")
 	}
 	if _, err = wizardTailscale(ctx, args...); err != nil {
-		return fmt.Errorf("configure Tailscale %s: %w", route.command, err)
+		return true, fmt.Errorf("configure Tailscale %s: %w", route.command, err)
 	}
 	mapping, err = readTailscaleMappings(ctx)
 	if err != nil {
-		return fmt.Errorf("verify Tailscale listener: %w", err)
+		return true, fmt.Errorf("verify Tailscale listener: %w", err)
 	}
 	if exists, matches := mapping.routeState(network.host, route); exists != enabled || enabled && !matches {
-		return fmt.Errorf("Tailscale did not report the expected %s listener state on port %s", route.command, route.port)
+		return true, fmt.Errorf("Tailscale did not report the expected %s listener state on port %s", route.command, route.port)
 	}
-	return nil
+	return true, nil
 }
 
 func (config tailscaleMappings) routeState(host string, route wizardRoute) (exists, matches bool) {

@@ -109,6 +109,19 @@ func TestPanelSettingsAreAuditedAndAppliedWithoutRestart(t *testing.T) {
 	if state.policy.Revision != 1 || state.policy.Limit != 4 || state.interval != 45*time.Second {
 		t.Fatalf("saved configuration could not be reloaded: %+v", state.policy)
 	}
+	cfg.runnerImage = "runquill-runner:upgraded"
+	updatedBase, err := configureRunnerRuntime(cfg.runnerImage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upgraded, err := loadOperations(ctx, q.DB, cfg, updatedBase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := upgraded.current.Load()
+	if updated.policy.Image != cfg.runnerImage || updated.policy.Limit != 4 || updated.runners.hostLimits["local"] != 3 {
+		t.Fatalf("untouched image did not follow new default, or edited limits were lost: %+v", updated.policy)
+	}
 	var changes int
 	if err := q.QueryRow("SELECT count(*) FROM panel_audit WHERE action='settings.update' AND actor=101").Scan(&changes); err != nil || changes != 1 {
 		t.Fatalf("settings audit count %d: %v", changes, err)

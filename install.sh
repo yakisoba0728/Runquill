@@ -120,8 +120,16 @@ for name in runquill $files; do
             printf 'Existing %s differs. Choose an empty --dir for this release.\n' "$name" >&2
             exit 1
         fi
-    else
+    fi
+done
+for name in runquill $files; do
+    asset=$name
+    if [ "$name" = runquill ]; then asset=$binary; fi
+    if [ ! -e "$name" ] && [ ! -L "$name" ]; then
         ln "$scratch/$asset" "$name"
+    elif [ -L "$name" ] || ! cmp -s "$scratch/$asset" "$name"; then
+        printf 'Existing %s changed during installation. Choose an empty --dir for this release.\n' "$name" >&2
+        exit 1
     fi
 done
 printf 'Runquill %s is in %s\n' "$tag" "$(pwd)"

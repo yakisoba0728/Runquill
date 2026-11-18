@@ -202,6 +202,47 @@ func TestWizardTailscaleRoutesKeepPanelPrivateAndRefuseConflicts(t *testing.T) {
 	}
 }
 
+func TestWizardRestoresOnlyRoutesChangedDuringFailedApply(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	state := filepath.Join(dir, "serve-state")
+	t.Setenv("RUNQUILL_TEST_SERVE_STATE", state)
+	script := `#!/bin/sh
+case "$1:$2" in
+  status:--json)
+    printf '%s\n' '{"BackendState":"Running","Self":{"DNSName":"runquill.example.ts.net."},"CurrentTailnet":{"MagicDNSEnabled":true}}' ;;
+  serve:status)
+    if [ "$(cat "$RUNQUILL_TEST_SERVE_STATE")" = on ]; then
+      printf '%s\n' '{"TCP":{"9443":{"HTTPS":true}},"Web":{"runquill.example.ts.net:9443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:8081"}}}}}'
+    else
+      printf '%s\n' '{}'
+    fi ;;
+  serve:--https=9443)
+    if [ "$4" = off ]; then printf off; else printf on; fi > "$RUNQUILL_TEST_SERVE_STATE" ;;
+  funnel:--https=8443)
+    printf '%s\n' 'funnel disabled by tailnet policy' >&2
+    exit 1 ;;
+  *) exit 1 ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(dir, "tailscale"), []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	network := wizardNetwork{serve: true, funnel: true, host: "runquill.example.ts.net"}
+	for _, initial := range []string{"off", "on"} {
+		if err := os.WriteFile(state, []byte(initial), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := network.apply(t.Context(), true); err == nil || !strings.Contains(err.Error(), "funnel disabled") {
+			t.Fatalf("Funnel failure was not surfaced: %v", err)
+		}
+		result, err := os.ReadFile(state)
+		if err != nil || string(result) != initial {
+			t.Fatalf("initial Serve state %q changed to %q: %v", initial, result, err)
+		}
+	}
+}
+
 func TestWizardDeploysToExplicitK3sContext(t *testing.T) {
 	dir, bin := t.TempDir(), t.TempDir()
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))

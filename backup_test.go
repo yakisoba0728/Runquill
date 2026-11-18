@@ -108,7 +108,7 @@ func TestBackupOnlineAndRestoreToFencedQueue(t *testing.T) {
 	if err := restored.QueryRow("SELECT count(*) FROM repository_polls").Scan(&polls); err != nil || polls != 1 {
 		t.Fatalf("restored repository polls: %d, %v", polls, err)
 	}
-	if policy, set, err := readOperationPolicy(ctx, restored.DB); err != nil || !set || policy.Limit != 4 || policy.Revision != 1 {
+	if policy, set, err := readOperationPolicy(ctx, restored.DB, operationPolicy{}); err != nil || !set || policy.Limit != 4 || policy.Revision != 1 {
 		t.Fatalf("restored operation settings: %+v, %v", policy, err)
 	}
 	if err := q.QueryRow("SELECT count(*) FROM jobs").Scan(&liveJobs); err != nil || liveJobs != 2 {

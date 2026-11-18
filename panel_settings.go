@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"slices"
@@ -65,7 +64,7 @@ func (a *panelAccess) saveOperationSettings(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	next.policy.Revision++
-	payload, err := json.Marshal(next.policy)
+	payload, err := ops.encodeOverrides(next.policy)
 	if err != nil {
 		http.Error(w, "Could not save operation settings.", http.StatusServiceUnavailable)
 		return

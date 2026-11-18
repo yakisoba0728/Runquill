@@ -67,6 +67,9 @@ func (p *panelState) markWebhook(at time.Time) {
 func (p *panelState) markPoll(at time.Time, ok bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if !p.snapshot.Polling {
+		return
+	}
 	p.snapshot.PollFailed = !ok
 	if ok {
 		p.snapshot.LastPoll = &at
