@@ -16,7 +16,7 @@ const runnerLabel = "io.runquill.runner=1"
 
 func runnerOccupiesSlot(state string) bool {
 	switch state {
-	case "created", "running", "paused", "restarting":
+	case "created", "pending", "running", "paused", "restarting":
 		return true
 	default:
 		return false

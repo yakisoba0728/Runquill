@@ -26,7 +26,30 @@ func doctor(ctx context.Context, out io.Writer, repo string) error {
 	}
 	cfg, err := loadConfig()
 	report("configuration", err)
-	fleet, dockerErr := newDockerFleet(cfg.runnerImage, env("RUNQUILL_DOCKER_HOSTS", "local"))
+	if env("RUNQUILL_BACKEND", "docker") == "docker" {
+		checkDockerFleet(ctx, cfg.runnerImage, report)
+	} else {
+		runners, err := configureRunnerRuntime(cfg.runnerImage)
+		report("runner backend", err)
+		if err == nil {
+			runners.runtime.(*kubeRunners).check(ctx, report)
+		}
+	}
+	if err == nil {
+		api, err := cfg.github()
+		report("GitHub App private key", err)
+		if err == nil {
+			api.checkInstallation(ctx, repo, cfg.secret != "", report)
+		}
+	}
+	if len(failures) == 0 {
+		fmt.Fprintln(out, "Preflight passed. Run your first workflow to verify job discovery, runner assignment, and cleanup.")
+	}
+	return errors.Join(failures...)
+}
+
+func checkDockerFleet(ctx context.Context, image string, report func(string, error)) {
+	fleet, dockerErr := newDockerFleet(image, env("RUNQUILL_DOCKER_HOSTS", "local"))
 	if dockerErr != nil {
 		report("Docker hosts", dockerErr)
 	} else {
@@ -41,21 +64,10 @@ func doctor(ctx context.Context, out io.Writer, repo string) error {
 			}
 			checkDocker(ctx, target, targetReport)
 		}
-		if len(fleet.hosts) > 1 {
+		if len(fleet.hosts) > 1 && poolErr == nil {
 			report("distinct Docker hosts with runner images", fleet.prepare(ctx))
 		}
 	}
-	if err == nil {
-		api, err := cfg.github()
-		report("GitHub App private key", err)
-		if err == nil {
-			api.checkInstallation(ctx, repo, cfg.secret != "", report)
-		}
-	}
-	if len(failures) == 0 {
-		fmt.Fprintln(out, "Preflight passed. Run your first workflow to verify job discovery, runner assignment, and cleanup.")
-	}
-	return errors.Join(failures...)
 }
 
 func checkDocker(ctx context.Context, target docker, report func(string, error)) {

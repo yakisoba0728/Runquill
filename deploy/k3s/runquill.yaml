@@ -1,0 +1,155 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: runquill-system
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: runquill-runners
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: runquill-manager
+  namespace: runquill-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: runquill-job
+  namespace: runquill-runners
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: runquill-manager
+  namespace: runquill-runners
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: runquill-manager
+  namespace: runquill-runners
+subjects:
+  - kind: ServiceAccount
+    name: runquill-manager
+    namespace: runquill-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: runquill-manager
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: runquill-state
+  namespace: runquill-system
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: runquill
+  namespace: runquill-system
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: runquill
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: runquill
+    spec:
+      serviceAccountName: runquill-manager
+      enableServiceLinks: false
+      securityContext:
+        runAsUser: 1001
+        runAsGroup: 1001
+        runAsNonRoot: true
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: manager
+          image: ghcr.io/yakisoba0728/runquill:v0.2.0
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          envFrom:
+            - secretRef:
+                name: runquill-config
+          env:
+            - name: RUNQUILL_BACKEND
+              value: kubernetes
+            - name: RUNQUILL_K8S_RUNNER_NAMESPACE
+              value: runquill-runners
+            - name: RUNQUILL_RUNNER_IMAGE
+              value: ghcr.io/yakisoba0728/runquill-runner:v0.2.0
+            - name: RUNQUILL_BIND
+              value: 0.0.0.0
+            - name: RUNQUILL_PORT
+              value: "8080"
+            - name: RUNQUILL_DB
+              value: /data/runquill.sqlite3
+            - name: RUNQUILL_KEY_FILE
+              value: /etc/runquill/github-app.pem
+          ports:
+            - name: ingest
+              containerPort: 8080
+            - name: panel
+              containerPort: 8081
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: ingest
+          volumeMounts:
+            - name: state
+              mountPath: /data
+            - name: github-key
+              mountPath: /etc/runquill
+              readOnly: true
+      volumes:
+        - name: state
+          persistentVolumeClaim:
+            claimName: runquill-state
+        - name: github-key
+          secret:
+            secretName: runquill-github-key
+            defaultMode: 0440
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: runquill
+  namespace: runquill-system
+spec:
+  selector:
+    app.kubernetes.io/name: runquill
+  ports:
+    - name: ingest
+      port: 8080
+      targetPort: ingest
+    - name: panel
+      port: 8081
+      targetPort: panel

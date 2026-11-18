@@ -17,7 +17,7 @@ import (
 )
 
 func gc(ctx context.Context, out io.Writer) error {
-	fleet, err := newDockerFleet("", env("RUNQUILL_DOCKER_HOSTS", "local"))
+	runners, err := configureRunnerRuntime("")
 	if err != nil {
 		return err
 	}
@@ -28,7 +28,7 @@ func gc(ctx context.Context, out io.Writer) error {
 	defer db.Close()
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	hosts, err := fleet.snapshot(ctx)
+	hosts, err := runners.runtime.snapshot(ctx)
 	if err != nil {
 		return err
 	}
@@ -52,10 +52,10 @@ func gc(ctx context.Context, out io.Writer) error {
 func writeGCInventory(ctx context.Context, out io.Writer, db *sql.DB, hosts []dockerHostSnapshot, lookup func(context.Context, job) (string, error)) error {
 	leases, queueErr := readRunnerLeases(ctx, db)
 	if queueErr != nil {
-		fmt.Fprintf(out, "Queue unavailable. Container leases are unknown (%s)\n", strings.Join(strings.Fields(queueErr.Error()), " "))
+		fmt.Fprintf(out, "Queue unavailable. Runner leases are unknown (%s)\n", strings.Join(strings.Fields(queueErr.Error()), " "))
 	}
 	table := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(table, "HOST\tCONTAINER\tDOCKER STATE\tLEASE\tGITHUB JOB")
+	fmt.Fprintln(table, "HOST\tRUNNER\tSTATE\tLEASE\tGITHUB JOB")
 	var failures []error
 	listed := 0
 	for _, host := range hosts {
@@ -63,7 +63,7 @@ func writeGCInventory(ctx context.Context, out io.Writer, db *sql.DB, hosts []do
 			if host.Err != nil {
 				failures = append(failures, fmt.Errorf("%s: %w", host.Name, host.Err))
 			} else {
-				failures = append(failures, fmt.Errorf("%s: Docker state unavailable", host.Name))
+				failures = append(failures, fmt.Errorf("%s: runner state unavailable", host.Name))
 			}
 			fmt.Fprintf(table, "%s\t-\toffline\tunknown\tunknown\n", host.Name)
 			continue

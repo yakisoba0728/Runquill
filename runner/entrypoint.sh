@@ -1,8 +1,13 @@
 #!/bin/bash
 set -euo pipefail
 
-jit_config=$(cat /run/runquill-jit)
-rm /run/runquill-jit
+jit_file="${RUNQUILL_JIT_FILE:-/run/runquill-jit}"
+jit_config=$(cat "$jit_file")
+rm "$jit_file"
+
+if [[ "${RUNQUILL_RUNNER_MODE:-dind}" == plain ]]; then
+    exec ./run.sh --jitconfig "$jit_config"
+fi
 
 # VFS works when the outer Docker host also uses an overlay filesystem.
 dockerd --host=unix:///var/run/docker.sock --storage-driver=vfs &

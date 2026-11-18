@@ -19,6 +19,7 @@ type workerPool struct {
 	Repositories []string `json:"repositories"`
 	CPUs         float64  `json:"cpus"`
 	MemoryMiB    int64    `json:"memory_mib"`
+	Image        string   `json:"image"`
 }
 
 type workerPools map[string]workerPool
@@ -51,6 +52,9 @@ func (f *dockerFleet) configurePools(raw string) (workerPools, error) {
 		if pool.MemoryMiB < 0 || pool.MemoryMiB > (1<<63-1)>>20 || pool.MemoryMiB > 0 && pool.MemoryMiB < 6 {
 			return nil, fmt.Errorf("worker pool %q: memory_mib must be zero or at least 6 MiB, within a 64-bit byte count", name)
 		}
+		if strings.HasPrefix(pool.Image, "-") || strings.ContainsAny(pool.Image, " \t\r\n") {
+			return nil, fmt.Errorf("worker pool %q: image must be a Docker image reference", name)
+		}
 		for i, nameInConfig := range pool.Repositories {
 			owner, _, _ := strings.Cut(nameInConfig, "/")
 			repo, valid := ownedRepositoryPath(nameInConfig, owner)
@@ -80,6 +84,9 @@ func (f *dockerFleet) configurePools(raw string) (workerPools, error) {
 		}
 		pool := pools[host.pool]
 		host.cpus, host.memoryMiB = pool.CPUs, pool.MemoryMiB
+		if pool.Image != "" {
+			host.image = pool.Image
+		}
 	}
 	return pools, nil
 }

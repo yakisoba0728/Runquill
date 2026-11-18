@@ -295,7 +295,7 @@ func (s *scheduler) launch(ctx context.Context, j job, host, pool string, now ti
 		if err := s.runtime.startOn(ctx, host, name, jit); err != nil {
 			return true, err
 		}
-		slog.Info("runner started", "runner", name, "docker_host", host, "repository", j.repository, "job", j.id)
+		slog.Info("runner started", "runner", name, "runner_host", host, "repository", j.repository, "job", j.id)
 		_, err = s.queue.ExecContext(ctx, "UPDATE jobs SET retry_at = 0, retry_reason = '' WHERE job_id = ?", j.id)
 		return true, err
 	}
@@ -304,7 +304,7 @@ func (s *scheduler) launch(ctx context.Context, j job, host, pool string, now ti
 
 func (s *scheduler) reconcile(ctx context.Context, j job, containers map[string]string, now time.Time) error {
 	state := containers[j.runnerName]
-	if state == "running" || state == "paused" || state == "restarting" {
+	if state == "running" || state == "pending" || state == "paused" || state == "restarting" {
 		switch j.phase {
 		case completed:
 			if now.Unix() < j.changedAt+int64(completionGrace.Seconds()) {

@@ -63,8 +63,9 @@ func main() {
 		var options setupOptions
 		flags.StringVar(&options.webhookURL, "webhook-url", "", "public HTTPS URL ending in /webhook (otherwise use polling)")
 		flags.IntVar(&options.port, "listen-port", 0, "local browser setup port (0 selects a free port)")
+		flags.BoolVar(&options.kubernetes, "k3s", false, "print Kubernetes deployment instructions after setup")
 		flags.Usage = func() {
-			fmt.Fprintln(flags.Output(), "Usage: runquill setup [--webhook-url URL] [--listen-port PORT]")
+			fmt.Fprintln(flags.Output(), "Usage: runquill setup [--webhook-url URL] [--listen-port PORT] [--k3s]")
 			fmt.Fprintln(flags.Output(), "Connect a personal GitHub App and create .env and github-app.pem in the current directory.")
 			flags.PrintDefaults()
 		}
@@ -224,20 +225,12 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	runtime, err := newDockerFleet(cfg.runnerImage, env("RUNQUILL_DOCKER_HOSTS", "local"))
+	runners, err := configureRunnerRuntime(cfg.runnerImage)
 	if err != nil {
 		return err
 	}
-	hostLimits, err := runtime.limits(os.Getenv("RUNQUILL_DOCKER_HOST_LIMITS"))
-	if err != nil {
-		return err
-	}
-	pools, err := runtime.configurePools(os.Getenv("RUNQUILL_WORKER_POOLS"))
-	if err != nil {
-		return err
-	}
-	if len(runtime.hosts) == 1 {
-		if err := runtime.prepare(ctx); err != nil {
+	if fleet, ok := runners.runtime.(*dockerFleet); ok && len(fleet.hosts) == 1 {
+		if err := fleet.prepare(ctx); err != nil {
 			return err
 		}
 	}
@@ -260,6 +253,7 @@ func run(ctx context.Context) error {
 			return fmt.Errorf("initialize panel access: %w", err)
 		}
 		panel = newPanel(cfg)
+		panel.backend, panel.pools = runners.kind, runners.pools
 		panelServer = panelHTTPServer(panel, access)
 		panelListener, err = net.Listen("tcp", addr)
 		if err != nil {
@@ -267,7 +261,7 @@ func run(ctx context.Context) error {
 		}
 		defer panelListener.Close()
 	}
-	s := &scheduler{queue: q, github: api, runtime: runtime, limit: cfg.limit, hostLimits: hostLimits, panel: panel, pools: pools}
+	s := &scheduler{queue: q, github: api, runtime: runners.runtime, limit: cfg.limit, hostLimits: runners.hostLimits, panel: panel, pools: runners.pools}
 	server := &http.Server{
 		Addr:              net.JoinHostPort(env("RUNQUILL_BIND", "127.0.0.1"), env("RUNQUILL_PORT", "8080")),
 		Handler:           webhook(q, cfg.owner, []byte(cfg.secret), panel),
@@ -282,7 +276,7 @@ func run(ctx context.Context) error {
 		return err
 	}
 	slog.Info("Runquill listening", "address", listener.Addr(), "slots", cfg.limit, "version", version,
-		"webhook", cfg.secret != "", "poll_interval", cfg.pollInterval, "docker_hosts", len(runtime.hosts))
+		"webhook", cfg.secret != "", "poll_interval", cfg.pollInterval, "runner_backend", runners.kind, "runner_hosts", runners.hostCount)
 	serverExit := make(chan error, 2)
 	go func() { serverExit <- server.Serve(listener) }()
 	if panelServer != nil {

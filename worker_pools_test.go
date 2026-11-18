@@ -19,7 +19,7 @@ import (
 
 func TestWorkerPoolsValidatePolicyAndSetDockerResources(t *testing.T) {
 	fleet, logPath := testDockerFleet(t)
-	raw := fmt.Sprintf(`{"build":{"hosts":[%q],"repositories":["Owner/project"],"cpus":2.5,"memory_mib":4096}}`, fleetTestWorker)
+	raw := fmt.Sprintf(`{"build":{"hosts":[%q],"repositories":["Owner/project"],"cpus":2.5,"memory_mib":4096,"image":"registry.example/runquill:build"}}`, fleetTestWorker)
 	pools, err := fleet.configurePools(raw)
 	if err != nil {
 		t.Fatal(err)
@@ -49,10 +49,10 @@ func TestWorkerPoolsValidatePolicyAndSetDockerResources(t *testing.T) {
 	var buildFlags, defaultFlags bool
 	for line := range strings.SplitSeq(string(data), "\n") {
 		if strings.Contains(line, "create --name build-runner") {
-			buildFlags = strings.Contains(line, "--cpus 2.5 --memory 4096m --memory-swap 4096m")
+			buildFlags = strings.Contains(line, "--cpus 2.5 --memory 4096m --memory-swap 4096m") && strings.HasSuffix(line, " registry.example/runquill:build")
 		}
 		if strings.Contains(line, "create --name default-runner") {
-			defaultFlags = !strings.Contains(line, "--memory") && !strings.Contains(line, "--cpus")
+			defaultFlags = !strings.Contains(line, "--memory") && !strings.Contains(line, "--cpus") && !strings.Contains(line, "registry.example/runquill:build")
 		}
 	}
 	if !buildFlags || !defaultFlags {

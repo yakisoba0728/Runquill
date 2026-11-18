@@ -8,12 +8,20 @@ import (
 )
 
 func setHostCordon(ctx context.Context, out io.Writer, name string, cordoned bool) error {
-	fleet, err := newDockerFleet("", env("RUNQUILL_DOCKER_HOSTS", "local"))
-	if err != nil {
-		return err
-	}
-	if _, err := fleet.host(name); err != nil {
-		return err
+	label := "Docker host"
+	if env("RUNQUILL_BACKEND", "docker") == "kubernetes" {
+		label = "Kubernetes runner pool"
+		if name != kubeHost {
+			return fmt.Errorf("unknown Kubernetes runner pool %q", name)
+		}
+	} else {
+		fleet, err := newDockerFleet("", env("RUNQUILL_DOCKER_HOSTS", "local"))
+		if err != nil {
+			return err
+		}
+		if _, err := fleet.host(name); err != nil {
+			return err
+		}
 	}
 	path := env("RUNQUILL_DB", "runquill.sqlite3")
 	db, err := openQueueDB(path, "rw")
@@ -22,13 +30,13 @@ func setHostCordon(ctx context.Context, out io.Writer, name string, cordoned boo
 	}
 	defer db.Close()
 	if err := writeHostCordon(ctx, db, name, cordoned); err != nil {
-		return fmt.Errorf("update Docker host state in %s (start the manager to initialize the queue): %w", path, err)
+		return fmt.Errorf("update runner host state in %s (start the manager to initialize the queue): %w", path, err)
 	}
 	mode := "uncordoned"
 	if cordoned {
 		mode = "cordoned"
 	}
-	_, err = fmt.Fprintf(out, "Docker host %s %s.\n", name, mode)
+	_, err = fmt.Fprintf(out, "%s %s %s.\n", label, name, mode)
 	return err
 }
 

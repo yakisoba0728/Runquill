@@ -109,7 +109,7 @@ function renderDetails(job) {
   githubLink("detail-link", job.url);
   const source = job.timing?.discovery_source;
   const reasons = [
-    job.retry_reason || (job.status === "OFFLINE" ? "The worker is unreachable. Its runner slot remains reserved." : ""),
+    job.pool_error || job.retry_reason || (job.status === "OFFLINE" ? "The worker is unreachable. Its runner slot remains reserved." : ""),
     job.status === "WAITING" ? waitingReason(current.fleet) : "",
     source ? "Discovered by " + (source === "poll" ? "GitHub API polling." : "webhook.") : "",
     job.runner_host ? "Host " + job.runner_host : "",
@@ -185,6 +185,7 @@ function render() {
   text("slots", counts ? used + " / " + fleet.slot_limit : "—");
   text("slot-note", counts?.reserved_slots ? counts.reserved_slots + " reserved" : "Used and reserved capacity");
   text("healthy", hosts.length ? hosts.filter((host) => host.status === "UP").length + " / " + hosts.length : "—");
+  text("host-description", fleet?.backend === "kubernetes" ? "Kubernetes runner pool capacity" : "Capacity by Docker engine");
   text("host-note", counts?.offline_hosts ? counts.offline_hosts + " offline" : "Reachable and ready");
 
   let notice = refreshError ? "Panel refresh failed. Showing the last available snapshot." : fleet?.docker_error;

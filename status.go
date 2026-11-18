@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -42,27 +41,19 @@ func inspectStatus(ctx context.Context, db *sql.DB) (*statusReport, error) {
 	}
 	states, err := readHostStates(ctx, db)
 	if err != nil {
-		return nil, fmt.Errorf("read Docker host states: %w", err)
+		return nil, fmt.Errorf("read runner host states: %w", err)
 	}
-	runtime, err := newDockerFleet(env("RUNQUILL_RUNNER_IMAGE", "runquill-runner:local"), env("RUNQUILL_DOCKER_HOSTS", "local"))
+	runners, err := configureRunnerRuntime(env("RUNQUILL_RUNNER_IMAGE", "runquill-runner:local"))
 	if err != nil {
 		return nil, err
 	}
-	limits, err := runtime.limits(env("RUNQUILL_DOCKER_HOST_LIMITS", ""))
-	if err != nil {
-		return nil, err
-	}
-	pools, err := runtime.configurePools(os.Getenv("RUNQUILL_WORKER_POOLS"))
-	if err != nil {
-		return nil, err
-	}
-	dockerCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	snapshots, dockerErr := runtime.snapshot(dockerCtx)
+	snapshots, probeErr := runners.runtime.snapshot(probeCtx)
 	var hosts []hostCapacity
 	var unassigned int
-	if dockerErr == nil {
-		hosts, unassigned = fleetCapacity(snapshots, states, jobs, limits, limit)
+	if probeErr == nil {
+		hosts, unassigned = fleetCapacity(snapshots, states, jobs, runners.hostLimits, limit)
 		var hostErrors []error
 		for _, host := range hosts {
 			if host.Containers != nil {
@@ -71,23 +62,16 @@ func inspectStatus(ctx context.Context, db *sql.DB) (*statusReport, error) {
 			}
 			hostErrors = append(hostErrors, host.Err)
 		}
-		dockerErr = errors.Join(hostErrors...)
+		probeErr = errors.Join(hostErrors...)
 	} else {
-		dockerErr = fmt.Errorf("list runner containers: %w", dockerErr)
+		probeErr = fmt.Errorf("list runners: %w", probeErr)
 	}
 	report := summarizeStatus(jobs, hosts, unassigned, limit, time.Now())
-	report.pools = pools
-	for i, j := range jobs {
-		pool, err := pools.forJob(j)
-		report.Jobs[i].Pool = pool
-		if err != nil {
-			report.Jobs[i].PoolError = err.Error()
-		}
+	report.configure(runners.kind, runners.pools, jobs)
+	if probeErr != nil {
+		report.DockerError = strings.Join(strings.Fields(probeErr.Error()), " ")
 	}
-	if dockerErr != nil {
-		report.DockerError = strings.Join(strings.Fields(dockerErr.Error()), " ")
-	}
-	return &report, dockerErr
+	return &report, probeErr
 }
 
 func readStatusJobs(ctx context.Context, db *sql.DB) ([]job, error) {
@@ -135,6 +119,7 @@ func readStatusJobs(ctx context.Context, db *sql.DB) ([]job, error) {
 }
 
 type statusReport struct {
+	Backend       string         `json:"backend,omitempty"`
 	SchemaVersion int            `json:"schema_version"`
 	SlotLimit     int            `json:"slot_limit"`
 	Runners       *statusRunners `json:"runners"`
@@ -299,10 +284,22 @@ func summarizeStatus(jobs []job, hosts []hostCapacity, unassigned, limit int, no
 	return report
 }
 
+func (r *statusReport) configure(backend string, pools workerPools, jobs []job) {
+	r.pools = pools
+	r.Backend = backend
+	for i, j := range jobs {
+		pool, err := pools.forJob(j)
+		r.Jobs[i].Pool = pool
+		if err != nil {
+			r.Jobs[i].PoolError = err.Error()
+		}
+	}
+}
+
 func (r statusReport) writeText(out io.Writer) error {
 	table := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
 	if r.Runners == nil {
-		fmt.Fprintln(table, "Runners: unavailable (Docker query failed)")
+		fmt.Fprintln(table, "Runners: unavailable (runner query failed)")
 	} else {
 		counts := r.Runners
 		total := counts.OccupiedSlots + counts.ReservedSlots

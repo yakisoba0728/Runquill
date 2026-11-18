@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Runquill's read-only panel for GitHub Actions jobs, runner capacity and first-job setup.">
+  <meta name="description" content="Runquill's operations panel for GitHub Actions jobs, runner capacity and team access.">
   <title>Runquill · Runner overview</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="./panel.css">
@@ -78,7 +78,7 @@
       </section>
       <aside class="side">
         <section class="surface" aria-labelledby="hosts-title">
-          <div class="section-head"><div><h2 id="hosts-title">Hosts</h2><p>Capacity by Docker engine</p></div></div>
+          <div class="section-head"><div><h2 id="hosts-title">Hosts</h2><p id="host-description">Capacity by Docker engine</p></div></div>
           <div id="host-rows" class="host-rows"><p class="empty">Waiting for a fleet snapshot…</p></div>
           <p id="host-action" class="inline-note" role="status" hidden></p>
         </section>

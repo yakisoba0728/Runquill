@@ -35,6 +35,7 @@ var setupSecret = regexp.MustCompile(`^[a-zA-Z0-9_-]{16,256}$`)
 type setupOptions struct {
 	webhookURL string
 	port       int
+	kubernetes bool
 }
 
 func (opts setupOptions) validate() error {
@@ -98,6 +99,20 @@ func setup(ctx context.Context, out io.Writer, dir string, client *http.Client, 
 	fmt.Fprintf(out, "Configuration ready for %s in %s.\n", api.owner, filepath.Join(dir, setupEnvFile))
 	if err := waitForSetupInstallation(ctx, out, api); err != nil {
 		return fmt.Errorf("check GitHub App installation (rerun runquill setup to resume): %w", err)
+	}
+
+	if opts.kubernetes {
+		fmt.Fprintln(out, "GitHub App installed with access to all repositories. Apply runquill-k3s.yaml to the intended Kubernetes context.")
+		fmt.Fprintln(out, "  kubectl apply -f runquill-k3s.yaml")
+		fmt.Fprintln(out, "  kubectl -n runquill-system create secret generic runquill-config --from-env-file=.env")
+		fmt.Fprintln(out, "  kubectl -n runquill-system create secret generic runquill-github-key --from-file=github-app.pem")
+		fmt.Fprintln(out, "  kubectl -n runquill-system rollout status deployment/runquill")
+		fmt.Fprintln(out, "  kubectl -n runquill-system exec deployment/runquill -- runquill doctor")
+		if endpoint := values["RUNQUILL_WEBHOOK_URL"]; endpoint != "" {
+			fmt.Fprintf(out, "Route %s to /webhook on the runquill Service's port 8080.\n", endpoint)
+		}
+		fmt.Fprintln(out, "From the root of a private repository checkout, use runquill workflow init to create a first-job workflow.")
+		return nil
 	}
 
 	fmt.Fprintln(out, "GitHub App installed with access to all repositories. Run these commands from the Runquill project directory:")

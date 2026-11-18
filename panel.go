@@ -44,6 +44,8 @@ type panelCompleted struct {
 type panelState struct {
 	mu       sync.RWMutex
 	snapshot panelSnapshot
+	backend  string
+	pools    workerPools
 }
 
 func newPanel(cfg config) *panelState {
@@ -89,8 +91,9 @@ func (p *panelState) capture(ctx context.Context, q *queue, hosts []hostCapacity
 		return
 	}
 	report := summarizeStatus(jobs, hosts, unassigned, limit, now)
+	report.configure(p.backend, p.pools, jobs)
 	if probeErr != nil {
-		report.DockerError = "Docker host discovery failed. Check the manager logs."
+		report.DockerError = "Runner host discovery failed. Check the manager logs."
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
