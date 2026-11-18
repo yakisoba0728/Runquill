@@ -93,7 +93,7 @@ func (s *scheduler) tick(ctx context.Context, now time.Time) error {
 			continue
 		}
 		attempts++
-		claimed, err := s.launch(ctx, j, host.Name, now)
+		claimed, err := s.launch(ctx, j, host.Name, pool, now)
 		if claimed {
 			host.Occupied++
 		}
@@ -223,17 +223,24 @@ func retryMessage(operation string, cause error) string {
 	return operation + ": " + string(detail)
 }
 
-func (s *scheduler) launch(ctx context.Context, j job, host string, now time.Time) (bool, error) {
+func (s *scheduler) launch(ctx context.Context, j job, host, pool string, now time.Time) (bool, error) {
 	token, err := s.github.token(ctx, j)
 	if err != nil {
 		return false, err
 	}
-	eligible, err := s.github.eligible(ctx, j, token)
+	repo, eligible, err := s.github.eligible(ctx, j, token)
 	if err != nil {
 		return false, err
 	}
 	if !eligible {
 		return false, s.queue.advance(ctx, j.id, completed, now)
+	}
+	policy := s.pools[pool]
+	if policy.Repositories != nil {
+		name, valid := ownedRepositoryPath(repo.FullName, s.github.owner)
+		if !valid || !policy.allows(name) {
+			return false, fmt.Errorf("GitHub repository %q is not allowed to use worker pool %q", repo.FullName, pool)
+		}
 	}
 	observed, err := s.github.jobDetails(ctx, j, token)
 	if err != nil {

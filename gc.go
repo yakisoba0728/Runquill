@@ -168,7 +168,7 @@ func (g *github) readRunnerJobStatus(ctx context.Context, j job) (string, error)
 	if err != nil {
 		return "", err
 	}
-	eligible, err := g.eligible(ctx, j, token.Token)
+	_, eligible, err := g.eligible(ctx, j, token.Token)
 	if err != nil {
 		return "", err
 	}

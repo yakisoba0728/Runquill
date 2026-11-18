@@ -231,10 +231,10 @@ func (g *github) token(ctx context.Context, j job) (string, error) {
 	return out.Token, err
 }
 
-func (g *github) eligible(ctx context.Context, j job, token string) (bool, error) {
+func (g *github) eligible(ctx context.Context, j job, token string) (repository, bool, error) {
 	var repo repository
 	err := g.request(ctx, http.MethodGet, "/repos/"+j.repository, token, nil, &repo)
-	return repo.Private && repo.ID == j.repositoryID && strings.EqualFold(repo.Owner.Login, g.owner), err
+	return repo, repo.ID == j.repositoryID && repo.privateFor(g.owner), err
 }
 
 func (g *github) jobDetails(ctx context.Context, j job, token string) (workflowJob, error) {

@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -44,14 +46,17 @@ func TestWorkerPoolsValidatePolicyAndSetDockerResources(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var buildFlags, defaultFlags bool
 	for line := range strings.SplitSeq(string(data), "\n") {
-		if strings.Contains(line, "create --name build-runner") &&
-			!strings.Contains(line, "--cpus 2.5 --memory 4096m --memory-swap 4096m") {
-			t.Errorf("missing Docker resource flags: %s", line)
+		if strings.Contains(line, "create --name build-runner") {
+			buildFlags = strings.Contains(line, "--cpus 2.5 --memory 4096m --memory-swap 4096m")
 		}
-		if strings.Contains(line, "create --name default-runner") && strings.Contains(line, "--cpus") {
-			t.Errorf("unexpected resource limit in default pool: %s", line)
+		if strings.Contains(line, "create --name default-runner") {
+			defaultFlags = !strings.Contains(line, "--memory") && !strings.Contains(line, "--cpus")
 		}
+	}
+	if !buildFlags || !defaultFlags {
+		t.Fatalf("incorrect Docker flags in %s", data)
 	}
 	for _, input := range []string{
 		`{"build": {"hosts":["unknown"]}}`,
@@ -74,12 +79,18 @@ func TestPoolSchedulerDoesNotSpillOrBlockOtherPools(t *testing.T) {
 		t.Fatal(err)
 	}
 	var labels []string
+	var labelsMu sync.Mutex
+	var renamed atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/app/installations/1/access_tokens":
 			fmt.Fprint(w, `{"token":"fixture"}`)
 		case r.URL.Path == "/repos/owner/repo":
-			fmt.Fprint(w, `{"id":2,"private":true,"owner":{"login":"owner"}}`)
+			name := "owner/repo"
+			if renamed.Load() {
+				name = "owner/renamed"
+			}
+			fmt.Fprintf(w, `{"id":2,"full_name":%q,"private":true,"owner":{"login":"owner"}}`, name)
 		case strings.HasPrefix(r.URL.Path, "/repos/owner/repo/actions/jobs/"):
 			fmt.Fprint(w, `{"status":"queued"}`)
 		case r.URL.Path == "/repos/owner/repo/actions/runners/generate-jitconfig":
@@ -90,7 +101,9 @@ func TestPoolSchedulerDoesNotSpillOrBlockOtherPools(t *testing.T) {
 			if len(request.Labels) != 1 {
 				t.Errorf("expected a single route label, got %+v", request.Labels)
 			}
+			labelsMu.Lock()
 			labels = append(labels, request.Labels...)
+			labelsMu.Unlock()
 			fmt.Fprint(w, `{"runner":{"id":52},"encoded_jit_config":"test-config"}`)
 		default:
 			t.Errorf("unexpected GitHub call: %s %s", r.Method, r.URL.Path)
@@ -134,9 +147,20 @@ func TestPoolSchedulerDoesNotSpillOrBlockOtherPools(t *testing.T) {
 		t.Fatalf("missing repository pool denial: %q, %v", reason, err)
 	}
 	clear(runtime.hosts[1].Containers)
+	renamed.Store(true)
 	if err := s.tick(ctx, now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
+	if err := q.QueryRowContext(ctx, "SELECT retry_reason FROM jobs WHERE job_id = 1").Scan(&reason); err != nil ||
+		!strings.Contains(reason, "owner/renamed") || !strings.Contains(reason, "is not allowed") {
+		t.Fatalf("renamed repository escaped pool restrictions: %q, %v", reason, err)
+	}
+	renamed.Store(false)
+	if err := s.tick(ctx, now.Add(retryDelay+time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	labelsMu.Lock()
+	defer labelsMu.Unlock()
 	leases, err = q.jobs(ctx, "WHERE runner_name IS NOT NULL ORDER BY sequence")
 	if err != nil || len(leases) != 2 || leases[0].id != 1 || leases[0].runnerHost != worker ||
 		!slices.Equal(labels, []string{"runquill-17-1-local", "runquill-17-1-pool__build__first"}) {

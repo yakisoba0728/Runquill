@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -102,13 +103,12 @@ func (p workerPools) forJob(j job) (string, error) {
 	if !found {
 		return name, fmt.Errorf("worker pool %q is not configured", name)
 	}
-	if pool.Repositories != nil {
-		for _, repo := range pool.Repositories {
-			if j.repository == repo {
-				return name, nil
-			}
-		}
+	if !pool.allows(j.repository) {
 		return name, fmt.Errorf("repository %s is not allowed to use worker pool %q", j.repository, name)
 	}
 	return name, nil
+}
+
+func (p workerPool) allows(repo string) bool {
+	return p.Repositories == nil || slices.Contains(p.Repositories, repo)
 }
