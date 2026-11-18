@@ -78,20 +78,26 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version: '1.26.x'
-          check-latest: true
+          go-version-file: go.mod
       - name: Build standalone binaries
         run: |
           image="ghcr.io/${GITHUB_REPOSITORY,,}"
           mkdir release-assets
           for arch in amd64 arm64; do
-            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath \
+            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -buildvcs=false -trimpath \
               -ldflags "-s -w -X main.version=$GITHUB_REF_NAME -X main.releaseImage=$image" \
               -o "release-assets/runquill-linux-$arch" .
           done
           test "$(release-assets/runquill-linux-amd64 --version)" = "$GITHUB_REF_NAME"
-          cp compose.yaml compose.ssh.yaml install.sh LICENSE release-assets/
-          (cd release-assets && sha256sum runquill-linux-amd64 runquill-linux-arm64 compose.yaml compose.ssh.yaml install.sh LICENSE > SHA256SUMS)
+          cp compose.yaml compose.ssh.yaml compose.panel.yaml install.sh LICENSE release-assets/
+          sed -e "s#ghcr.io/yakisoba0728/runquill:#$image:#" \
+              -e "s#ghcr.io/yakisoba0728/runquill-runner:#$image-runner:#" \
+              -e "s#:\(v[0-9][0-9.]*\)\$#:$GITHUB_REF_NAME#" \
+            deploy/k3s/runquill.yaml > release-assets/runquill-k3s.yaml
+          source_date=$(git show -s --format=%ct HEAD)
+          tar --sort=name --mtime="@$source_date" --owner=0 --group=0 --numeric-owner \
+            -czf release-assets/runquill-panel-demo.tar.gz panelweb LICENSE
+          (cd release-assets && sha256sum * > SHA256SUMS)
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

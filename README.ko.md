@@ -8,6 +8,8 @@
 
 **신뢰 범위** · Docker-in-Docker에는 `--privileged`가 필요합니다. 전용 서버에서 신뢰하는 코드만 실행하고, 신뢰하기 어려운 PR 코드는 GitHub 호스팅 러너로 보냅니다. GitHub App 키와 매니저의 Docker 소켓은 각각 설치 범위의 저장소와 호스트 Docker를 관리할 수 있으므로 접근을 제한합니다.
 
+k3s에서는 매니저와 SQLite 볼륨을 배포하고, 각 작업을 독립 Pod에서 실행할 수 있습니다. 설치 방법과 Docker-in-Docker 옵션은 [k3s 가이드](deploy/k3s/README.md)를 확인하세요.
+
 ## 서버 설치
 
 cgroup v2를 사용하는 amd64 또는 arm64 Linux 서버에 일반 모드(rootful)의 Docker Engine, Docker Compose, `curl`, `sha256sum`이 필요합니다. 기본 폴링 방식은 외부 GitHub API에 접근할 수 있으면 공유기 뒤에서도 동작합니다. 웹훅을 쓰는 경우 공개 HTTPS 주소를 설정합니다.
@@ -23,7 +25,7 @@ sh install.sh --dir "$HOME/runquill"
 2. 설치 프로그램이 Compose를 시작하고 `Preflight passed.`를 출력할 때까지 기다립니다.
 3. 내 비공개 저장소에서 [첫 작업을 실행합니다](#첫-작업-확인).
 
-설치 스크립트는 다운로드 체크섬을 확인하고 같은 버전의 매니저와 러너 이미지를 받습니다. 위 명령은 `$HOME/runquill`에 설치합니다. `--version v0.1.2`로 버전을 지정하거나 `--download-only`로 바이너리와 Compose 파일만 먼저 받을 수 있습니다.
+설치 스크립트는 다운로드 체크섬을 확인하고 같은 버전의 매니저와 러너 이미지를 받습니다. 위 명령은 `$HOME/runquill`에 설치합니다. `--version v0.2.0`로 버전을 지정하거나 `--download-only`로 바이너리와 배포 파일을 먼저 받을 수 있습니다.
 
 ### GitHub App 연결
 
@@ -224,7 +226,7 @@ RUNQUILL_PANEL_BOOTSTRAP_ID=12345678
 RUNQUILL_MANAGER_IMAGE=runquill-manager:local docker compose -f compose.yaml -f compose.panel.yaml up -d --build
 ```
 
-멀티 서버 설정에서는 `-f compose.ssh.yaml`도 전달합니다. 바이너리를 직접 실행하는 경우 `RUNQUILL_PANEL_ADDR=127.0.0.1:8081`을 설정합니다. 원격 루프백 접속에는 SSH 터널을 이용하세요. 팀이 공유할 때는 `RUNQUILL_PANEL_URL`에 HTTPS 주소를 지정하고, HTTPS 역프록시에서 원래 Host 헤더를 유지해 패널의 8081 포트로 전달합니다. 공개 웹훅에는 별도 주소를 씁니다.
+릴리스로 설치한 경우 이미지 이름을 재정의하지 않고 같은 Compose 파일에 `--no-build`를 사용합니다. 멀티 서버 설정에서는 `-f compose.ssh.yaml`도 전달합니다. 바이너리를 직접 실행하는 경우 `RUNQUILL_PANEL_ADDR=127.0.0.1:8081`을 설정합니다. 원격 루프백 접속에는 SSH 터널을 이용하세요. 팀이 공유할 때는 `RUNQUILL_PANEL_URL`에 HTTPS 주소를 지정하고, HTTPS 역프록시에서 원래 Host 헤더를 유지해 패널의 8081 포트로 전달합니다. 공개 웹훅에는 별도 주소를 씁니다.
 
 Viewer는 상태를 보고 읽기 토큰을 만들 수 있습니다. Operator는 워커에 새 작업을 배정하거나 잠시 멈출 수 있습니다. Admin은 팀 사용자와 권한, 토큰, 감사 기록을 관리합니다. 토큰은 1~90일 뒤 만료되며 원문은 발급 시 한 번 표시됩니다. 워커 정비를 활성화해도 실행 중인 작업은 계속 처리됩니다.
 

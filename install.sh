@@ -62,12 +62,19 @@ scratch=$(mktemp -d .runquill-install.XXXXXX)
 trap 'rm -rf -- "$scratch"' EXIT
 binary=runquill-linux-$arch
 url="$repo/releases/download/$tag"
-for name in "$binary" compose.yaml compose.ssh.yaml LICENSE SHA256SUMS; do
+files='compose.yaml compose.ssh.yaml LICENSE'
+curl --proto '=https' --proto-redir '=https' -fsSL "$url/SHA256SUMS" -o "$scratch/SHA256SUMS"
+for optional in compose.panel.yaml runquill-k3s.yaml; do
+    if awk -v name="$optional" '$2 == name {found=1} END {exit !found}' "$scratch/SHA256SUMS"; then
+        files="$files $optional"
+    fi
+done
+for name in "$binary" $files; do
     curl --proto '=https' --proto-redir '=https' -fsSL "$url/$name" -o "$scratch/$name"
 done
 (
     cd "$scratch"
-    for name in "$binary" compose.yaml compose.ssh.yaml LICENSE; do
+    for name in "$binary" $files; do
         checksum=$(awk -v name="$name" '$2 == name {print $1}' SHA256SUMS)
         if ! printf '%s\n' "$checksum" | grep -Eq '^[0-9a-f]{64}$' || [ "${#checksum}" -ne 64 ]; then
             printf 'Invalid or missing checksum for %s\n' "$name" >&2
@@ -77,7 +84,7 @@ done
     done
 )
 chmod 700 "$scratch/$binary"
-for name in runquill compose.yaml compose.ssh.yaml LICENSE; do
+for name in runquill $files; do
     asset=$name
     if [ "$name" = runquill ]; then asset=$binary; fi
     if [ -e "$name" ] || [ -L "$name" ]; then
