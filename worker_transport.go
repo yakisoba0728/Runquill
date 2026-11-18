@@ -142,7 +142,7 @@ func loadWorkerFleet(hosts []docker, authFile string) (*workerFleet, error) {
 		if !want[name] {
 			return nil, errors.New("worker auth file names must match the configured agent:// hosts")
 		}
-		if !validEngineID(a.Engine) || !validWorkerToken(a.Digest) {
+		if !validEngineID(a.Engine) || !validHex32(a.Digest) {
 			return nil, fmt.Errorf("invalid engine_id or token_sha256 for worker %s", name)
 		}
 		if engines[a.Engine] || digests[a.Digest] {
@@ -179,7 +179,7 @@ func validEngineID(id string) bool {
 	return true
 }
 
-func validWorkerToken(token string) bool {
+func validHex32(token string) bool {
 	if len(token) != sha256.Size*2 {
 		return false
 	}
@@ -222,7 +222,7 @@ func (f *workerFleet) poll(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	host := f.hosts[name]
 	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-	if host == nil || !ok || !validWorkerToken(token) {
+	if host == nil || !ok || !validHex32(token) {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}

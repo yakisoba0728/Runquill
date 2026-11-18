@@ -77,7 +77,7 @@ case "$1" in
         esac
         case "$*" in
             *--no-trunc*)
-                printf '%s\t0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n' "$(cat runner)" ;;
+                printf '%s|0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef|1|%s\n' "$(cat runner)" "${WORKER_TEST_OWNER:-builder}" ;;
             *) printf '%s\t%s\n' "$(cat runner)" "$(cat state)" ;;
         esac ;;
     create) printf '%s\n' "$3" > runner; echo created > state ;;
@@ -315,5 +315,21 @@ func TestWorkerTrustsOnlyTheConfiguredProxy(t *testing.T) {
 	req.Header.Del("X-Forwarded-Proto")
 	if fleet.workers.secureRequest(req) {
 		t.Fatal("proxy delivered a request without TLS")
+	}
+}
+
+func TestWorkerRemovalVerifiesLabelsAndContainerID(t *testing.T) {
+	dir := workerTestDocker(t)
+	t.Setenv("WORKER_TEST_OWNER", "different-worker")
+	if err := os.WriteFile(filepath.Join(dir, "runner"), []byte(testWorkerJob), 0600); err != nil {
+		t.Fatal(err)
+	}
+	target := docker{worker: testWorkerName}
+	if err := target.removeWorkerRunner(t.Context(), testWorkerJob); err == nil {
+		t.Fatal("worker removed a runner assigned to a different worker")
+	}
+	log, err := os.ReadFile(filepath.Join(dir, "commands"))
+	if err != nil || strings.Contains(string(log), "rm -f") {
+		t.Fatalf("unexpected container removal: %s (%v)", log, err)
 	}
 }

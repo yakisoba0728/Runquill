@@ -123,7 +123,7 @@ func lockWorkerToken(filename string) (string, func(), error) {
 		return "", nil, fmt.Errorf("read worker token file: %w", err)
 	}
 	token := strings.TrimSpace(string(contents))
-	if !validWorkerToken(token) {
+	if !validHex32(token) {
 		return "", nil, errors.New("worker token file must contain a 32-byte lowercase hex token")
 	}
 	lock, err := os.OpenFile(real+".lock", os.O_CREATE|os.O_RDWR, 0600)
@@ -255,20 +255,20 @@ func (d docker) removeWorkerRunner(ctx context.Context, name string) error {
 		return errors.New("invalid worker runner ownership")
 	}
 	raw, err := d.command(ctx, nil, "ps", "-a", "--no-trunc", "--filter", "label="+runnerLabel,
-		"--filter", "label="+workerLabel+"="+d.worker, "--format", "{{.Names}}\t{{.ID}}")
+		"--filter", "label="+workerLabel+"="+d.worker, "--format", `{{.Names}}|{{.ID}}|{{.Label "io.runquill.runner"}}|{{.Label "io.runquill.worker"}}`)
 	if err != nil {
 		return err
 	}
 	for line := range strings.SplitSeq(strings.TrimSpace(raw), "\n") {
-		runner, id, ok := strings.Cut(line, "\t")
-		if runner != name {
+		fields := strings.SplitN(line, "|", 4)
+		if fields[0] != name {
 			continue
 		}
-		if !ok || !validWorkerToken(id) {
-			return errors.New("cannot identify worker runner by container ID")
+		if len(fields) != 4 || !validHex32(fields[1]) || fields[2] != "1" || fields[3] != d.worker {
+			return errors.New("cannot verify worker runner ownership")
 		}
 		// A replacement container reusing this name must not be removed.
-		return d.remove(ctx, id)
+		return d.remove(ctx, fields[1])
 	}
 	return nil
 }
