@@ -29,16 +29,22 @@ var panelSetupPage = template.Must(template.New("panel-setup").Parse(`<!doctype 
 {{if .InWizard}}<link rel="stylesheet" href="/wizard.css">{{end}}
 <body><main>
 <h1>{{if .Korean}}Runquill 패널 로그인 설정{{else}}Set up the Runquill panel{{end}}</h1>
+{{if .Manual}}
 <p><a href="https://github.com/settings/applications/new" target="_blank" rel="noopener noreferrer">{{if .Korean}}GitHub OAuth App 등록 열기{{else}}Register a GitHub OAuth App{{end}}</a>{{if not .Korean}} for panel sign-in.{{end}}</p>
 <dl>
   <dt>{{if .Korean}}홈페이지 URL{{else}}Homepage URL{{end}}</dt><dd><code>{{.Origin}}</code></dd>
   <dt>{{if .Korean}}인증 콜백 URL{{else}}Authorization callback URL{{end}}</dt><dd><code>{{.Callback}}</code></dd>
 </dl>
 <p>{{if .Korean}}위 주소를 GitHub 설정에 입력하고 생성한 클라이언트 시크릿을 여기에 입력하세요.{{else}}In the OAuth App settings, generate a client secret, then enter its credentials below.{{end}}</p>
+{{else}}
+<p>{{if .Korean}}GitHub App이 연결되었습니다. 조직의 첫 Runquill 관리자로 등록할 개인 계정의 숫자 ID를 입력하세요.{{else}}The GitHub App is connected. Enter the numeric ID of the individual GitHub account that will administer this Runquill panel.{{end}}</p>
+{{end}}
 <form method="post" action="{{.Form}}">
   <input type="hidden" name="state" value="{{.State}}">
+  {{if .Manual}}
   <p><label>{{if .Korean}}클라이언트 ID{{else}}Client ID{{end}} <input name="client_id" required maxlength="256" autocomplete="off" spellcheck="false"></label></p>
   <p><label>{{if .Korean}}클라이언트 시크릿{{else}}Client secret{{end}} <input name="client_secret" type="password" required maxlength="256" autocomplete="off"></label></p>
+  {{end}}
   <p><label>{{if .Korean}}첫 관리자의 GitHub 숫자 ID{{else}}First administrator's numeric GitHub user ID{{end}} <input name="bootstrap_id" value="{{.Bootstrap}}" inputmode="numeric" pattern="[0-9]+" maxlength="19" required></label></p>
   <button type="submit">{{if .Korean}}패널 설정 저장{{else}}Save panel configuration{{end}}</button>
 </form>
@@ -59,24 +65,41 @@ func configurePanelSetup(ctx context.Context, out io.Writer, path string, origin
 			if err != nil {
 				return panelOAuthConfig{}, err
 			}
-			return finishPanelSetup(path, original, values, opts, cfg, "")
+			if _, set := values["RUNQUILL_PANEL_BOOTSTRAP_ID"]; set {
+				return finishPanelSetup(path, original, values, opts, cfg, "")
+			}
+			cfg.bootstrapID = ownerID
+			if cfg.bootstrapID <= 0 {
+				cfg, err = readPanelSetup(ctx, out, opts.port, cfg)
+				if err != nil {
+					return panelOAuthConfig{}, err
+				}
+			}
+			return finishPanelSetup(path, original, values, opts, cfg, fmt.Sprintf("RUNQUILL_PANEL_BOOTSTRAP_ID=%d\n", cfg.bootstrapID))
 		}
 	}
-	origin := opts.panelURL
-	if origin == "" {
-		origin = defaultSetupPanelURL
-	}
-	u, err := parsePanelURL(origin)
+	origin, err := setupPanelOrigin(opts.panelURL)
 	if err != nil {
 		return panelOAuthConfig{}, err
 	}
-	cfg, err := readPanelSetup(ctx, out, opts.port, u.String(), ownerID)
+	cfg, err := readPanelSetup(ctx, out, opts.port, panelOAuthConfig{origin: origin, bootstrapID: ownerID})
 	if err != nil {
 		return panelOAuthConfig{}, err
 	}
 	appended := fmt.Sprintf("RUNQUILL_PANEL_URL=%s\nRUNQUILL_PANEL_GITHUB_CLIENT_ID=%s\nRUNQUILL_PANEL_GITHUB_CLIENT_SECRET=%s\nRUNQUILL_PANEL_BOOTSTRAP_ID=%d\n",
 		cfg.origin, cfg.clientID, cfg.clientSecret, cfg.bootstrapID)
 	return finishPanelSetup(path, original, values, opts, cfg, appended)
+}
+
+func setupPanelOrigin(origin string) (string, error) {
+	if origin == "" {
+		origin = defaultSetupPanelURL
+	}
+	u, err := parsePanelURL(origin)
+	if err != nil {
+		return "", err
+	}
+	return u.String(), nil
 }
 
 func savedPanelSetup(values map[string]string, requestedOrigin string) (panelOAuthConfig, error) {
@@ -129,7 +152,7 @@ func finishPanelSetup(path string, original []byte, values map[string]string, op
 	return cfg, nil
 }
 
-func readPanelSetup(ctx context.Context, out io.Writer, port int, origin string, ownerID int64) (panelOAuthConfig, error) {
+func readPanelSetup(ctx context.Context, out io.Writer, port int, credentials panelOAuthConfig) (panelOAuthConfig, error) {
 	ctx, cancel := context.WithTimeout(ctx, time.Hour)
 	defer cancel()
 	listener, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
@@ -140,13 +163,13 @@ func readPanelSetup(ctx context.Context, out io.Writer, port int, origin string,
 	localURL := "http://" + listener.Addr().String()
 	page := struct {
 		Origin, Callback, State, Bootstrap, Form string
-		Korean, InWizard                         bool
-	}{Origin: origin, Callback: origin + panelCallbackPath, State: rand.Text(), Form: "/", Korean: wizardKorean(ctx), InWizard: currentWizard(ctx) != nil}
+		Korean, InWizard, Manual                 bool
+	}{Origin: credentials.origin, Callback: credentials.callbackURL(), State: rand.Text(), Form: "/", Korean: wizardKorean(ctx), InWizard: currentWizard(ctx) != nil, Manual: credentials.clientID == ""}
 	if web := currentWizard(ctx); web != nil {
 		localURL, page.Form = web.origin, "/oauth/"
 	}
-	if ownerID > 0 {
-		page.Bootstrap = strconv.FormatInt(ownerID, 10)
+	if credentials.bootstrapID > 0 {
+		page.Bootstrap = strconv.FormatInt(credentials.bootstrapID, 10)
 	}
 	var used atomic.Bool
 	saved := make(chan panelOAuthConfig, 1)
@@ -163,11 +186,18 @@ func readPanelSetup(ctx context.Context, out io.Writer, port int, origin string,
 			http.Error(w, "Invalid panel setup request. Return to the setup page and try again.", http.StatusBadRequest)
 			return
 		}
-		id := strings.TrimSpace(r.PostForm.Get("client_id"))
-		secret := strings.TrimSpace(r.PostForm.Get("client_secret"))
-		cfg, err := parsePanelOAuthConfig(origin, id, secret, strings.TrimSpace(r.PostForm.Get("bootstrap_id")))
-		if err != nil || cfg.bootstrapID == 0 || !setupOAuthValue.MatchString(id) || !setupOAuthValue.MatchString(secret) {
-			http.Error(w, "Enter the GitHub OAuth client ID, client secret, and a positive numeric GitHub user ID. Return to the setup page to try again.", http.StatusBadRequest)
+		id, secret := credentials.clientID, credentials.clientSecret
+		if page.Manual {
+			id = strings.TrimSpace(r.PostForm.Get("client_id"))
+			secret = strings.TrimSpace(r.PostForm.Get("client_secret"))
+			if !setupOAuthValue.MatchString(id) || !setupOAuthValue.MatchString(secret) {
+				http.Error(w, "Enter the GitHub OAuth client ID and client secret from the app settings.", http.StatusBadRequest)
+				return
+			}
+		}
+		cfg, err := parsePanelOAuthConfig(credentials.origin, id, secret, strings.TrimSpace(r.PostForm.Get("bootstrap_id")))
+		if err != nil || cfg.bootstrapID == 0 {
+			http.Error(w, "Enter a positive numeric GitHub user ID.", http.StatusBadRequest)
 			return
 		}
 		if !used.CompareAndSwap(false, true) {

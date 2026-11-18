@@ -149,6 +149,70 @@ func TestGuidedPanelSetupReusesInstalledAppAndSavesPrivateConfig(t *testing.T) {
 	}
 }
 
+func TestOrganizationPanelSetupUsesAppCredentialsAndAsksForAdministrator(t *testing.T) {
+	const secret = "manifest-client-secret"
+	env := []byte(setupEnvironment("team", 123, "", "") +
+		"RUNQUILL_PANEL_URL=https://panel.example.com\nRUNQUILL_PANEL_GITHUB_CLIENT_ID=manifest-client\nRUNQUILL_PANEL_GITHUB_CLIENT_SECRET=" + secret + "\n")
+	path := filepath.Join(t.TempDir(), setupEnvFile)
+	if err := os.WriteFile(path, env, 0600); err != nil {
+		t.Fatal(err)
+	}
+	values, err := setupValues(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	output := make(manifestTestOutput, 2)
+	done := make(chan error, 1)
+	go func() {
+		_, err := configurePanelSetup(ctx, output, path, env, values, setupOptions{panel: true, organization: "team"}, 0)
+		done <- err
+	}()
+	var browserURL string
+	select {
+	case line := <-output:
+		browserURL = strings.Fields(line)[1]
+	case err := <-done:
+		t.Fatalf("setup stopped before asking for an administrator: %v", err)
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	resp, err := http.Get(browserURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	state := regexp.MustCompile(`name="state" value="([^"]+)"`).FindSubmatch(body)
+	if err != nil || len(state) != 2 || bytes.Contains(body, []byte(secret)) ||
+		bytes.Contains(body, []byte(`name="client_id"`)) || bytes.Contains(body, []byte(`settings/applications/new`)) {
+		t.Fatal("organization setup must ask for an administrator only")
+	}
+	form := url.Values{"state": {string(state[1])}, "bootstrap_id": {"42"}, "client_id": {"other-client"}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, browserURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", strings.TrimSuffix(browserURL, "/"))
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("administrator form returned HTTP %d", resp.StatusCode)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	saved, err := os.ReadFile(path)
+	if err != nil || string(saved) != string(env)+"RUNQUILL_PANEL_BOOTSTRAP_ID=42\n" {
+		t.Fatal("setup must preserve the App credentials and save the first administrator")
+	}
+}
+
 func TestPanelDoctorChecksConfiguredHostWithoutCredentials(t *testing.T) {
 	app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Host != "panel.example.com" || r.URL.Path != "/api/me" ||

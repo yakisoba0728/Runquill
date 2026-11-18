@@ -265,9 +265,9 @@ To publish the sample panel, set **Settings → Pages → Source** to **GitHub A
 
 For a live panel, run `sh install.sh --dir "$HOME/runquill" --panel` with a release that supports guided panel setup. The installer starts Compose with the panel overlay. To add it to an install configured by `setup`, run `./runquill setup --panel` from the install directory and follow the Compose commands it prints. For a browser-accessible HTTPS origin, add `--panel-url https://panel.example.com`. The default origin is `http://127.0.0.1:8081`.
 
-Create a dedicated [GitHub OAuth App](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app) with the homepage and callback URLs shown by setup. Enter its client ID and client secret in the local setup form. Confirm the first administrator's numeric GitHub account ID, which defaults to the runner App installation owner when available. The account holder can look up their ID with `gh api user --jq .id`. The runner GitHub App continues to handle runner provisioning. After the manager starts, sign in with the enrolled GitHub account to verify the OAuth callback end to end.
+Fresh installs with the panel enabled use one GitHub App for runners and sign-in. Setup registers the panel callback, saves the App credentials locally, and enrolls the personal installation owner as the first administrator. For an organization, enter the first administrator's numeric GitHub user ID. The account holder can find it with `gh api user --jq .id`. After the manager starts, use the enrolled account to sign in.
 
-For v0.2.0 and manual installs, register the panel origin as the OAuth App homepage and append `/auth/github/callback` for the authorization callback. Put the following values in `.env`.
+When adding the panel to an older runner-only installation, setup can accept a dedicated [GitHub OAuth App](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app). For manual configuration, use the panel origin as the OAuth App homepage, append `/auth/github/callback` for its callback, and put the following values in `.env`.
 
 ```dotenv
 RUNQUILL_PANEL_URL=http://127.0.0.1:8081

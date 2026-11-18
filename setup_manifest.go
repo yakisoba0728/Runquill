@@ -23,6 +23,8 @@ type manifestApp struct {
 	Slug          string `json:"slug"`
 	PEM           string `json:"pem"`
 	WebhookSecret string `json:"webhook_secret"`
+	ClientID      string `json:"client_id"`
+	ClientSecret  string `json:"client_secret"`
 	Owner         struct {
 		Login string `json:"login"`
 		Type  string `json:"type"`
@@ -35,9 +37,10 @@ var appManifestPage = template.Must(template.New("manifest").Parse(`<!doctype ht
 {{if .InWizard}}<link rel="stylesheet" href="/wizard.css">{{end}}
 <body><main>
 <h1>{{if .Korean}}Runquill과 GitHub 연결{{else}}Connect Runquill to GitHub{{end}}</h1>
-{{if .Korean}}<p>GitHub에서 러너용 비공개 앱 등록을 승인하세요. 승인 후 이 마법사로 돌아옵니다.</p>{{else}}
+{{if .Korean}}<p>GitHub에서 Runquill의 비공개 앱 등록을 승인하세요. 승인 후 이 마법사로 돌아옵니다.</p>{{else}}
 <p>Create a private GitHub App with Actions read and {{.RunnerPermission}} write permissions.
 {{if .Webhook}}GitHub will send workflow job events to your HTTPS webhook.{{else}}Runquill will discover jobs by polling GitHub.{{end}}</p>{{end}}
+{{if .Panel}}<p>{{if .Korean}}이 앱으로 러너를 등록하고 운영 패널에 로그인합니다.{{else}}Runquill uses this app for runner registration and panel sign-in.{{end}}</p>{{end}}
 <form method="post" action="{{.Action}}?state={{.State}}">
   <input type="hidden" name="manifest" value="{{.Manifest}}">
   <button type="submit">{{if .Korean}}GitHub App 등록{{else}}Create GitHub App{{end}}</button>
@@ -82,6 +85,13 @@ func registerManifestApp(ctx context.Context, out io.Writer, client *http.Client
 		fields["hook_attributes"] = map[string]any{"url": opts.webhookURL, "active": true}
 		fields["default_events"] = []string{"workflow_job"}
 	}
+	if opts.panel {
+		origin, err := setupPanelOrigin(opts.panelURL)
+		if err != nil {
+			return manifestApp{}, err
+		}
+		fields["callback_urls"] = []string{origin + panelCallbackPath}
+	}
 	manifest, err := json.Marshal(fields)
 	if err != nil {
 		return manifestApp{}, fmt.Errorf("encode GitHub App manifest: %w", err)
@@ -98,8 +108,8 @@ func registerManifestApp(ctx context.Context, out io.Writer, client *http.Client
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		page := struct {
 			Action, State, Manifest, RunnerPermission string
-			Webhook, Korean, InWizard                 bool
-		}{action, state, string(manifest), permissionLabel, opts.webhookURL != "", wizardKorean(ctx), currentWizard(ctx) != nil}
+			Webhook, Korean, InWizard, Panel          bool
+		}{action, state, string(manifest), permissionLabel, opts.webhookURL != "", wizardKorean(ctx), currentWizard(ctx) != nil, opts.panel}
 		_ = appManifestPage.Execute(w, page)
 	})
 	mux.HandleFunc("GET /callback", func(w http.ResponseWriter, r *http.Request) {
@@ -122,6 +132,9 @@ func registerManifestApp(ctx context.Context, out io.Writer, client *http.Client
 		app, err := convertManifestCode(ctx, client, apiBase, code)
 		if err == nil {
 			err = checkManifestOwner(app, opts.organization)
+		}
+		if err == nil && opts.panel && (!setupOAuthValue.MatchString(app.ClientID) || !setupOAuthValue.MatchString(app.ClientSecret)) {
+			err = errors.New("GitHub did not return usable panel sign-in credentials")
 		}
 		if err != nil {
 			http.Error(w, "GitHub App registration needs attention. Check the terminal for details.", http.StatusBadGateway)

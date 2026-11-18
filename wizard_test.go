@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -39,7 +40,7 @@ func TestBrowserWizardRunsSingleOriginThroughDeployment(t *testing.T) {
 		switch r.URL.Path {
 		case "/app-manifests/wizard-fixture/conversions":
 			w.WriteHeader(http.StatusCreated)
-			fmt.Fprintf(w, `{"id":123,"slug":"runquill-test","pem":%q,"owner":{"login":"owner","type":"User"}}`, pemData)
+			fmt.Fprintf(w, `{"id":123,"slug":"runquill-test","pem":%q,"client_id":"example-client","client_secret":"example-secret","owner":{"login":"owner","type":"User"}}`, pemData)
 		case "/users/owner/installation":
 			if !installed.Load() {
 				http.NotFound(w, r)
@@ -122,22 +123,19 @@ func TestBrowserWizardRunsSingleOriginThroughDeployment(t *testing.T) {
 	if len(githubState) != 2 || !strings.Contains(manifest, server.URL+"/connect/callback") {
 		t.Fatal("GitHub manifest has no state or wizard callback")
 	}
+	if !strings.Contains(html.UnescapeString(manifest), `"callback_urls":["http://127.0.0.1:8081/auth/github/callback"]`) {
+		t.Fatal("GitHub manifest must configure the panel login callback")
+	}
 	if code, _ := request(http.MethodGet, "/connect/callback?code=wizard-fixture&state=wrong", "", nil); code != 400 {
 		t.Fatalf("GitHub callback without state returned %d", code)
 	}
 	request(http.MethodGet, "/connect/callback?code=wizard-fixture&state="+githubState[1], "", nil)
 	waitPage("/", "https://github.com/apps/runquill-test/installations/new")
 	installed.Store(true)
-	panel := waitPage("/oauth/", "패널 설정 저장")
-	formState := regexp.MustCompile(`name="state" value="([A-Za-z0-9]+)"`).FindStringSubmatch(panel)
-	if len(formState) != 2 || !strings.Contains(panel, `name="bootstrap_id" value="88"`) ||
-		!strings.Contains(panel, "http://127.0.0.1:8081/auth/github/callback") {
-		t.Fatal("OAuth form lacks state, expected callback, or bootstrap user")
+	ready := waitPage("/", "배포 및 사전 점검")
+	if strings.Contains(ready, "example-secret") {
+		t.Fatal("GitHub client secret was displayed in the wizard")
 	}
-	request(http.MethodPost, "/oauth/", server.URL, url.Values{
-		"state": {formState[1]}, "client_id": {"example-client"}, "client_secret": {"example-secret"}, "bootstrap_id": {"88"},
-	})
-	waitPage("/", "배포 및 사전 점검")
 	envFile := filepath.Join(dir, ".env")
 	touched, err := os.Stat(envFile)
 	if err != nil || touched.Mode().Perm() != 0600 {
@@ -145,7 +143,9 @@ func TestBrowserWizardRunsSingleOriginThroughDeployment(t *testing.T) {
 	}
 	envData, err := os.ReadFile(envFile)
 	if err != nil || !strings.Contains(string(envData), "RUNQUILL_REPOSITORY_SCOPE=selected") ||
-		!strings.Contains(string(envData), "RUNQUILL_PANEL_GITHUB_CLIENT_SECRET=example-secret") {
+		!strings.Contains(string(envData), "RUNQUILL_PANEL_GITHUB_CLIENT_SECRET=example-secret") ||
+		!strings.Contains(string(envData), "RUNQUILL_PANEL_GITHUB_CLIENT_ID=example-client") ||
+		!strings.Contains(string(envData), "RUNQUILL_PANEL_BOOTSTRAP_ID=88") {
 		t.Fatalf("wizard did not save selected coverage and OAuth settings: %v", err)
 	}
 	request(http.MethodPost, "/deploy", server.URL, nil)

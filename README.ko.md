@@ -263,9 +263,9 @@ runs-on: ${{ format('runquill-{0}-{1}-test-{2}', github.run_id, github.run_attem
 
 안내형 패널 설정을 지원하는 릴리스에서 `sh install.sh --dir "$HOME/runquill" --panel`을 실행하면 설치 프로그램이 패널 오버레이를 포함해 Compose를 시작합니다. `setup`으로 구성한 기존 설치에 추가하려면 설치 디렉터리에서 `./runquill setup --panel`을 실행하고 화면에 표시된 Compose 명령을 따릅니다. 브라우저에서 HTTPS 주소로 접속하려면 `--panel-url https://panel.example.com`을 추가합니다. 기본 주소는 `http://127.0.0.1:8081`입니다.
 
-설정에서 표시한 홈페이지와 콜백 주소로 [GitHub OAuth App](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app)을 만듭니다. 로컬 설정 화면에 앱의 Client ID와 Client Secret을 입력하고 첫 관리자의 숫자 GitHub 계정 ID를 확인합니다. 계정 ID를 조회할 수 있으면 러너 App 설치 소유자 ID가 기본값으로 표시됩니다. 계정 ID는 해당 계정에서 `gh api user --jq .id`로 확인할 수 있습니다. 러너용 GitHub App은 러너 등록에 계속 사용합니다. 매니저 시작 후 등록한 GitHub 계정으로 로그인해 OAuth 콜백을 확인합니다.
+패널을 켜고 새로 설치하면 GitHub App 하나로 러너 등록과 로그인까지 진행합니다. 설정 과정에서 패널 콜백을 등록하고 앱 자격 증명을 로컬에 저장합니다. 개인 계정은 설치 소유자를 첫 관리자로 자동 등록합니다. 조직 설치에서는 첫 관리자의 숫자 GitHub 계정 ID를 입력하세요. 해당 계정으로 `gh api user --jq .id`를 실행하면 확인할 수 있습니다. 매니저가 시작되면 등록한 GitHub 계정으로 로그인합니다.
 
-v0.2.0이나 수동 설치에서는 패널 주소를 OAuth App의 홈페이지 주소로 등록하고, 콜백 주소에는 `/auth/github/callback`을 붙입니다. `.env`에 다음 값을 입력합니다.
+기존 러너 전용 설치에 패널을 추가할 때는 별도의 [GitHub OAuth App](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app)을 연결할 수 있습니다. 수동으로 설정하려면 패널 주소를 OAuth App의 홈페이지로 등록하고 콜백 주소에는 `/auth/github/callback`을 붙입니다. `.env`에 다음 값을 입력합니다.
 
 ```dotenv
 RUNQUILL_PANEL_URL=http://127.0.0.1:8081

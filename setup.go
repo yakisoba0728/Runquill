@@ -252,6 +252,13 @@ func setupFiles(ctx context.Context, out io.Writer, dir string, client *http.Cli
 			}
 			pending.Env += fmt.Sprintf("RUNQUILL_WEBHOOK_URL=%s\nRUNQUILL_WEBHOOK_SECRET=%s\nRUNQUILL_POLL_INTERVAL=30s\n", opts.webhookURL, app.WebhookSecret)
 		}
+		if opts.panel {
+			origin, err := setupPanelOrigin(opts.panelURL)
+			if err != nil {
+				return nil, err
+			}
+			pending.Env += fmt.Sprintf("RUNQUILL_PANEL_URL=%s\nRUNQUILL_PANEL_GITHUB_CLIENT_ID=%s\nRUNQUILL_PANEL_GITHUB_CLIENT_SECRET=%s\n", origin, app.ClientID, app.ClientSecret)
+		}
 		newApp = true
 	default:
 		return nil, err

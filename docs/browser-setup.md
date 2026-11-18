@@ -9,12 +9,14 @@ sh install.sh --wizard --dir ./runquill
 With downloaded release files, run `./runquill wizard` in the installation directory. A source-built binary can run from the source checkout using its local Docker images. For a remote host, forward the printed port over SSH. Keep the setup URL private. The wizard listens on loopback for one hour.
 
 1. Select Docker Compose or a K3s context, personal or organization ownership, and repository access.
-2. Approve registration and installation on GitHub. The wizard saves the generated key and environment locally and detects the installation.
-3. Register a panel OAuth App using the homepage and callback shown in the wizard. Enter its credentials and the first administrator's GitHub user ID.
+2. Approve registration and installation on GitHub. The wizard registers the panel sign-in callback on the same App, saves its key and login credentials locally, and detects the installation.
+3. A personal installation automatically enrolls the GitHub account that owns the installation. For an organization, enter the first Runquill administrator's numeric GitHub user ID if prompted.
 4. Review the target and deploy. For K3s, place the matching release’s `runquill-k3s.yaml` in the installation directory and select a context authorized to create the bundled namespaces, RBAC, deployment and Secrets. The wizard checks for existing Runquill namespaces before a fresh deployment.
 5. Download the sample workflow, add it on GitHub and choose **Run workflow**. Follow discovery and runner cleanup in the operations panel.
 
 English and Korean are available in both screens. Administrator browser sessions can check repository access and download a queue-only backup. Restore uses an offline manager and the [recovery procedure](../README.md#back-up-and-recover-the-queue).
+
+When you add the panel to an older runner-only installation, the wizard can configure a separate OAuth App using the URLs on the setup page. Existing panel credentials can be reused.
 
 ## Tailscale
 
