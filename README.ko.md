@@ -207,6 +207,8 @@ docker compose exec manager runquill status
 
 GitHub에서 작업이 대기 중이라면 `docker compose exec manager runquill diagnose OWNER/REPO`로 원인을 확인할 수 있습니다. App의 접근 권한, 마지막 저장소 폴링 결과, 작업 라벨, 재시도 이유, 슬롯 부족을 함께 보여줍니다.
 
+큐 볼륨을 잃었거나 러너가 남아 있다면 `docker compose exec manager runquill gc --dry-run`으로 해당 컨테이너와 워커, 리스 상태를 확인합니다. 큐에 관련 작업 정보가 있으면 GitHub 작업 상태도 조회합니다. 큐나 워커가 응답하지 않으면 부분 조회임을 표시합니다.
+
 폴링은 매번 접근 가능한 비공개 저장소에서 대기 중과 실행 중인 워크플로를 확인하며, 최근 활동이 있는 저장소부터 조회합니다. 요청됨, 대기, 보류 상태는 저장소 목록이 유지되는 동안 성공한 네 번의 조회 안에 순환 확인합니다. 작업별 타이밍에는 첫 발견 경로와 러너 등록, GitHub가 제공한 작업 시작 시각이 표시됩니다. 발견 지연은 GitHub 작업 생성 시각을 제공한 경우에만 표시됩니다.
 
 로컬에서 대기열과 웹훅 테스트를 실행하려면 Go 1.26.11 이상에서 `go test -race ./...`를 사용합니다.

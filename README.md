@@ -202,6 +202,8 @@ Use `docker compose exec -T manager runquill status --json` for scripts and moni
 
 If GitHub shows a queued job that Runquill has not started, run `docker compose exec manager runquill diagnose OWNER/REPO`. It checks the App’s access using a repository-scoped read-only token, reports the last recorded poll, and explains invalid labels, retries, and worker capacity for queued jobs.
 
+Use `docker compose exec manager runquill gc --dry-run` to inventory labelled runner containers without a matching queue lease. It shows the Docker host and state, checks GitHub when the queue contains the associated job, and reports incomplete inventory when a host or queue is unavailable. The command only reads containers and queue data.
+
 - `RUNQUILL_MAX_RUNNERS` defaults to 2. Provisioning failures retry after 15 seconds and allow later jobs to use available slots. GitHub fails self-hosted jobs that remain queued for more than 24 hours. [GitHub runner routing](https://docs.github.com/en/actions/reference/runners/self-hosted-runners#routing-precedence-for-self-hosted-runners)
 - `docker compose logs -f manager` shows admissions, cleanup, and API errors. The GitHub workflow retains step output as usual.
 - Preserve the Compose `queue` volume during upgrades, including upgrades from the original Python version. For published images, update both tags and repeat the pull commands. A manager restart continues tracking existing runners.

@@ -21,7 +21,7 @@ var version = "dev"
 func main() {
 	showVersion := flag.Bool("version", false, "print the Runquill version")
 	flag.Usage = func() {
-		fmt.Fprintln(flag.CommandLine.Output(), "Usage: runquill [--version] | runquill setup [--webhook-url URL] | runquill doctor [--repo OWNER/REPO] | runquill diagnose OWNER/REPO | runquill status [--json] | runquill host {cordon|uncordon} HOST")
+		fmt.Fprintln(flag.CommandLine.Output(), "Usage: runquill [--version] | runquill setup [--webhook-url URL] | runquill doctor [--repo OWNER/REPO] | runquill diagnose OWNER/REPO | runquill status [--json] | runquill gc --dry-run | runquill host {cordon|uncordon} HOST")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -74,6 +74,20 @@ func main() {
 		}
 		if err := setHostCordon(ctx, os.Stdout, flag.Arg(2), action == "cordon"); err != nil {
 			slog.Error("runquill host", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if flag.Arg(0) == "gc" {
+		flags := flag.NewFlagSet("runquill gc", flag.ExitOnError)
+		dryRun := flags.Bool("dry-run", false, "inspect runners and leases without changes")
+		flags.Parse(flag.Args()[1:])
+		if !*dryRun || flags.NArg() != 0 {
+			flags.Usage()
+			os.Exit(2)
+		}
+		if err := gc(ctx, os.Stdout); err != nil {
+			slog.Error("runquill gc", "error", err)
 			os.Exit(1)
 		}
 		return
