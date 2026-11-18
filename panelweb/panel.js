@@ -6,12 +6,39 @@ const text = (id, value) => { el(id).textContent = tr(value); };
 const demoMode = document.body.dataset.mode === "demo";
 const viewButtons = document.querySelectorAll("[data-view]");
 const demoButtons = document.querySelectorAll("[data-scenario]");
+const themeControls = document.querySelectorAll("[data-theme-control]");
+const navLinks = [...document.querySelectorAll(".sidebar nav a")];
 let view = "active";
 let selected = null;
 let current = null;
 let refreshError = false;
 let management = null;
 let user = null;
+
+function applyTheme(choice) {
+  const theme = choice === "light" || choice === "dark" ? choice : "system";
+  document.body.dataset.panelTheme = theme;
+  for (const control of themeControls) control.value = theme;
+}
+
+let savedTheme;
+try { savedTheme = localStorage.getItem("runquill-login-theme"); } catch {}
+applyTheme(savedTheme);
+for (const control of themeControls) {
+  control.addEventListener("change", () => {
+    applyTheme(control.value);
+    try { localStorage.setItem("runquill-login-theme", control.value); } catch {}
+  });
+}
+
+function highlightNavigation() {
+  const active = navLinks.find((link) => !link.hidden && link.hash === location.hash) || navLinks[0];
+  for (const link of navLinks) link.removeAttribute("aria-current");
+  active.setAttribute("aria-current", "location");
+}
+
+highlightNavigation();
+window.addEventListener("hashchange", highlightNavigation);
 
 function node(tag, value, css) {
   const result = document.createElement(tag);
@@ -57,6 +84,7 @@ function badge(status, label = status) {
 
 function renderHosts(hosts) {
   const target = el("host-rows");
+  const previouslyFocused = document.activeElement?.dataset.worker;
   target.replaceChildren();
   if (!hosts?.length) {
     target.append(node("p", "No host observations yet.", "empty"));
@@ -80,6 +108,7 @@ function renderHosts(hosts) {
     if (user && user.role !== "viewer") {
       const control = node("button", host.cordoned ? "Resume assignments" : "Pause assignments", "button host-control");
       control.type = "button";
+      control.dataset.worker = host.name;
       control.setAttribute("aria-label", tr("{action} on {host}", { action: control.textContent, host: host.name }));
       control.addEventListener("click", async () => {
         control.disabled = true;
@@ -89,6 +118,7 @@ function renderHosts(hosts) {
       row.append(control);
     }
     target.append(row);
+    if (previouslyFocused === host.name) row.querySelector(".host-control")?.focus({ preventScroll: true });
   }
 }
 
@@ -189,7 +219,7 @@ function render() {
   if (!notice && current.poll_failed) notice = "The latest GitHub poll failed. Check the manager logs.";
   el("notice").hidden = !notice;
   text("notice", notice || "");
-  text("updated", demoMode ? "Sample data" : current.sampled_at ? tr("Observed {time}", { time: relative(current.sampled_at).toLowerCase() }) : "Awaiting first snapshot");
+  text("updated", current.sampled_at ? tr("Observed {time}", { time: relative(current.sampled_at).toLowerCase() }) : "Awaiting first snapshot");
   el("update-dot").dataset.tone = notice ? "warn" : current.sampled_at ? "ok" : "";
 
   const scope = fleet?.repository_scope;
@@ -271,8 +301,10 @@ if (demoMode) {
   for (const button of demoButtons) button.addEventListener("click", () => scenario(button.dataset.scenario));
   scenario("first");
 } else {
-  text("intro", "Track job discovery, runner capacity and cleanup.");
   management = await import("./manage.js");
   user = await management.initializeManagement();
-  if (user) refresh();
+  if (user) {
+    highlightNavigation();
+    refresh();
+  }
 }

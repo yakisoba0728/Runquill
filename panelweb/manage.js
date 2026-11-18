@@ -1,19 +1,6 @@
 import { language, tr } from "./i18n.js";
 
 const byID = (id) => document.getElementById(id);
-const loginTheme = byID("login-theme");
-
-try {
-  const saved = localStorage.getItem("runquill-login-theme");
-  if (saved === "light" || saved === "dark") loginTheme.value = saved;
-} catch {
-  // The theme still works for this page when storage is unavailable.
-}
-document.body.dataset.loginTheme = loginTheme.value;
-loginTheme.addEventListener("change", () => {
-  document.body.dataset.loginTheme = loginTheme.value;
-  try { localStorage.setItem("runquill-login-theme", loginTheme.value); } catch {}
-});
 byID("login-host").textContent = location.host;
 
 export async function panelRequest(path, method = "GET", data, timeout = 7000) {
