@@ -187,6 +187,20 @@ runs-on: ${{ format('runquill-{0}-{1}-test-{2}', github.run_id, github.run_attem
 
 ## 대기열과 작업 환경
 
+### 읽기 전용 웹 패널
+
+소스 체크아웃에서 `go run . panel --demo`를 실행하거나 빌드한 바이너리로 `./runquill panel --demo`를 실행합니다. [localhost:8081](http://127.0.0.1:8081/)에서 첫 작업 정리, 웹훅 누락 후 복구, 워커 오프라인 시나리오를 볼 수 있습니다. `panelweb/` 디렉터리를 정적 호스팅에 올려 같은 샘플 데모를 제공할 수도 있습니다.
+
+내 서버의 상태를 보려면 패널 오버레이로 매니저를 빌드합니다. 패널은 로컬 8081 포트에 열리고 기존 8080 포트에서는 GitHub 웹훅과 헬스 체크가 동작합니다.
+
+```sh
+RUNQUILL_MANAGER_IMAGE=runquill-manager:local docker compose -f compose.yaml -f compose.panel.yaml up -d --build
+```
+
+[localhost:8081](http://127.0.0.1:8081/)로 접속합니다. 원격 서버에는 `ssh -L 8081:127.0.0.1:8081 user@server`처럼 SSH 터널을 사용합니다. 멀티 서버 설치에는 `-f compose.ssh.yaml`도 함께 전달합니다. 매니저 바이너리를 직접 띄운다면 `RUNQUILL_PANEL_ADDR=127.0.0.1:8081`을 설정합니다. 패널에서 관측 시각, 최근 러너 정리 기록과 첫 작업 체크리스트를 확인할 수 있습니다. 패널에는 로그인 기능이 없으므로 로컬 포트로 유지하고, 공개 HTTPS는 웹훅 서비스에 연결하세요.
+
+### 슬롯과 상태 확인
+
 - `RUNQUILL_MAX_RUNNERS`가 전체 저장소의 동시 실행 수를 정합니다. 정원이 차면 SQLite에 대기하고, 빈자리가 나면 작업을 발견한 순서대로 러너를 생성합니다. 생성에 실패한 작업은 기본 15초 뒤 재시도합니다. 재시도 시간 동안 다음 작업이 빈자리를 사용할 수 있습니다.
 - GitHub는 러너를 24시간 넘게 기다린 작업을 실패 처리합니다. [GitHub 러너 배정 규칙](https://docs.github.com/en/actions/reference/runners/self-hosted-runners#routing-precedence-for-self-hosted-runners)
 - 러너는 저장소 범위의 일회용 JIT 러너입니다. 작업마다 새 컨테이너와 내부 Docker 데몬이 생기므로 `docker build`, `services:`, `container:`를 사용할 수 있습니다. 작업이 끝나면 컨테이너와 내부 이미지, 볼륨, 작업 디렉터리가 삭제됩니다.

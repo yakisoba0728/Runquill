@@ -8,3 +8,7 @@
 !examples/
 examples/*
 !examples/runquill-first-job.yml
+!panelweb/
+!panelweb/*.html
+!panelweb/*.css
+!panelweb/*.js

@@ -31,7 +31,7 @@ func TestWebhook(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(q.close)
-	handler := webhook(q, "owner", []byte("secret"))
+	handler := webhook(q, "owner", []byte("secret"), nil)
 
 	for _, test := range []struct {
 		id      int64
@@ -188,7 +188,8 @@ func TestSchedulerRestoresLeasesAndMaintainsFIFO(t *testing.T) {
 		{Name: worker, Containers: workerRunners},
 	}}
 	gh := &github{base: api.URL, client: api.Client(), key: key, appID: "123", owner: "owner"}
-	s := &scheduler{queue: q, github: gh, runtime: runtime, limit: 2}
+	panel := newPanel(config{})
+	s := &scheduler{queue: q, github: gh, runtime: runtime, limit: 2, panel: panel}
 	for _, id := range []int64{70, 20, 40} {
 		j := job{id: id, repository: "owner/repo", repositoryID: 2, installationID: 1,
 			route: fmt.Sprintf("runquill-17-1-ci-%d", id)}
@@ -222,6 +223,10 @@ func TestSchedulerRestoresLeasesAndMaintainsFIFO(t *testing.T) {
 	if err := s.tick(ctx, now); err != nil || len(runtime.started) != 2 {
 		t.Fatalf("after restart with offline worker: started %v, error %v", runtime.started, err)
 	}
+	report := panel.snapshot.Fleet
+	if report == nil || report.Runners == nil || report.Runners.ReservedSlots != 1 || report.Runners.OfflineHosts != 1 {
+		t.Fatalf("panel failed to report the reserved offline slot: %+v", report)
+	}
 	if err := q.advance(ctx, 70, completed, now); err != nil {
 		t.Fatal(err)
 	}
@@ -241,6 +246,10 @@ func TestSchedulerRestoresLeasesAndMaintainsFIFO(t *testing.T) {
 	if err := s.tick(ctx, now.Add(completionGrace)); err != nil || deleted.Load() != 3 ||
 		!slices.Equal(runtime.removed, []string{finished, runtime.started[1]}) {
 		t.Fatalf("cleanup after reconnection: removed %v, deletes=%d, error=%v", runtime.removed, deleted.Load(), err)
+	}
+	recent := panel.snapshot.Recent
+	if len(recent) != 2 || recent[0].ID != 20 || recent[0].RunnerHost != worker || recent[0].CleanedAt == nil {
+		t.Fatalf("panel failed to preserve the worker cleanup: %+v", recent)
 	}
 
 	t.Setenv("RUNQUILL_DB", path)

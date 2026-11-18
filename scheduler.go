@@ -30,11 +30,15 @@ type scheduler struct {
 	runtime    runnerRuntime
 	limit      int
 	hostLimits map[string]int
+	panel      *panelState
 }
 
 func (s *scheduler) tick(ctx context.Context, now time.Time) error {
 	snapshots, err := s.runtime.snapshot(ctx)
 	if err != nil {
+		if s.panel != nil && ctx.Err() == nil {
+			s.panel.capture(ctx, s.queue, nil, 0, s.limit, err)
+		}
 		return err
 	}
 	active, err := s.queue.jobs(ctx, "WHERE runner_name IS NOT NULL")
@@ -62,6 +66,9 @@ func (s *scheduler) tick(ctx context.Context, now time.Time) error {
 	}
 
 	hosts, occupied := fleetCapacity(snapshots, states, active, s.hostLimits, s.limit)
+	if s.panel != nil {
+		s.panel.capture(ctx, s.queue, hosts, occupied, s.limit, nil)
+	}
 	for _, host := range hosts {
 		occupied += host.Occupied
 	}
@@ -344,9 +351,11 @@ func (s *scheduler) reconcile(ctx context.Context, j job, containers map[string]
 	}
 	_, err := s.queue.ExecContext(ctx, `UPDATE jobs SET runner_name = NULL, runner_host = NULL, runner_id = NULL,
         launched_at = NULL, retry_at = ?,
+        runner_cleaned_at = CASE WHEN phase = ? THEN max(changed_at, ?) END,
+        runner_cleaned_host = CASE WHEN phase = ? THEN runner_host END,
         retry_reason = CASE WHEN phase = ? THEN coalesce(nullif(retry_reason, ''),
             'runner became unavailable while the job was queued') ELSE '' END
-        WHERE job_id = ?`, now.Add(retryDelay).Unix(), queued, j.id)
+        WHERE job_id = ?`, now.Add(retryDelay).Unix(), completed, time.Now().Unix(), completed, queued, j.id)
 	if err != nil {
 		return err
 	}

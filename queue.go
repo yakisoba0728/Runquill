@@ -107,6 +107,8 @@ func (q *queue) migrate() error {
 		{"provisioned_at", "INTEGER"},
 		{"github_started_at", "INTEGER"},
 		{"discovery_source", "TEXT"},
+		{"runner_cleaned_at", "INTEGER"},
+		{"runner_cleaned_host", "TEXT"},
 	} {
 		present, err := hasJobColumn(context.Background(), q.DB, column.name)
 		if err != nil {
@@ -132,7 +134,10 @@ func (q *queue) migrate() error {
         last_error TEXT NOT NULL,
         PRIMARY KEY (installation_id, repository_id)
     );
-    CREATE INDEX IF NOT EXISTS jobs_recent ON jobs(installation_id, changed_at)`)
+    CREATE INDEX IF NOT EXISTS jobs_recent ON jobs(installation_id, changed_at);
+    CREATE INDEX IF NOT EXISTS jobs_cleaned ON jobs(runner_cleaned_at) WHERE runner_cleaned_at IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS jobs_first_workflow ON jobs(runner_cleaned_at)
+        WHERE route GLOB '*-first-job'`)
 	return err
 }
 

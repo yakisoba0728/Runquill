@@ -189,6 +189,20 @@ The example pins both actions to exact commits, uses read-only repository permis
 
 ## Operate and upgrade
 
+### Read-only web panel
+
+Start a sample fleet with `go run . panel --demo` from a source checkout, or `./runquill panel --demo` with the compiled binary. Open [localhost:8081](http://127.0.0.1:8081/) and switch between first-job cleanup, webhook recovery and an offline worker. A static host can serve `panelweb/` as a standalone demo with the same sample data.
+
+To show your own fleet, build the manager with the panel overlay. The overlay publishes the dashboard on loopback port 8081. The existing port 8080 continues to serve GitHub webhooks and the health check.
+
+```sh
+RUNQUILL_MANAGER_IMAGE=runquill-manager:local docker compose -f compose.yaml -f compose.panel.yaml up -d --build
+```
+
+Open [localhost:8081](http://127.0.0.1:8081/). For a remote server, use an SSH tunnel such as `ssh -L 8081:127.0.0.1:8081 user@server`. For multi-host Compose installs, include `-f compose.ssh.yaml` as well. For a manager run directly, set `RUNQUILL_PANEL_ADDR=127.0.0.1:8081` before starting it. The panel reports recent observations and the jobs whose runner cleanup was confirmed. It has no sign-in, so keep the panel port on loopback and configure public HTTPS forwarding only for the webhook service.
+
+### Status and upgrades
+
 ```sh
 docker compose exec manager runquill status
 ```

@@ -51,7 +51,7 @@ type workflowEvent struct {
 	} `json:"installation"`
 }
 
-func webhook(q *queue, owner string, secret []byte) http.Handler {
+func webhook(q *queue, owner string, secret []byte, panel *panelState) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		if err := q.PingContext(r.Context()); err != nil {
@@ -99,6 +99,9 @@ func webhook(q *queue, owner string, secret []byte) http.Handler {
 					slog.Error("save webhook", "job", job.id, "error", err)
 					w.WriteHeader(http.StatusServiceUnavailable)
 					return
+				}
+				if panel != nil {
+					panel.markWebhook(time.Now())
 				}
 				if job.phase == queued {
 					slog.Info("queued job received", "source", "webhook", "repository", job.repository, "job", job.id, "added", changed)

@@ -21,6 +21,7 @@ type poller struct {
 	installationID int64
 	token          installationToken
 	cache          map[string]pollPage
+	panel          *panelState
 }
 
 type pollPage struct {
@@ -36,6 +37,9 @@ func (p *poller) run(ctx context.Context, interval time.Duration) {
 		err := p.sweep(ctx)
 		if ctx.Err() != nil {
 			return
+		}
+		if p.panel != nil {
+			p.panel.markPoll(time.Now(), err == nil)
 		}
 		var apiErr *githubError
 		if errors.As(err, &apiErr) && !apiErr.retryAt.IsZero() {

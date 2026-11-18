@@ -103,7 +103,7 @@ func TestPollerFindsQueuedJobsInActiveRunsAndDeduplicatesWebhooks(t *testing.T) 
 	res := httptest.NewRecorder()
 	pollResult := make(chan error, 1)
 	go func() { pollResult <- p.sweep(t.Context()) }()
-	webhook(q, "owner", secret).ServeHTTP(res, req)
+	webhook(q, "owner", secret, nil).ServeHTTP(res, req)
 	if err := <-pollResult; err != nil || res.Code != http.StatusAccepted {
 		t.Fatalf("poll error: %v, webhook status: %d", err, res.Code)
 	}

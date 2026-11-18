@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Runquill's read-only panel for GitHub Actions jobs, runner capacity and first-job setup.">
+  <title>Runquill · Runner overview</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="./panel.css">
+  <script src="./panel.js" type="module"></script>
+</head>
+<body data-mode="demo">
+  <a class="skip" href="#overview">Skip to overview</a>
+  <header class="topbar">
+    <div class="frame topbar-inner">
+      <a class="wordmark" href="#overview"><span class="mark" aria-hidden="true"></span>runquill<span class="wordmark-divider">/</span><span class="product">Panel</span></a>
+      <nav aria-label="Panel"><a href="#overview">Overview</a><a href="#first-job">First job setup</a></nav>
+      <span id="mode" class="mode">Sample fleet</span>
+    </div>
+  </header>
+  <main class="frame" id="overview">
+    <header class="page-head">
+      <div>
+        <p class="micro">GitHub Actions</p>
+        <h1>Runner overview<span>.</span></h1>
+        <p id="intro">See how Runquill discovers, runs and cleans up jobs.</p>
+      </div>
+      <div class="updated"><span class="signal-dot" id="update-dot" aria-hidden="true"></span><span id="updated">Loading fleet</span></div>
+    </header>
+
+    <section id="demo-controls" class="demo-strip" aria-label="Demo scenarios" hidden>
+      <div><strong>Try a scenario</strong><p id="scenario-note"></p></div>
+      <div class="segments" aria-label="Choose a sample scenario">
+        <button data-scenario="first" aria-pressed="true">First job</button>
+        <button data-scenario="missed" aria-pressed="false">Webhook missed</button>
+        <button data-scenario="offline" aria-pressed="false">Worker offline</button>
+      </div>
+    </section>
+    <p id="notice" class="notice" role="status" hidden></p>
+
+    <dl class="metrics" aria-label="Fleet capacity">
+      <div><dt>Running</dt><dd id="running">—</dd><small>Observed running containers</small></div>
+      <div><dt>Waiting</dt><dd id="waiting">—</dd><small>Ready jobs in queue order</small></div>
+      <div><dt>Used slots</dt><dd id="slots">—</dd><small id="slot-note">Used and reserved capacity</small></div>
+      <div><dt>Healthy hosts</dt><dd id="healthy">—</dd><small id="host-note">Reachable and ready</small></div>
+    </dl>
+
+    <div class="columns">
+      <section class="surface jobs" aria-labelledby="jobs-title">
+        <div class="section-head">
+          <div><h2 id="jobs-title">Jobs</h2><p id="jobs-summary">Check queue position and runner state.</p></div>
+          <div class="segments" aria-label="Choose a job list">
+            <button data-view="active" aria-pressed="true">Active</button>
+            <button data-view="recent" aria-pressed="false">Cleaned up</button>
+          </div>
+        </div>
+        <div id="job-table" class="table-scroll">
+          <table>
+            <thead><tr><th scope="col">Repository / job</th><th scope="col">State</th><th scope="col">Host</th></tr></thead>
+            <tbody id="job-rows"></tbody>
+          </table>
+          <p class="empty" id="job-empty">Waiting for a fleet snapshot…</p>
+        </div>
+        <div id="job-details" class="job-details" hidden>
+          <div class="detail-head"><h3 id="detail-title">Job details</h3><a id="detail-link" target="_blank" rel="noopener noreferrer" hidden>Open in GitHub ↗</a></div>
+          <p id="detail-reason"></p>
+          <ol id="detail-timeline" class="timeline" aria-label="Observed job events"></ol>
+        </div>
+      </section>
+      <aside class="side">
+        <section class="surface" aria-labelledby="hosts-title">
+          <div class="section-head"><div><h2 id="hosts-title">Hosts</h2><p>Capacity by Docker engine</p></div></div>
+          <div id="host-rows" class="host-rows"><p class="empty">Waiting for a fleet snapshot…</p></div>
+        </section>
+        <section class="surface" aria-labelledby="signals-title">
+          <div class="section-head"><div><h2 id="signals-title">GitHub connection</h2><p>Observed delivery and polling</p></div></div>
+          <dl class="signals">
+            <div><dt>App connection</dt><dd id="app-signal">Awaiting evidence</dd></div>
+            <div><dt>Last matched webhook</dt><dd id="webhook-signal">—</dd></div>
+            <div><dt>Last successful poll</dt><dd id="poll-signal">—</dd></div>
+          </dl>
+        </section>
+      </aside>
+    </div>
+
+    <section class="surface first-job" id="first-job" aria-labelledby="first-job-title">
+      <div class="section-head">
+        <div><h2 id="first-job-title">First job setup</h2><p id="check-summary">Follow your first Runquill workflow from GitHub to cleanup.</p></div>
+        <a class="guide" href="https://github.com/yakisoba0728/Runquill#verify-your-first-job" target="_blank" rel="noopener noreferrer">Setup guide ↗</a>
+      </div>
+      <ol class="checklist">
+        <li><span class="check" data-check="app" aria-hidden="true"></span><div><h3>Connect the GitHub App</h3><p id="check-app">Run setup and install the App on your personal account.</p></div></li>
+        <li><span class="check" data-check="seen" aria-hidden="true"></span><div><h3>Run the first workflow</h3><p id="check-seen-instruction">In a private repository, run <code>runquill workflow init</code>. Commit the workflow and select <strong>Run workflow</strong> on GitHub.</p><p id="check-seen" hidden>Runquill discovered the first-job workflow.</p></div></li>
+        <li><span class="check" data-check="clean" aria-hidden="true"></span><div><h3>Confirm cleanup</h3><p id="check-clean">When the job finishes, Runquill removes its runner. Check the job result on GitHub.</p><a id="check-link" target="_blank" rel="noopener noreferrer" hidden>View first job on GitHub ↗</a></div></li>
+      </ol>
+    </section>
+  </main>
+  <footer class="frame footer"><span>Runquill</span><a href="https://github.com/yakisoba0728/Runquill" target="_blank" rel="noopener noreferrer">Source on GitHub ↗</a></footer>
+</body>
+</html>

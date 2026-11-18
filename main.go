@@ -21,7 +21,7 @@ var version = "dev"
 func main() {
 	showVersion := flag.Bool("version", false, "print the Runquill version")
 	flag.Usage = func() {
-		fmt.Fprintln(flag.CommandLine.Output(), "Usage: runquill [--version] | runquill setup [--webhook-url URL] | runquill workflow init | runquill doctor [--repo OWNER/REPO] | runquill status [--json] | runquill host {cordon|uncordon} HOST")
+		fmt.Fprintln(flag.CommandLine.Output(), "Usage: runquill [--version] | runquill setup [--webhook-url URL] | runquill workflow init | runquill doctor [--repo OWNER/REPO] | runquill status [--json] | runquill host {cordon|uncordon} HOST | runquill panel --demo")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -31,6 +31,21 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if flag.Arg(0) == "panel" {
+		flags := flag.NewFlagSet("runquill panel", flag.ExitOnError)
+		demo := flags.Bool("demo", false, "serve the panel with example data")
+		port := flags.Uint("port", 8081, "loopback HTTP port (0 selects a free port)")
+		flags.Parse(flag.Args()[1:])
+		if flags.NArg() != 0 || !*demo || *port > 65535 {
+			flags.Usage()
+			os.Exit(2)
+		}
+		if err := runPanelDemo(ctx, *port); err != nil {
+			slog.Error("runquill panel", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if flag.Arg(0) == "workflow" {
 		if flag.NArg() != 2 || flag.Arg(1) != "init" {
 			fmt.Fprintln(os.Stderr, "Usage: runquill workflow init")
@@ -203,10 +218,22 @@ func run(ctx context.Context) error {
 	}
 	defer q.close()
 
-	s := &scheduler{queue: q, github: api, runtime: runtime, limit: cfg.limit, hostLimits: hostLimits}
+	var panel *panelState
+	var panelServer *http.Server
+	var panelListener net.Listener
+	if addr := os.Getenv("RUNQUILL_PANEL_ADDR"); addr != "" {
+		panel = newPanel(cfg)
+		panelServer = panelHTTPServer(panel)
+		panelListener, err = net.Listen("tcp", addr)
+		if err != nil {
+			return fmt.Errorf("listen for panel: %w", err)
+		}
+		defer panelListener.Close()
+	}
+	s := &scheduler{queue: q, github: api, runtime: runtime, limit: cfg.limit, hostLimits: hostLimits, panel: panel}
 	server := &http.Server{
 		Addr:              net.JoinHostPort(env("RUNQUILL_BIND", "127.0.0.1"), env("RUNQUILL_PORT", "8080")),
-		Handler:           webhook(q, cfg.owner, []byte(cfg.secret)),
+		Handler:           webhook(q, cfg.owner, []byte(cfg.secret), panel),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       8 * time.Second,
 		WriteTimeout:      10 * time.Second,
@@ -219,14 +246,18 @@ func run(ctx context.Context) error {
 	}
 	slog.Info("Runquill listening", "address", listener.Addr(), "slots", cfg.limit, "version", version,
 		"webhook", cfg.secret != "", "poll_interval", cfg.pollInterval, "docker_hosts", len(runtime.hosts))
-	serverExit := make(chan error, 1)
+	serverExit := make(chan error, 2)
 	go func() { serverExit <- server.Serve(listener) }()
+	if panelServer != nil {
+		slog.Info("Runquill panel listening", "address", panelListener.Addr())
+		go func() { serverExit <- panelServer.Serve(panelListener) }()
+	}
 	workerCtx, stopWorker := context.WithCancel(ctx)
 	defer stopWorker()
 	var pollExit chan struct{}
 	if cfg.pollInterval > 0 {
 		pollExit = make(chan struct{})
-		p := &poller{github: api, queue: q, cache: make(map[string]pollPage)}
+		p := &poller{github: api, queue: q, cache: make(map[string]pollPage), panel: panel}
 		go func() {
 			defer close(pollExit)
 			p.run(workerCtx, cfg.pollInterval)
@@ -256,6 +287,12 @@ func run(ctx context.Context) error {
 	stopWorker()
 	shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	if panelServer != nil {
+		if err := panelServer.Shutdown(shutdown); err != nil {
+			panelServer.Close()
+			serveErr = errors.Join(serveErr, err)
+		}
+	}
 	if err := server.Shutdown(shutdown); err != nil {
 		server.Close()
 		serveErr = errors.Join(serveErr, err)

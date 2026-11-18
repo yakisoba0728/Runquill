@@ -4,6 +4,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY *.go ./
 COPY examples/runquill-first-job.yml ./examples/
+COPY panelweb/ ./panelweb/
 ARG TARGETOS
 ARG TARGETARCH
 ARG VERSION=dev
