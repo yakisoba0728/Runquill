@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -16,7 +17,8 @@ import (
 var sshName = regexp.MustCompile(`^[a-zA-Z0-9_][a-zA-Z0-9_.-]*$`)
 
 type dockerFleet struct {
-	hosts []docker
+	hosts   []docker
+	workers *workerFleet
 }
 
 type dockerHostSnapshot struct {
@@ -41,11 +43,18 @@ func newDockerFleet(image, hosts string) (*dockerFleet, error) {
 			fleet.hosts = append(fleet.hosts, docker{image: image})
 			continue
 		}
+		if name, agent := strings.CutPrefix(host, workerHostPrefix); agent {
+			if !workerPoolName.MatchString(name) {
+				return nil, errors.New("Docker worker hosts require agent://NAME with 1–32 lowercase letters, digits or hyphens")
+			}
+			fleet.hosts = append(fleet.hosts, docker{image: image, host: host})
+			continue
+		}
 		endpoint, err := url.Parse(host)
 		if err != nil || endpoint.Scheme != "ssh" ||
 			(!sshName.MatchString(endpoint.Hostname()) && net.ParseIP(endpoint.Hostname()) == nil) ||
 			endpoint.Path != "" || strings.ContainsAny(host, "?#") {
-			return nil, errors.New("RUNQUILL_DOCKER_HOSTS must be a comma-separated list of local or ssh://[user@]host[:port]")
+			return nil, errors.New("RUNQUILL_DOCKER_HOSTS must be a comma-separated list of local, ssh://[user@]host[:port] or agent://name")
 		}
 		if endpoint.User != nil {
 			if _, hasPassword := endpoint.User.Password(); hasPassword || !sshName.MatchString(endpoint.User.Username()) {
@@ -54,6 +63,11 @@ func newDockerFleet(image, hosts string) (*dockerFleet, error) {
 		}
 		fleet.hosts = append(fleet.hosts, docker{image: image, host: host})
 	}
+	workers, err := loadWorkerFleet(fleet.hosts, os.Getenv("RUNQUILL_WORKER_AUTH_FILE"))
+	if err != nil {
+		return nil, err
+	}
+	fleet.workers = workers
 	return fleet, nil
 }
 
@@ -61,7 +75,13 @@ func (f *dockerFleet) prepare(ctx context.Context) error {
 	engines := make(map[string]bool, len(f.hosts))
 	for _, host := range f.hosts {
 		if len(f.hosts) > 1 {
-			id, err := host.engineID(ctx)
+			var id string
+			var err error
+			if name := host.agentName(); name != "" {
+				id = f.workers.hosts[name].authority.Engine
+			} else {
+				id, err = host.engineID(ctx)
+			}
 			if err != nil {
 				return err
 			}
@@ -69,6 +89,9 @@ func (f *dockerFleet) prepare(ctx context.Context) error {
 				return errors.New("each configured Docker host must identify a distinct engine")
 			}
 			engines[id] = true
+		}
+		if host.agentName() != "" {
+			continue
 		}
 		if err := host.checkRunnerImage(ctx); err != nil {
 			return err
@@ -109,6 +132,11 @@ func (f *dockerFleet) snapshot(ctx context.Context) ([]dockerHostSnapshot, error
 			ctx, cancel := context.WithTimeout(ctx, dockerHostProbeTimeout)
 			defer cancel()
 			result := &hosts[i]
+			if name := host.agentName(); name != "" {
+				engineIDs[i] = f.workers.hosts[name].authority.Engine
+				*result = f.workers.snapshot(ctx, host)
+				return
+			}
 			result.Name, result.Pool = host.label(), host.pool
 			if len(f.hosts) > 1 {
 				engineIDs[i], result.Err = host.engineID(ctx)
@@ -159,6 +187,10 @@ func (f *dockerFleet) startOn(ctx context.Context, target, name, jit string) err
 	if err != nil {
 		return err
 	}
+	if host.agentName() != "" {
+		return f.workers.execute(ctx, host, workerTask{Operation: "start", Name: name, JIT: jit,
+			Image: host.image, CPUs: host.cpus, MemoryMiB: host.memoryMiB})
+	}
 	return host.start(ctx, name, jit)
 }
 
@@ -166,6 +198,9 @@ func (f *dockerFleet) removeOn(ctx context.Context, target, name string) error {
 	host, err := f.host(target)
 	if err != nil {
 		return err
+	}
+	if host.agentName() != "" {
+		return f.workers.execute(ctx, host, workerTask{Operation: "remove", Name: name})
 	}
 	return host.remove(ctx, name)
 }
@@ -194,4 +229,12 @@ func (d docker) label() string {
 		return "local"
 	}
 	return d.host
+}
+
+func (d docker) agentName() string {
+	name, ok := strings.CutPrefix(d.host, workerHostPrefix)
+	if !ok {
+		return ""
+	}
+	return name
 }

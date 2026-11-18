@@ -21,7 +21,7 @@ var version = "dev"
 func main() {
 	showVersion := flag.Bool("version", false, "print the Runquill version")
 	flag.Usage = func() {
-		fmt.Fprintln(flag.CommandLine.Output(), "Usage: runquill [--version] | runquill setup | runquill workflow init | runquill doctor | runquill diagnose OWNER/REPO | runquill status [--json] | runquill gc --dry-run | runquill host {cordon|uncordon} HOST | runquill panel --demo | runquill backup --output FILE | runquill restore (--from FILE | --activate)")
+		fmt.Fprintln(flag.CommandLine.Output(), "Usage: runquill [--version] | runquill setup | runquill workflow init | runquill doctor | runquill diagnose OWNER/REPO | runquill status [--json] | runquill gc --dry-run | runquill host {cordon|uncordon} HOST | runquill panel --demo | runquill worker | runquill backup --output FILE | runquill restore (--from FILE | --activate)")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -31,6 +31,13 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if flag.Arg(0) == "worker" {
+		if err := workerCommand(ctx, flag.Args()[1:]); err != nil && !errors.Is(err, flag.ErrHelp) {
+			slog.Error("runquill worker", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if flag.Arg(0) == "panel" {
 		flags := flag.NewFlagSet("runquill panel", flag.ExitOnError)
 		demo := flags.Bool("demo", false, "serve the panel with example data")
@@ -266,6 +273,15 @@ func run(ctx context.Context) error {
 		return err
 	}
 	defer q.close()
+	var workerAgents *workerFleet
+	if fleet, ok := runners.runtime.(*dockerFleet); ok {
+		workerAgents = fleet.workers
+		if workerAgents != nil {
+			if err := workerAgents.attach(ctx, q.DB); err != nil {
+				return err
+			}
+		}
+	}
 
 	var panel *panelState
 	var panelServer *http.Server
@@ -299,7 +315,7 @@ func run(ctx context.Context) error {
 	}
 	server := &http.Server{
 		Addr:              net.JoinHostPort(env("RUNQUILL_BIND", "127.0.0.1"), env("RUNQUILL_PORT", "8080")),
-		Handler:           webhook(q, api, []byte(cfg.secret), panel),
+		Handler:           workerAgents.route(webhook(q, api, []byte(cfg.secret), panel)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       8 * time.Second,
 		WriteTimeout:      10 * time.Second,

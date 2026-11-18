@@ -27,6 +27,7 @@ type docker struct {
 	image     string
 	host      string
 	pool      string
+	worker    string
 	cpus      float64
 	memoryMiB int64
 }
@@ -63,7 +64,11 @@ func dockerCommand(ctx context.Context, input []byte, args ...string) (string, e
 }
 
 func (d docker) containers(ctx context.Context) (map[string]string, error) {
-	output, err := d.command(ctx, nil, "ps", "-a", "--filter", "label="+runnerLabel, "--format", "{{.Names}}\t{{.State}}")
+	args := []string{"ps", "-a", "--filter", "label=" + runnerLabel}
+	if d.worker != "" {
+		args = append(args, "--filter", "label="+workerLabel+"="+d.worker)
+	}
+	output, err := d.command(ctx, nil, append(args, "--format", "{{.Names}}\t{{.State}}")...)
 	if err != nil {
 		return nil, err
 	}
@@ -85,6 +90,9 @@ func (d docker) start(ctx context.Context, name, jit string) error {
 	args := []string{"create", "--name", name, "--label", runnerLabel,
 		"--pull", "never", "--init", "--privileged", "--cgroupns", "private", "--log-driver", "json-file",
 		"--log-opt", "max-size=10m", "--log-opt", "max-file=2"}
+	if d.worker != "" {
+		args = append(args, "--label", workerLabel+"="+d.worker)
+	}
 	if d.cpus != 0 {
 		args = append(args, "--cpus", strconv.FormatFloat(d.cpus, 'f', -1, 64))
 	}

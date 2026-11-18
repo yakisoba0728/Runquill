@@ -28,3 +28,7 @@ for name in "$binary" compose.yaml compose.ssh.yaml compose.panel.yaml runquill-
 done
 grep -Fq "image: ghcr.io/yakisoba0728/runquill:$tag" installed/runquill-k3s.yaml
 grep -Fq "value: ghcr.io/yakisoba0728/runquill-runner:$tag" installed/runquill-k3s.yaml
+
+if awk '$2 == "compose.worker.yaml" {found=1} END {exit !found}' SHA256SUMS; then
+    awk '$2 == "compose.worker.yaml" {print $1 "  installed/" $2}' SHA256SUMS | sha256sum -c -
+fi

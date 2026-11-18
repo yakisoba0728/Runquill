@@ -107,7 +107,11 @@ func checkDockerFleet(ctx context.Context, image string, report func(string, err
 			if len(fleet.hosts) > 1 || target.host != "" {
 				targetReport = func(name string, err error) { report(target.label()+" "+name, err) }
 			}
-			checkDocker(ctx, target, targetReport)
+			if target.agentName() != "" {
+				targetReport("worker connection and runner image", fleet.workers.snapshot(ctx, target).Err)
+			} else {
+				checkDocker(ctx, target, targetReport)
+			}
 		}
 		if len(fleet.hosts) > 1 && poolErr == nil {
 			report("distinct Docker hosts with runner images", fleet.prepare(ctx))

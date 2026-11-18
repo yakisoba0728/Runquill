@@ -201,6 +201,8 @@ docker compose -f compose.yaml -f compose.ssh.yaml exec manager runquill status
 docker compose -f compose.yaml -f compose.ssh.yaml exec manager runquill host uncordon ssh://builder@worker.example.com
 ```
 
+For workers behind NAT, add [outbound Docker workers](docs/outbound-workers.md) that connect over HTTPS.
+
 ### Route jobs to worker pools
 
 Set `RUNQUILL_WORKER_POOLS` to a JSON object in `.env` to opt in. The keys are pool names and `hosts` are exact entries from `RUNQUILL_DOCKER_HOSTS`. A host belongs to one pool. Unlisted hosts belong to `default`. Pool settings can apply to `default` too.

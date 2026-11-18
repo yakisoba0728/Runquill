@@ -1,0 +1,11 @@
+services:
+  manager:
+    environment:
+      RUNQUILL_WORKER_AUTH_FILE: /run/secrets/runquill-worker-auth
+      RUNQUILL_WORKER_PROXY_IP: "${RUNQUILL_WORKER_PROXY_IP:-}"
+    secrets:
+      - runquill-worker-auth
+
+secrets:
+  runquill-worker-auth:
+    file: "${RUNQUILL_WORKER_AUTH_FILE:?Set the worker authorization JSON path in .env}"

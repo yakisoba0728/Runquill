@@ -85,7 +85,7 @@ binary=runquill-linux-$arch
 url="$repo/releases/download/$tag"
 files='compose.yaml compose.ssh.yaml LICENSE'
 curl --proto '=https' --proto-redir '=https' -fsSL "$url/SHA256SUMS" -o "$scratch/SHA256SUMS"
-for optional in compose.panel.yaml runquill-k3s.yaml; do
+for optional in compose.panel.yaml compose.worker.yaml runquill-k3s.yaml; do
     if awk -v name="$optional" '$2 == name {found=1} END {exit !found}' "$scratch/SHA256SUMS"; then
         files="$files $optional"
     fi

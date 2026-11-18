@@ -175,6 +175,8 @@ tailscale funnel status
 
 ### Docker 작업 서버 추가
 
+NAT 뒤에 있는 워커는 [아웃바운드 워커](docs/outbound-workers.md)로 등록해 HTTPS로 매니저에 연결할 수 있습니다.
+
 매니저 한 대에서 로컬 Docker와 SSH로 연결한 여러 Docker 서버를 사용합니다. 각 서버는 Linux의 rootful Docker, cgroup v2, `RUNQUILL_RUNNER_IMAGE`에 해당하는 이미지, Docker 소켓에 접근할 수 있는 SSH 계정이 필요합니다.
 
 ```dotenv

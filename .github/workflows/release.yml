@@ -89,7 +89,7 @@ jobs:
               -o "release-assets/runquill-linux-$arch" .
           done
           test "$(release-assets/runquill-linux-amd64 --version)" = "$GITHUB_REF_NAME"
-          cp compose.yaml compose.ssh.yaml compose.panel.yaml install.sh LICENSE release-assets/
+          cp compose.yaml compose.ssh.yaml compose.panel.yaml compose.worker.yaml install.sh LICENSE release-assets/
           sed -e "s#ghcr.io/yakisoba0728/runquill:#$image:#" \
               -e "s#ghcr.io/yakisoba0728/runquill-runner:#$image-runner:#" \
               -e "s#:\(v[0-9][0-9.]*\)\$#:$GITHUB_REF_NAME#" \
