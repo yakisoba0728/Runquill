@@ -1,6 +1,20 @@
 import { language, tr } from "./i18n.js";
 
 const byID = (id) => document.getElementById(id);
+const loginTheme = byID("login-theme");
+
+try {
+  const saved = localStorage.getItem("runquill-login-theme");
+  if (saved === "light" || saved === "dark") loginTheme.value = saved;
+} catch {
+  // The theme still works for this page when storage is unavailable.
+}
+document.body.dataset.loginTheme = loginTheme.value;
+loginTheme.addEventListener("change", () => {
+  document.body.dataset.loginTheme = loginTheme.value;
+  try { localStorage.setItem("runquill-login-theme", loginTheme.value); } catch {}
+});
+byID("login-host").textContent = location.host;
 
 export async function panelRequest(path, method = "GET", data, timeout = 7000) {
   const response = await fetch(path, {
@@ -23,14 +37,16 @@ function message(id, value) {
 }
 
 export function showLogin(error) {
+  const wasAuthenticated = document.body.hasAttribute("data-authenticated");
   delete document.body.dataset.authenticated;
-  byID("sign-in").hidden = false;
+  document.title = tr("Sign in to Runquill");
   byID("access-nav").hidden = true;
   byID("signout").hidden = true;
-  byID("mode").textContent = tr("Sign-in required");
   byID("token-secret").value = "";
   byID("issued-token").hidden = true;
   message("login-message", error);
+  byID("sign-in").hidden = false;
+  if (wasAuthenticated) byID("login-title").focus();
 }
 
 function listItem(parent, title, details, button, action) {

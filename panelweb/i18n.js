@@ -6,9 +6,13 @@ const words = {
   "Manage access": "접근 관리",
   "Sample fleet": "샘플 러너",
   "Sign out": "로그아웃",
-  "Sign in to Runquill.": "Runquill에 로그인",
+  "Sign in to Runquill": "Runquill에 로그인",
   "Use the GitHub account your Runquill administrator enrolled.": "Runquill 관리자가 등록한 GitHub 계정으로 로그인하세요.",
-  "Continue with GitHub ↗": "GitHub로 로그인 ↗",
+  "Continue with GitHub": "GitHub로 로그인",
+  "Appearance": "화면 테마",
+  "System": "시스템",
+  "Light": "밝게",
+  "Dark": "어둡게",
   "Runner overview.": "러너 개요",
   "Runner overview": "러너 개요",
   "See how Runquill discovers, runs and cleans up jobs.": "작업 발견부터 실행과 정리까지 확인하세요.",
@@ -132,7 +136,6 @@ const words = {
   "Your session ended. Sign in again to view the fleet.": "세션이 종료되었습니다. 러너를 보려면 다시 로그인하세요.",
   "No snapshot is available yet. Runquill will try again.": "아직 수집된 상태가 없습니다. 다시 시도합니다.",
   "Request failed.": "요청에 실패했습니다.",
-  "Sign-in required": "로그인 필요",
   "No active API tokens": "활성 API 토큰 없음",
   "Create a token when a script needs access.": "스크립트에서 접근해야 한다면 토큰을 발급하세요.",
   "{scope} · expires {date}": "{scope} · {date} 만료",
@@ -248,10 +251,14 @@ export function tr(message, values = {}) {
 export function localizeDocument() {
   document.documentElement.lang = language;
   document.title = "Runquill · " + tr("Runner overview");
-  const toggle = document.getElementById("language-toggle");
-  toggle.href = language === "ko" ? "?lang=en" : "?lang=ko";
-  toggle.textContent = language === "ko" ? "English" : "한국어";
-  toggle.lang = language === "ko" ? "en" : "ko";
+  const alternate = language === "ko" ? "en" : "ko";
+  const target = new URL(location.href);
+  target.searchParams.set("lang", alternate);
+  for (const toggle of document.querySelectorAll(".language-toggle")) {
+    toggle.href = target;
+    toggle.textContent = alternate === "en" ? "English" : "한국어";
+    toggle.lang = alternate;
+  }
   if (language !== "ko") return;
   const tree = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
   for (let part = tree.nextNode(); part; part = tree.nextNode()) {

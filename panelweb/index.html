@@ -16,17 +16,36 @@
       <a class="wordmark" href="#overview"><span class="mark" aria-hidden="true"></span>runquill<span class="wordmark-divider">/</span><span class="product">Panel</span></a>
       <nav aria-label="Panel"><a href="#overview">Overview</a><a href="#first-job">First job setup</a><a id="access-nav" href="#access" hidden>Manage access</a></nav>
       <span id="mode" class="mode">Sample fleet</span>
-      <a id="language-toggle" class="language-toggle" href="?lang=ko" lang="ko">한국어</a>
+      <a class="language-toggle" href="?lang=ko" lang="ko">한국어</a>
       <button class="signout" id="signout" type="button" hidden>Sign out</button>
     </div>
   </header>
-  <main class="frame" id="sign-in" hidden>
-    <section class="surface signin">
-      <h1>Sign in to Runquill<span>.</span></h1>
-      <p>Use the GitHub account your Runquill administrator enrolled.</p>
-      <a class="button primary" href="./auth/github">Continue with GitHub ↗</a>
-      <p id="login-message" role="status" hidden></p>
+  <main class="login" id="sign-in" hidden>
+    <section class="login-card" aria-labelledby="login-title">
+      <header class="login-header">
+        <span class="wordmark"><span class="mark" aria-hidden="true"></span>runquill</span>
+        <div class="login-settings">
+          <a class="language-toggle" href="?lang=ko" lang="ko">한국어</a>
+          <select id="login-theme" aria-label="Appearance">
+            <option value="system">System</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+        </div>
+      </header>
+      <div class="login-content">
+        <h1 id="login-title" tabindex="-1">Sign in to Runquill</h1>
+        <p class="login-description">Use the GitHub account your Runquill administrator enrolled.</p>
+        <p id="login-message" role="status" hidden></p>
+        <a class="login-button" href="./auth/github">
+          <span>Continue with GitHub</span><span aria-hidden="true">↗</span>
+        </a>
+      </div>
     </section>
+    <footer class="login-footer">
+      <span id="login-host"></span>
+      <a href="https://github.com/yakisoba0728/Runquill" target="_blank" rel="noopener noreferrer">Source on GitHub ↗</a>
+    </footer>
   </main>
   <main class="frame" id="overview">
     <header class="page-head">
