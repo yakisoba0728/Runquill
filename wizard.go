@@ -267,6 +267,8 @@ func (web *setupWizard) render(w http.ResponseWriter, r *http.Request) {
 	if !view.K3s {
 		view.Target = "Docker Compose"
 	}
+	// Same-origin browser form submissions need a non-null Origin header.
+	w.Header().Set("Referrer-Policy", "same-origin")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = wizardHome.Execute(w, view)
 }

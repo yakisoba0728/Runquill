@@ -79,6 +79,9 @@ func TestBrowserWizardRunsSingleOriginThroughDeployment(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusOK && resp.Request.URL.Path == "/" && resp.Header.Get("Referrer-Policy") != "same-origin" {
+			t.Fatal("wizard forms must preserve the Origin header on same-origin submits")
+		}
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
 			t.Fatal(err)
@@ -107,6 +110,9 @@ func TestBrowserWizardRunsSingleOriginThroughDeployment(t *testing.T) {
 	}
 	if code, _ := request(http.MethodPost, "/start", "https://other.example", url.Values{"lang": {"ko"}}); code != http.StatusForbidden {
 		t.Fatalf("cross-origin setup returned %d", code)
+	}
+	if code, _ := request(http.MethodPost, "/start", "null", url.Values{"lang": {"ko"}}); code != http.StatusForbidden {
+		t.Fatalf("opaque-origin setup returned %d", code)
 	}
 	request(http.MethodPost, "/start", server.URL, url.Values{
 		"backend": {"docker"}, "repositories": {"selected"}, "lang": {"ko"},
