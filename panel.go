@@ -20,6 +20,7 @@ var panelAssets embed.FS
 
 type panelSnapshot struct {
 	Fleet         *statusReport    `json:"fleet"`
+	Inventory     []panelRunner    `json:"runner_inventory"`
 	Recent        []panelCompleted `json:"recent"`
 	SampledAt     *time.Time       `json:"sampled_at,omitempty"`
 	LastWebhook   *time.Time       `json:"last_webhook,omitempty"`
@@ -35,6 +36,7 @@ type panelCompleted struct {
 	ID         int64            `json:"id"`
 	Repository string           `json:"repository"`
 	RunnerHost string           `json:"runner_host,omitempty"`
+	Pool       string           `json:"pool,omitempty"`
 	URL        string           `json:"url,omitempty"`
 	Timing     *statusJobTiming `json:"timing,omitempty"`
 	FinishedAt *time.Time       `json:"finished_at,omitempty"`
@@ -87,26 +89,28 @@ func (p *panelState) capture(ctx context.Context, q *queue, hosts []hostCapacity
 		slog.Warn("read first job progress", "error", err)
 		return
 	}
-	recent, firstClean, err := readPanelCompleted(ctx, q, now)
+	recent, firstClean, err := readPanelCompleted(ctx, q, now, p.pools)
 	if err != nil {
 		slog.Warn("read panel job history", "error", err)
 		return
 	}
 	report := summarizeStatus(jobs, hosts, unassigned, limit, now)
 	report.configure(p.backend, p.repositoryScope, p.pools, jobs, hosts)
+	inventory := panelRunnerInventory(hosts, report.Jobs)
 	if probeErr != nil {
 		report.DockerError = "Runner host discovery failed. Check the manager logs."
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.snapshot.Fleet = &report
+	p.snapshot.Inventory = inventory
 	p.snapshot.Recent = recent
 	p.snapshot.SampledAt = &now
 	p.snapshot.FirstJobSeen = firstSeen
 	p.snapshot.FirstJobClean = firstClean
 }
 
-func readPanelCompleted(ctx context.Context, q *queue, now time.Time) ([]panelCompleted, *panelCompleted, error) {
+func readPanelCompleted(ctx context.Context, q *queue, now time.Time, pools workerPools) ([]panelCompleted, *panelCompleted, error) {
 	rows, err := q.QueryContext(ctx, `WITH relevant AS (
         SELECT job_id FROM (
             SELECT job_id FROM jobs WHERE runner_cleaned_at IS NOT NULL
@@ -138,8 +142,9 @@ func readPanelCompleted(ctx context.Context, q *queue, now time.Time) ([]panelCo
 			return nil, nil, err
 		}
 		j.phase = completed
+		pool, _ := pools.forJob(j)
 		record := panelCompleted{ID: j.id, Repository: j.repository, URL: jobURL(j),
-			RunnerHost: j.runnerHost, Timing: jobTiming(j, now),
+			RunnerHost: j.runnerHost, Pool: pool, Timing: jobTiming(j, now),
 			FinishedAt: statusTime(j.changedAt), CleanedAt: statusTime(cleanedAt)}
 		if len(recent) < cap(recent) {
 			recent = append(recent, record)

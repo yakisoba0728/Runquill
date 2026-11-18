@@ -7,16 +7,23 @@ const notes = {
 export function sample(name) {
   const at = (seconds) => new Date(Date.now() - seconds * 1000).toISOString();
   const host = (name, limit, occupied, reserved = 0) => ({
-    name, status: reserved ? "OFFLINE" : "UP", slot_limit: limit,
+    name, pool: name === "local" ? "default" : "build", status: reserved ? "OFFLINE" : "UP", slot_limit: limit,
     occupied_slots: occupied, reserved_slots: reserved,
   });
   const job = (id, repository, status, runner_host, extra = {}) => ({
-    id, repository: "garden-lab/" + repository, status, runner_host, ...extra,
+    id, repository: "garden-lab/" + repository, status, runner_host,
+    pool: runner_host === "builder-west" ? "build" : "default",
+    runner: runner_host ? "runquill-demo-" + id : "",
+    url: "https://github.com/garden-lab/" + repository + "/actions/runs/18062/job/" + id,
+    ...extra,
   });
   const timing = (source, created, found, provisioned, started) => ({
     discovery_source: source, github_created_at: at(created), discovered_at: at(found),
     provisioned_at: provisioned === undefined ? null : at(provisioned),
     github_started_at: started === undefined ? null : at(started),
+    creation_to_discovery_seconds: created - found,
+    runquill_queue_seconds: found - (provisioned ?? 0),
+    provision_to_start_seconds: started === undefined ? null : provisioned - started,
   });
 
   let hosts = [host("local", 2, 1), host("builder-west", 2, 1)];
@@ -26,6 +33,8 @@ export function sample(name) {
     job(4827, "forecast", "WAITING", "", { queue_position: 1, runner_label: "runquill-18062-1-forecast",
       diagnostic: { code: "waiting_scheduler", message: "Waiting for Runquill to assign an available runner." },
       timing: timing("webhook", 10, 9) }),
+    job(4828, "pattern-kit", "RETRY", "", { pool: "build", retry_at: at(-12), retry_reason: "Waiting to retry runner provisioning.",
+      timing: timing("poll", 73, 58) }),
   ];
   let match = at(8);
   let firstSeen = true;
@@ -62,6 +71,10 @@ export function sample(name) {
       webhook: true, polling: true, last_webhook: match, last_poll: at(3), sampled_at: at(0),
       first_job_seen: firstSeen, first_job_clean: firstClean,
       recent: firstClean ? [cleaned] : [],
+      runner_inventory: jobs.filter((job) => job.runner).map((job) => ({
+        name: job.runner, job_id: job.id, host: job.runner_host, pool: job.pool,
+        runtime_state: job.status === "RUNNING" ? "running" : undefined,
+      })),
       fleet: {
         slot_limit: 4, repository_scope: "selected", hosts, jobs,
         runners: {

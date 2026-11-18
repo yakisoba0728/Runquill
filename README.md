@@ -305,6 +305,8 @@ docker compose exec manager runquill status
 
 The snapshot includes running runners, per-host slot usage and health, and direct GitHub job links. `WAITING` positions follow queue order among jobs ready to start. `RETRY` shows the time until the next attempt and the latest failure or reconciliation reason when available. When using the standalone binary, run `runquill status` with the manager's queue and runner backend settings.
 
+The operations panel shows queue positions, wait times, and retry reasons. Filter jobs by repository, job ID, or pool. The worker and runner tables show host health, occupied and reserved slots, maintenance state, and observed runtimes. Pool capacity shows available worker slots before the fleet-wide limit. The overview shows how many of those slots the fleet can actually use.
+
 Use `docker compose exec -T manager runquill status --json` for scripts and monitoring. Schema version 1 includes `slot_limit`, `runners`, `hosts`, and `jobs`. Occupied slots are observed on reachable workers. Reserved slots account for offline workers and leases without an observed host. If Docker reports a conflicting topology, the snapshot still includes jobs and a `docker_error`, with `runners` set to `null` and a nonzero exit status.
 
 If GitHub shows a queued job that Runquill has not started, run `docker compose exec manager runquill diagnose OWNER/REPO`. It checks the App’s access using a repository-scoped read-only token, reports the last recorded poll, and explains invalid labels, retries, and worker capacity for queued jobs.

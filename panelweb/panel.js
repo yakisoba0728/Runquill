@@ -8,7 +8,7 @@ const viewButtons = document.querySelectorAll("[data-view]");
 const demoButtons = document.querySelectorAll("[data-scenario]");
 const themeControls = document.querySelectorAll("[data-theme-control]");
 const navLinks = [...document.querySelectorAll(".sidebar nav a")];
-let view = "active";
+let view = "queue";
 let selected = null;
 let current = null;
 let refreshError = false;
@@ -62,9 +62,13 @@ function stamp(value) {
   return new Date(value).toLocaleTimeString(language, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
+function isGitHubJobURL(url) {
+  return typeof url === "string" && /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/actions\/runs\/\d+\/job\/\d+$/.test(url);
+}
+
 function githubLink(id, url) {
   const link = el(id);
-  link.hidden = !(url && /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/actions\/runs\/\d+\/job\/\d+$/.test(url));
+  link.hidden = !isGitHubJobURL(url);
   if (link.hidden) link.removeAttribute("href");
   else link.href = url;
 }
@@ -82,29 +86,40 @@ function badge(status, label = status) {
   return result;
 }
 
+function duration(seconds) {
+  if (!Number.isFinite(seconds)) return "—";
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  if (hours) return tr("{hours}h {minutes}m", { hours, minutes: minutes % 60 });
+  if (minutes) return tr("{minutes}m {seconds}s", { minutes, seconds: seconds % 60 });
+  return tr("{seconds}s", { seconds });
+}
+
+function workerState(host) {
+  return host.cordoned && host.status === "UP" ? "CORDONED" : host.status;
+}
+
+function availableSlots(host) {
+  return workerState(host) === "UP" ? Math.max(0, host.slot_limit - host.occupied_slots - host.reserved_slots) : 0;
+}
+
+function poolName(pool) {
+  return !pool || pool === "default" ? tr("Default pool") : pool;
+}
+
 function renderHosts(hosts) {
   const target = el("host-rows");
   const previouslyFocused = document.activeElement?.dataset.worker;
   target.replaceChildren();
-  if (!hosts?.length) {
-    target.append(node("p", "No host observations yet.", "empty"));
-    return;
-  }
+  el("host-empty").hidden = hosts.length > 0;
+  text("host-empty", "No host observations yet.");
   for (const host of hosts) {
-    const row = node("div", null, "host-row");
-    const name = node("div", null, "host-name");
-    const state = host.cordoned && host.status === "UP" ? "CORDONED" : host.status;
-    name.append(node("span", host.name), badge(state));
-    const used = host.occupied_slots + host.reserved_slots;
-    const capacity = node("div", null, "host-meta");
-    capacity.append(node("span", tr("{used} of {limit} slots", { used, limit: host.slot_limit })),
-      node("span", host.reserved_slots ? tr("{n} reserved", { n: host.reserved_slots }) : " "));
-    const bar = node("progress");
-    bar.max = Math.max(1, host.slot_limit);
-    bar.value = Math.min(bar.max, used);
-    bar.dataset.reserved = String(host.reserved_slots > 0);
-    bar.setAttribute("aria-label", tr("{host} capacity", { host: host.name }));
-    row.append(name, capacity, bar);
+    const row = node("tr");
+    const identity = node("td", host.name, "host-id");
+    if (host.error) identity.append(node("small", host.error, "row-note"));
+    const state = node("td");
+    state.append(badge(workerState(host)));
+    const action = node("td");
     if (user && user.role !== "viewer") {
       const control = node("button", host.cordoned ? "Resume assignments" : "Pause assignments", "button host-control");
       control.type = "button";
@@ -115,10 +130,88 @@ function renderHosts(hosts) {
         await management.updateHost(host);
         control.disabled = false;
       });
-      row.append(control);
+      action.append(control);
+    } else {
+      action.textContent = "—";
     }
+    row.append(identity, node("td", poolName(host.pool)), state, node("td", host.slot_limit), node("td", host.occupied_slots),
+      node("td", host.reserved_slots), node("td", availableSlots(host)), action);
     target.append(row);
-    if (previouslyFocused === host.name) row.querySelector(".host-control")?.focus({ preventScroll: true });
+    if (previouslyFocused === host.name) action.firstElementChild?.focus({ preventScroll: true });
+  }
+}
+
+function renderPools(hosts) {
+  const target = el("pool-rows");
+  target.replaceChildren();
+  const pools = new Map();
+  for (const host of hosts) {
+    const key = host.pool || "default";
+    if (!pools.has(key)) pools.set(key, { hosts: 0, ready: 0, reserved: 0, free: 0, occupied: 0, limit: 0 });
+    const pool = pools.get(key);
+    pool.hosts++;
+    pool.ready += Number(workerState(host) === "UP");
+    pool.reserved += host.reserved_slots;
+    pool.occupied += host.occupied_slots;
+    pool.limit += host.slot_limit;
+    pool.free += availableSlots(host);
+  }
+  if (!pools.size) {
+    target.append(node("p", "No host observations yet.", "empty"));
+    return;
+  }
+  for (const [name, pool] of [...pools].sort(([a], [b]) => a.localeCompare(b))) {
+    const row = node("div", null, "pool-row");
+    const head = node("div", null, "pool-name");
+    head.append(node("span", poolName(name)), node("span", tr("{ready} of {total} ready", { ready: pool.ready, total: pool.hosts }), "row-note"));
+    const capacity = node("div", null, "pool-meta");
+    capacity.append(node("span", tr("{used} of {limit} slots", { used: pool.occupied + pool.reserved, limit: pool.limit })),
+      node("span", tr("{n} free", { n: pool.free })));
+    const bar = node("progress");
+    bar.max = Math.max(1, pool.limit);
+    bar.value = Math.min(bar.max, pool.occupied + pool.reserved);
+    bar.dataset.reserved = String(pool.reserved > 0);
+    bar.setAttribute("aria-label", tr("{host} capacity", { host: poolName(name) }));
+    row.append(head, capacity, bar);
+    if (pool.reserved) row.append(node("small", tr("{n} reserved", { n: pool.reserved }), "row-note"));
+    target.append(row);
+  }
+}
+
+function renderInventory(inventory, jobs) {
+  const target = el("runner-rows");
+  target.replaceChildren();
+  el("runner-empty").hidden = inventory.length > 0;
+  text("runner-empty", current.fleet?.docker_error ? "Runner observations are unavailable." : "No runners or retained leases.");
+  const observed = inventory.filter((runner) => runner.runtime_state).length;
+  text("runner-summary", tr("{observed} observed · {leases} unobserved leases", { observed, leases: inventory.length - observed }));
+  const jobsByID = new Map(jobs.map((job) => [job.id, job]));
+  for (const runner of inventory) {
+    const row = node("tr");
+    const job = jobsByID.get(runner.job_id);
+    const runtime = runner.runtime_state;
+    const state = !runtime ? "UNKNOWN" : { running: "RUNNING", paused: "PAUSED", created: "STARTING", pending: "STARTING",
+      dead: "CLEANUP", exited: "CLEANUP" }[runtime] || runtime;
+    const stateColumn = node("td");
+    stateColumn.append(badge(state, runtime ? state : "Lease not observed"));
+    const jobCell = node("td");
+    if (job) {
+      const label = job.repository + " #" + job.id;
+      if (isGitHubJobURL(job.url)) {
+        const link = node("a", label);
+        link.href = job.url;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        jobCell.append(link);
+      } else {
+        jobCell.textContent = label;
+      }
+    } else {
+      jobCell.append(node("span", "Untracked runner"));
+    }
+    row.append(node("td", runner.name, "host-id"), node("td", runner.host || "—"),
+      node("td", poolName(runner.pool || job?.pool)), stateColumn, jobCell);
+    target.append(row);
   }
 }
 
@@ -134,6 +227,8 @@ function renderDetails(job) {
     reason,
     source ? tr(source === "poll" ? "Discovered by GitHub API polling." : "Discovered by webhook.") : "",
     job.runner_host ? tr("Host {name}", { name: job.runner_host }) : "",
+    job.runner ? tr("Runner {name}", { name: job.runner }) : "",
+    job.pool ? tr("Pool {name}", { name: poolName(job.pool) }) : "",
     job.retry_at ? tr("Retry time {time}", { time: stamp(job.retry_at) }) : "",
   ].filter(Boolean);
   text("detail-reason", detailsText.join(" · ") || "Waiting for job events.");
@@ -142,6 +237,19 @@ function renderDetails(job) {
   text("detail-retry", retry);
   el("detail-route").hidden = !job.runner_label;
   text("detail-label", job.runner_label || "");
+  const timings = el("detail-timings");
+  timings.replaceChildren();
+  for (const [label, seconds] of [
+    ["Discovery time", job.timing?.creation_to_discovery_seconds],
+    ["Queue time", job.timing?.runquill_queue_seconds],
+    ["Startup time", job.timing?.provision_to_start_seconds],
+  ]) {
+    if (!Number.isFinite(seconds)) continue;
+    const item = node("div");
+    item.append(node("dt", label), node("dd", duration(seconds)));
+    timings.append(item);
+  }
+  timings.hidden = !timings.childElementCount;
   const timeline = el("detail-timeline");
   timeline.replaceChildren();
   for (const [label, time] of [
@@ -161,6 +269,25 @@ function renderDetails(job) {
   }
 }
 
+function pendingJob(job) {
+  return job.status === "WAITING" || job.status === "RETRY";
+}
+
+function updatePoolFilter(active, recent, hosts) {
+  const control = el("job-pool");
+  const pools = [...new Set([...active, ...recent, ...hosts].map((item) => item.pool || "default"))].sort();
+  if (pools.join(",") === control.dataset.options) return;
+  const selectedPool = control.value;
+  const options = pools.map((pool) => {
+    const option = node("option", poolName(pool));
+    option.value = pool;
+    return option;
+  });
+  control.replaceChildren(control.options[0], ...options);
+  control.value = pools.includes(selectedPool) ? selectedPool : "";
+  control.dataset.options = pools.join(",");
+}
+
 function renderJobs() {
   if (!current) return;
   const rows = el("job-rows");
@@ -168,12 +295,21 @@ function renderJobs() {
   rows.replaceChildren();
   const active = current.fleet?.jobs || [];
   const recent = current.recent || [];
-  const jobs = view === "active" ? active : recent;
-  el("job-diagnose").hidden = demoMode || view !== "active" || !current.fleet;
-  text("jobs-summary", tr("{active} active · {recent} recently cleaned", { active: active.length, recent: recent.length }));
+  const queued = active.filter(pendingJob);
+  updatePoolFilter(active, recent, current.fleet?.hosts || []);
+  const group = view === "queue" ? queued.sort((a, b) => (a.queue_position || Number.MAX_SAFE_INTEGER) - (b.queue_position || Number.MAX_SAFE_INTEGER) ||
+    (a.retry_at || "").localeCompare(b.retry_at || "")) : view === "active" ? active.filter((job) => !pendingJob(job)) : recent;
+  const query = el("job-search").value.trim().toLowerCase().replace(/^#/, "");
+  const pool = el("job-pool").value;
+  const jobs = group.filter((job) => (!pool || (job.pool || "default") === pool) &&
+    (!query || job.repository.toLowerCase().includes(query) || String(job.id).includes(query)));
+  el("job-diagnose").hidden = demoMode || view !== "queue" || !current.fleet;
+  text("jobs-summary", tr("{queued} queued · {assigned} assigned · {recent} cleaned recently",
+    { queued: queued.length, assigned: active.length - queued.length, recent: recent.length }));
   const empty = el("job-empty");
   empty.hidden = jobs.length !== 0;
-  empty.textContent = tr(current.fleet ? (view === "active" ? "No active or queued jobs." : "No confirmed runner cleanup yet.") : "Waiting for a fleet snapshot…");
+  const emptyLabel = { queue: "The queue is empty.", active: "No assigned jobs.", recent: "No confirmed runner cleanup yet." };
+  empty.textContent = tr(!current.fleet ? "Waiting for a fleet snapshot…" : (query || pool) ? "No jobs match these filters." : emptyLabel[view]);
   const detailJob = jobs.find((job) => job.id === selected);
   for (const job of jobs) {
     const row = node("tr");
@@ -188,12 +324,15 @@ function renderJobs() {
       selected = selected === job.id ? null : job.id;
       renderJobs();
     });
-    const meta = ["#" + job.id, job.queue_position ? tr("queue {position}", { position: job.queue_position }) : null].filter(Boolean);
-    identity.append(button, node("span", meta.join(" · "), "job-meta"));
+    identity.append(button, node("span", "#" + job.id + (job.pool ? " · " + poolName(job.pool) : ""), "job-meta"));
+    const reason = job.status === "RETRY" ? job.retry_reason || job.diagnostic?.message : job.diagnostic?.message || job.retry_reason;
+    if (view === "queue" && reason) identity.append(node("small", reason, "row-note"));
     const stateColumn = node("td");
     const state = job.status || "CLEANED";
     stateColumn.append(badge(state));
-    row.append(identity, stateColumn, node("td", job.runner_host || "—"));
+    if (job.retry_at) stateColumn.append(node("small", tr("Retry time {time}", { time: stamp(job.retry_at) }), "row-note"));
+    row.append(node("td", job.queue_position ?? "—", "numeric"), identity, stateColumn,
+      node("td", duration(job.timing?.runquill_queue_seconds), "numeric"), node("td", job.runner_host || "—"));
     rows.append(row);
   }
   renderDetails(detailJob);
@@ -205,15 +344,28 @@ function render() {
   const fleet = current.fleet;
   const counts = fleet?.runners;
   const hosts = fleet?.hosts || [];
-  const waiting = fleet?.jobs?.filter((job) => job.status === "WAITING").length;
+  const jobs = fleet?.jobs || [];
+  const queued = jobs.filter(pendingJob);
+  const waiting = queued.filter((job) => job.status === "WAITING").length;
+  const oldest = queued.reduce((max, job) => Math.max(max, job.timing?.runquill_queue_seconds ?? -1), -1);
   const used = counts && counts.occupied_slots + counts.reserved_slots;
+  const free = counts ? Math.max(0, Math.min(fleet.slot_limit - used, hosts.reduce((sum, host) => sum + availableSlots(host), 0))) : 0;
   text("running", counts?.known_running ?? "—");
-  text("waiting", waiting ?? "—");
+  text("waiting", fleet ? queued.length : "—");
+  const queueNote = [tr("{n} ready", { n: waiting }), tr("{n} retrying", { n: queued.length - waiting })];
+  if (oldest >= 0) queueNote.push(tr("Longest observed wait {time}", { time: duration(oldest) }));
+  text("queue-note", fleet ? queueNote.join(" · ") : "");
   text("slots", counts ? used + " / " + fleet.slot_limit : "—");
-  text("slot-note", counts?.reserved_slots ? tr("{n} reserved", { n: counts.reserved_slots }) : "Used and reserved capacity");
-  text("healthy", hosts.length ? hosts.filter((host) => host.status === "UP").length + " / " + hosts.length : "—");
+  const slotNote = counts ? [tr("{n} free", { n: free }), tr("{n} reserved", { n: counts.reserved_slots })] : [];
+  if (counts?.unassigned_reserved_slots) slotNote.push(tr("{n} unassigned", { n: counts.unassigned_reserved_slots }));
+  text("slot-note", slotNote.join(" · "));
+  const hostsKnown = fleet && (hosts.length > 0 || !fleet.docker_error);
+  text("host-count", hostsKnown ? hosts.length : "—");
+  text("host-count-label", fleet?.backend === "kubernetes" ? "Runtime targets" : "Worker hosts");
   text("host-description", fleet?.backend === "kubernetes" ? "Kubernetes runner pool capacity" : "Capacity by Docker engine");
-  text("host-note", counts?.offline_hosts ? tr("{n} offline", { n: counts.offline_hosts }) : "Reachable and ready");
+  const hostSummary = ["UP", "OFFLINE", "UNAVAILABLE", "CORDONED"].map((status) => hosts.filter((host) => workerState(host) === status).length);
+  const hostLabels = ["{n} ready", "{n} offline", "{n} unavailable", "{n} on maintenance"];
+  text("host-note", hostsKnown ? hostSummary.map((n, i) => tr(hostLabels[i], { n })).join(" · ") : "");
 
   let notice = refreshError ? "Panel refresh failed. Showing the last available snapshot." : fleet?.docker_error;
   if (!notice && current.poll_failed) notice = "The latest GitHub poll failed. Check the manager logs.";
@@ -248,6 +400,8 @@ function render() {
   githubLink("check-link", current.first_job_clean?.url);
 
   renderHosts(hosts);
+  renderPools(hosts);
+  renderInventory(current.runner_inventory || [], jobs);
   renderJobs();
 }
 
@@ -263,6 +417,8 @@ for (const button of viewButtons) {
     renderJobs();
   });
 }
+el("job-search").addEventListener("input", renderJobs);
+el("job-pool").addEventListener("change", renderJobs);
 
 async function refresh() {
   try {
@@ -293,7 +449,7 @@ if (demoMode) {
     const next = sample(name);
     current = next.snapshot;
     text("scenario-note", next.note);
-    setView("active");
+    setView(name === "first" ? "queue" : "active");
     if (name !== "first") selected = current.fleet.jobs[0].id;
     for (const button of demoButtons) button.setAttribute("aria-pressed", String(button.dataset.scenario === name));
     render();

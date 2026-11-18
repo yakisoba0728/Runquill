@@ -24,7 +24,7 @@ func TestPanelRoutesAndFirstJobEvidence(t *testing.T) {
 	}
 	p := newPanel(config{pollInterval: 30 * time.Second, repositoryScope: scopeSelected})
 	p.markPoll(now, true)
-	host := hostCapacity{dockerHostSnapshot: dockerHostSnapshot{Name: "local", Containers: map[string]string{}}, Limit: 1, Cordoned: true}
+	host := hostCapacity{dockerHostSnapshot: dockerHostSnapshot{Name: "local", Containers: map[string]string{"orphan": "exited"}}, Limit: 1, Cordoned: true}
 	p.capture(ctx, q, []hostCapacity{host}, 0, 1, nil)
 
 	rec := httptest.NewRecorder()
@@ -48,7 +48,8 @@ func TestPanelRoutesAndFirstJobEvidence(t *testing.T) {
 	if got.LastPoll == nil || !got.FirstJobSeen || got.FirstJobClean != nil ||
 		got.Fleet.RepositoryScope != scopeSelected || len(got.Fleet.Jobs) != 1 ||
 		got.Fleet.Jobs[0].Timing.DiscoverySource != "poll" || got.Fleet.Jobs[0].RunnerLabel != j.route ||
-		got.Fleet.Jobs[0].Diagnostic == nil || got.Fleet.Jobs[0].Diagnostic.Code != "workers_cordoned" {
+		got.Fleet.Jobs[0].Diagnostic == nil || got.Fleet.Jobs[0].Diagnostic.Code != "workers_cordoned" ||
+		len(got.Inventory) != 1 || got.Inventory[0].Name != "orphan" || got.Inventory[0].RuntimeState != "exited" {
 		t.Fatalf("first job progress: %+v", got)
 	}
 
@@ -82,5 +83,23 @@ func TestPanelRoutesAndFirstJobEvidence(t *testing.T) {
 		if rec.Code != tc.code || !strings.Contains(rec.Body.String(), tc.body) {
 			t.Errorf("%s %s: got %d, want %d", tc.method, tc.url, rec.Code, tc.code)
 		}
+	}
+}
+
+func TestPanelRunnerInventoryKeepsUnobservedLeases(t *testing.T) {
+	hosts := []hostCapacity{
+		{dockerHostSnapshot: dockerHostSnapshot{Name: "online", Pool: "build", Containers: map[string]string{"tracked": "running", "legacy": "created"}}},
+		{dockerHostSnapshot: dockerHostSnapshot{Name: "offline", Pool: "build"}},
+	}
+	jobs := []statusJob{
+		{ID: 10, Runner: "tracked", RunnerHost: "online"},
+		{ID: 20, Runner: "leased", RunnerHost: "offline", Pool: "build"},
+		{ID: 30, Runner: "legacy"},
+	}
+	rows := panelRunnerInventory(hosts, jobs)
+	if len(rows) != 3 || rows[0].JobID != 20 || rows[0].RuntimeState != "" ||
+		rows[1].JobID != 30 || rows[1].RuntimeState != "created" || rows[2].JobID != 10 ||
+		rows[2].RuntimeState != "running" || rows[2].Pool != "build" {
+		t.Fatalf("unexpected runner inventory: %+v", rows)
 	}
 }

@@ -43,8 +43,10 @@
       <a class="wordmark" href="#overview"><span class="mark" aria-hidden="true"></span>runquill</a>
       <nav aria-label="Panel">
         <a href="#overview" aria-current="location">Overview</a>
-        <a href="#fleet-jobs">Jobs</a>
+        <a href="#fleet-jobs">Queue and jobs</a>
+        <a href="#fleet-runners">Runners</a>
         <a href="#fleet-hosts">Hosts</a>
+        <a href="#fleet-pools">Worker pools</a>
         <a href="#first-job">First job setup</a>
         <a id="access-nav" href="#access" hidden>Manage access</a>
       </nav>
@@ -86,24 +88,29 @@
 
         <dl class="metrics" aria-label="Fleet capacity">
           <div><dt>Running runners</dt><dd id="running">—</dd></div>
-          <div><dt>Waiting jobs</dt><dd id="waiting">—</dd></div>
+          <div><dt>Queued jobs</dt><dd id="waiting">—</dd><small id="queue-note"></small></div>
           <div><dt>Used slots</dt><dd id="slots">—</dd><small id="slot-note">Used and reserved capacity</small></div>
-          <div><dt>Healthy hosts</dt><dd id="healthy">—</dd><small id="host-note">Reachable and ready</small></div>
+          <div><dt id="host-count-label">Worker hosts</dt><dd id="host-count">—</dd><small id="host-note"></small></div>
         </dl>
 
         <div class="columns">
           <div class="work-list">
             <section class="surface jobs" id="fleet-jobs" aria-labelledby="jobs-title">
               <div class="section-head">
-                <div><h2 id="jobs-title">Jobs</h2><p id="jobs-summary">Check queue position and runner state.</p></div>
+                <div><h2 id="jobs-title">Queue and jobs</h2><p id="jobs-summary">Waiting for a fleet snapshot…</p></div>
                 <div class="segments" aria-label="Choose a job list">
-                  <button data-view="active" aria-pressed="true">Active</button>
+                  <button data-view="queue" aria-pressed="true">Queue</button>
+                  <button data-view="active" aria-pressed="false">Assigned</button>
                   <button data-view="recent" aria-pressed="false">Cleaned up</button>
                 </div>
               </div>
-              <div id="job-table" class="table-scroll">
+              <div class="filters">
+                <input type="search" id="job-search" aria-label="Filter jobs" placeholder="Repository or job ID">
+                <select id="job-pool" aria-label="Filter by worker pool"><option value="">All pools</option></select>
+              </div>
+              <div id="job-table" class="table-scroll" tabindex="0" aria-label="Job results">
                 <table>
-                  <thead><tr><th scope="col">Repository / job</th><th scope="col">State</th><th scope="col">Host</th></tr></thead>
+                  <thead><tr><th scope="col">Position</th><th scope="col">Repository / job</th><th scope="col">State</th><th scope="col">Queue time</th><th scope="col">Host</th></tr></thead>
                   <tbody id="job-rows"></tbody>
                 </table>
                 <p class="empty" id="job-empty">Waiting for a fleet snapshot…</p>
@@ -114,6 +121,7 @@
                 <p id="detail-reason"></p>
                 <p id="detail-retry" hidden></p>
                 <p id="detail-route" hidden>Runner label <code id="detail-label"></code></p>
+                <dl id="detail-timings" class="timings" aria-label="Job timings" hidden></dl>
                 <ol id="detail-timeline" class="timeline" aria-label="Observed job events"></ol>
               </div>
             </section>
@@ -130,10 +138,9 @@
             </section>
           </div>
           <aside class="side">
-            <section class="surface" id="fleet-hosts" aria-labelledby="hosts-title">
-              <div class="section-head"><div><h2 id="hosts-title">Hosts</h2><p id="host-description">Capacity by Docker engine</p></div></div>
-              <div id="host-rows" class="host-rows"><p class="empty">Waiting for a fleet snapshot…</p></div>
-              <p id="host-action" class="inline-note" role="status" hidden></p>
+            <section class="surface" id="fleet-pools" aria-labelledby="pools-title">
+              <div class="section-head"><div><h2 id="pools-title">Worker pools</h2><p>Host capacity before the fleet limit</p></div></div>
+              <div id="pool-rows"><p class="empty">Waiting for a fleet snapshot…</p></div>
             </section>
             <section class="surface" aria-labelledby="signals-title">
               <div class="section-head"><div><h2 id="signals-title">GitHub connection</h2><p>Observed delivery and polling</p></div></div>
@@ -146,6 +153,28 @@
             </section>
           </aside>
         </div>
+
+        <section class="surface fleet-section" id="fleet-hosts" aria-labelledby="hosts-title">
+          <div class="section-head"><div><h2 id="hosts-title">Hosts</h2><p id="host-description">Capacity by Docker engine</p></div></div>
+          <div class="table-scroll" tabindex="0" aria-label="Worker inventory">
+            <table>
+              <thead><tr><th scope="col">Host</th><th scope="col">Pool</th><th scope="col">State</th><th scope="col">Slot limit</th><th scope="col">Occupied</th><th scope="col">Reserved</th><th scope="col">Available slots</th><th scope="col">Actions</th></tr></thead>
+              <tbody id="host-rows"></tbody>
+            </table>
+            <p class="empty" id="host-empty">Waiting for a fleet snapshot…</p>
+          </div>
+          <p id="host-action" class="inline-note" role="status" hidden></p>
+        </section>
+        <section class="surface fleet-section" id="fleet-runners" aria-labelledby="runners-title">
+          <div class="section-head"><div><h2 id="runners-title">Runners</h2><p id="runner-summary">Waiting for a fleet snapshot…</p></div></div>
+          <div class="table-scroll" tabindex="0" aria-label="Runner inventory">
+            <table>
+              <thead><tr><th scope="col">Runner</th><th scope="col">Host</th><th scope="col">Pool</th><th scope="col">Runtime state</th><th scope="col">GitHub job</th></tr></thead>
+              <tbody id="runner-rows"></tbody>
+            </table>
+            <p id="runner-empty" class="empty">Waiting for a fleet snapshot…</p>
+          </div>
+        </section>
 
         <section class="management" id="access" aria-labelledby="access-title" hidden>
           <div class="management-heading"><h2 id="access-title">Manage access</h2><p id="current-user"></p></div>
