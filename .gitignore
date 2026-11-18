@@ -3,6 +3,7 @@
 .runquill-install*
 /runquill-ssh/
 *.pem
+/metrics-token
 *.sqlite3*
 /Runquill
 /runquill

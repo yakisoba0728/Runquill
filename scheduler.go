@@ -32,6 +32,7 @@ type scheduler struct {
 	hostLimits map[string]int
 	panel      *panelState
 	pools      workerPools
+	metrics    *fleetMetrics
 }
 
 func (s *scheduler) tick(ctx context.Context, now time.Time) error {
@@ -67,6 +68,11 @@ func (s *scheduler) tick(ctx context.Context, now time.Time) error {
 	}
 
 	hosts, occupied := fleetCapacity(snapshots, states, active, s.hostLimits, s.limit)
+	if s.metrics != nil {
+		if err := s.metrics.capture(ctx, s.queue, hosts, occupied, s.limit, now); err != nil && ctx.Err() == nil {
+			slog.Warn("collect fleet metrics", "error", err)
+		}
+	}
 	if s.panel != nil {
 		s.panel.capture(ctx, s.queue, hosts, occupied, s.limit, nil)
 	}
@@ -105,6 +111,9 @@ func (s *scheduler) tick(ctx context.Context, now time.Time) error {
 			host.Occupied++
 		}
 		if err != nil {
+			if s.metrics != nil {
+				s.metrics.launchErrors.Add(1)
+			}
 			if err := s.retry(ctx, j, now, "provision runner", err); err != nil {
 				return err
 			}
@@ -302,6 +311,9 @@ func (s *scheduler) launch(ctx context.Context, j job, host, pool string, now ti
 		if err := s.runtime.startOn(ctx, host, name, jit); err != nil {
 			return true, err
 		}
+		if s.metrics != nil {
+			s.metrics.starts.Add(1)
+		}
 		slog.Info("runner started", "runner", name, "runner_host", host, "repository", j.repository, "job", j.id)
 		_, err = s.queue.ExecContext(ctx, "UPDATE jobs SET retry_at = 0, retry_reason = '' WHERE job_id = ?", j.id)
 		return true, err
@@ -399,6 +411,9 @@ func (s *scheduler) reconcile(ctx context.Context, j job, containers map[string]
         WHERE job_id = ? AND runner_name = ?`, now.Add(retryDelay).Unix(), completed, time.Now().Unix(), completed, queued, j.id, j.runnerName)
 	if err != nil {
 		return err
+	}
+	if s.metrics != nil {
+		s.metrics.releases.Add(1)
 	}
 	slog.Info("runner removed", "runner", j.runnerName, "repository", j.repository, "job", j.id)
 	return nil

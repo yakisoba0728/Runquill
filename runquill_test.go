@@ -164,6 +164,8 @@ func TestSchedulerRestoresLeasesAndMaintainsFIFO(t *testing.T) {
 				return
 			}
 			w.WriteHeader(204)
+		case "GET /repos/owner/repo/actions/jobs/60":
+			w.WriteHeader(503)
 		default:
 			if r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/repos/owner/repo/actions/jobs/") {
 				fmt.Fprint(w, `{"status":"queued"}`)
@@ -189,7 +191,8 @@ func TestSchedulerRestoresLeasesAndMaintainsFIFO(t *testing.T) {
 	}}
 	gh := &github{base: api.URL, client: api.Client(), key: key, appID: "123", owner: "owner"}
 	panel := newPanel(config{})
-	s := &scheduler{queue: q, github: gh, runtime: runtime, limit: 2, panel: panel}
+	metrics := &fleetMetrics{}
+	s := &scheduler{queue: q, github: gh, runtime: runtime, limit: 2, panel: panel, metrics: metrics}
 	for _, id := range []int64{70, 20, 40} {
 		j := job{id: id, repository: "owner/repo", repositoryID: 2, installationID: 1,
 			route: fmt.Sprintf("runquill-17-1-ci-%d", id)}
@@ -226,6 +229,17 @@ func TestSchedulerRestoresLeasesAndMaintainsFIFO(t *testing.T) {
 	report := panel.snapshot.Fleet
 	if report == nil || report.Runners == nil || report.Runners.ReservedSlots != 1 || report.Runners.OfflineHosts != 1 {
 		t.Fatalf("panel failed to report the reserved offline slot: %+v", report)
+	}
+	sample := metrics.sample.Load()
+	if sample == nil || sample.ready != 1 || sample.occupied != 1 || sample.reserved != 1 || sample.offline != 1 || sample.limit != 2 {
+		t.Fatalf("metrics failed to report saturated fleet with waiting work: %+v", sample)
+	}
+	var scrape strings.Builder
+	metrics.writePrometheus(&scrape)
+	for _, private := range []string{"owner/repo", worker, runtime.started[0]} {
+		if strings.Contains(scrape.String(), private) {
+			t.Errorf("fleet metrics exposed %q", private)
+		}
 	}
 	if err := q.advance(ctx, 70, completed, now); err != nil {
 		t.Fatal(err)
@@ -274,6 +288,23 @@ func TestSchedulerRestoresLeasesAndMaintainsFIFO(t *testing.T) {
 	if err := s.tick(ctx, now.Add(completionGrace)); err != nil || len(runtime.started) != 4 ||
 		!strings.HasPrefix(runtime.started[3], "runquill-50-") || workerRunners[runtime.started[3]] != "running" {
 		t.Fatalf("worker uncordoned: started %v, error %v", runtime.started, err)
+	}
+	if starts, releases := metrics.starts.Load(), metrics.releases.Load(); starts != 4 || releases != 2 {
+		t.Fatalf("unexpected lifecycle metrics: %d starts, %d releases", starts, releases)
+	}
+	// Free a slot so the remaining job encounters the GitHub error.
+	retryTime := now.Add(completionGrace + time.Second)
+	if err := q.advance(ctx, 40, completed, retryTime); err != nil {
+		t.Fatal(err)
+	}
+	localRunners[runtime.started[2]] = "exited"
+	for range 2 {
+		if err := s.tick(ctx, retryTime); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if sample := metrics.sample.Load(); sample.ready != 0 || sample.retry != 1 || metrics.launchErrors.Load() != 1 {
+		t.Fatalf("metrics after launch failure: %+v, errors=%d", sample, metrics.launchErrors.Load())
 	}
 }
 

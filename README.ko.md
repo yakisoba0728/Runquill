@@ -267,6 +267,8 @@ Viewer는 상태를 보고 읽기 토큰을 만들 수 있습니다. Operator는
 
 ### 슬롯과 상태 확인
 
+대기 작업 수, 러너 슬롯 사용량, 시작 및 정리 횟수를 모니터링하려면 별도 [Prometheus 메트릭 리스너](docs/metrics.md)를 활성화하세요.
+
 - `RUNQUILL_MAX_RUNNERS`가 전체 저장소의 동시 실행 수를 정합니다. 정원이 차면 SQLite에 대기하고, 빈자리가 나면 작업을 발견한 순서대로 러너를 생성합니다. 생성에 실패한 작업은 기본 15초 뒤 재시도합니다. 재시도 시간 동안 다음 작업이 빈자리를 사용할 수 있습니다.
 - GitHub는 러너를 24시간 넘게 기다린 작업을 실패 처리합니다. [GitHub 러너 배정 규칙](https://docs.github.com/en/actions/reference/runners/self-hosted-runners#routing-precedence-for-self-hosted-runners)
 - 러너는 저장소 범위의 일회용 JIT 러너입니다. 작업마다 새 컨테이너와 내부 Docker 데몬이 생기므로 `docker build`, `services:`, `container:`를 사용할 수 있습니다. 작업이 끝나면 컨테이너와 내부 이미지, 볼륨, 작업 디렉터리가 삭제됩니다.

@@ -270,6 +270,14 @@ func run(ctx context.Context) error {
 		defer panelListener.Close()
 	}
 	s := &scheduler{queue: q, github: api, runtime: runners.runtime, limit: cfg.limit, hostLimits: runners.hostLimits, panel: panel, pools: runners.pools}
+	metrics, err := openMetrics(os.Getenv("RUNQUILL_METRICS_ADDR"), os.Getenv("RUNQUILL_METRICS_TOKEN_FILE"))
+	if err != nil {
+		return err
+	}
+	if metrics != nil {
+		defer metrics.listener.Close()
+		s.metrics = &metrics.fleetMetrics
+	}
 	server := &http.Server{
 		Addr:              net.JoinHostPort(env("RUNQUILL_BIND", "127.0.0.1"), env("RUNQUILL_PORT", "8080")),
 		Handler:           webhook(q, api, []byte(cfg.secret), panel),
@@ -285,11 +293,15 @@ func run(ctx context.Context) error {
 	}
 	slog.Info("Runquill listening", "address", listener.Addr(), "slots", cfg.limit, "version", version,
 		"webhook", cfg.secret != "", "poll_interval", cfg.pollInterval, "runner_backend", runners.kind, "runner_hosts", runners.hostCount)
-	serverExit := make(chan error, 2)
+	serverExit := make(chan error, 3)
 	go func() { serverExit <- server.Serve(listener) }()
 	if panelServer != nil {
 		slog.Info("Runquill panel listening", "address", panelListener.Addr())
 		go func() { serverExit <- panelServer.Serve(panelListener) }()
+	}
+	if metrics != nil {
+		slog.Info("Runquill metrics listening", "address", metrics.listener.Addr())
+		go func() { serverExit <- metrics.server.Serve(metrics.listener) }()
 	}
 	workerCtx, stopWorker := context.WithCancel(ctx)
 	defer stopWorker()
@@ -310,6 +322,9 @@ func run(ctx context.Context) error {
 		for {
 			if err := s.tick(workerCtx, time.Now()); err != nil && workerCtx.Err() == nil {
 				slog.Error("scheduler tick", "error", err)
+				if s.metrics != nil {
+					s.metrics.tickErrors.Add(1)
+				}
 			}
 			select {
 			case <-ticker.C:
@@ -326,6 +341,12 @@ func run(ctx context.Context) error {
 	stopWorker()
 	shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	if metrics != nil {
+		if err := metrics.server.Shutdown(shutdown); err != nil {
+			metrics.server.Close()
+			serveErr = errors.Join(serveErr, err)
+		}
+	}
 	if panelServer != nil {
 		if err := panelServer.Shutdown(shutdown); err != nil {
 			panelServer.Close()

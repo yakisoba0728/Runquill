@@ -275,6 +275,8 @@ Team users sign in with their enrolled GitHub account. Tokens expire after 1–9
 
 ### Status and upgrades
 
+For fleet-wide queue depth, slot usage, and runner throughput, enable the separate [Prometheus metrics listener](docs/metrics.md).
+
 ```sh
 docker compose exec manager runquill status
 ```
