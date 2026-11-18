@@ -218,15 +218,15 @@ func (s *scheduler) launch(ctx context.Context, j job, host string, now time.Tim
 	if !eligible {
 		return false, s.queue.advance(ctx, j.id, completed, now)
 	}
-	status, err := s.github.jobStatus(ctx, j, token)
+	observed, err := s.github.jobDetails(ctx, j, token)
 	if err != nil {
 		return false, err
 	}
-	if status != "queued" {
-		if p, known := phases[status]; known {
-			return false, s.queue.advance(ctx, j.id, p, now)
+	if observed.Status != "queued" {
+		if p, known := phases[observed.Status]; known {
+			return false, s.queue.advanceGitHubJob(ctx, j.id, p, now, observed)
 		}
-		return false, fmt.Errorf("waiting for GitHub to queue job, status %q", status)
+		return false, fmt.Errorf("waiting for GitHub to queue job, status %q", observed.Status)
 	}
 	var nonce [6]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
@@ -249,7 +249,10 @@ func (s *scheduler) launch(ctx context.Context, j job, host string, now time.Tim
 	if err != nil {
 		return true, err
 	}
-	_, err = s.queue.ExecContext(ctx, "UPDATE jobs SET runner_id = ? WHERE job_id = ?", runnerID, j.id)
+	_, err = s.queue.ExecContext(ctx, `UPDATE jobs SET runner_id = ?,
+        provisioned_at = coalesce(provisioned_at, ?),
+        github_created_at = coalesce(github_created_at, nullif(?, 0)) WHERE job_id = ?`,
+		runnerID, time.Now().Unix(), githubTimestamp(observed.CreatedAt), j.id)
 	if err != nil {
 		return true, err
 	}
@@ -285,19 +288,23 @@ func (s *scheduler) reconcile(ctx context.Context, j job, containers map[string]
 			if err != nil {
 				return err
 			}
-			status, err := s.github.jobStatus(ctx, j, token)
+			observed, err := s.github.jobDetails(ctx, j, token)
 			if githubNotFound(err) {
-				status = "completed"
-			} else if err != nil {
-				return err
-			}
-			if status == "completed" {
 				return s.queue.advance(ctx, j.id, completed, now)
 			}
-			if status == "in_progress" || j.phase == inProgress {
+			if err != nil {
+				return err
+			}
+			if observed.Status == "completed" {
+				return s.queue.advanceGitHubJob(ctx, j.id, completed, now, observed)
+			}
+			if observed.Status == "in_progress" || j.phase == inProgress {
 				// Recheck periodically when GitHub misses a lifecycle webhook.
-				_, err := s.queue.ExecContext(ctx, `UPDATE jobs SET phase = ?, changed_at = ?
-                    WHERE job_id = ? AND phase < ?`, inProgress, now.Unix(), j.id, completed)
+				_, err := s.queue.ExecContext(ctx, `UPDATE jobs SET phase = ?, changed_at = ?,
+                    github_created_at = coalesce(github_created_at, nullif(?, 0)),
+                    github_started_at = coalesce(github_started_at, nullif(?, 0))
+                    WHERE job_id = ? AND phase < ?`, inProgress, now.Unix(),
+					githubTimestamp(observed.CreatedAt), githubTimestamp(observed.StartedAt), j.id, completed)
 				return err
 			}
 		}
@@ -311,18 +318,21 @@ func (s *scheduler) reconcile(ctx context.Context, j job, containers map[string]
 	if j.phase != completed {
 		// A runner can exit before GitHub has sent its final job event, including in polling-only mode.
 		token, err := s.github.token(ctx, j)
-		var status string
+		var observed workflowJob
 		if err == nil {
-			status, err = s.github.jobStatus(ctx, j, token)
+			observed, err = s.github.jobDetails(ctx, j, token)
 		}
 		if err != nil && !githubNotFound(err) {
 			return err
 		}
-		if status == "completed" || githubNotFound(err) {
-			if err := s.queue.advance(ctx, j.id, completed, now); err != nil {
+		if observed.Status == "completed" || githubNotFound(err) {
+			if err := s.queue.advanceGitHubJob(ctx, j.id, completed, now, observed); err != nil {
 				return err
 			}
-		} else if status == "in_progress" {
+		} else if observed.Status == "in_progress" {
+			if err := s.queue.advanceGitHubJob(ctx, j.id, inProgress, now, observed); err != nil {
+				return err
+			}
 			_, err := s.queue.ExecContext(ctx, `UPDATE jobs SET retry_at = ?,
                 retry_reason = 'waiting for GitHub to finish the job after the runner exited'
                 WHERE job_id = ? AND phase < ?`, now.Add(retryDelay).Unix(), j.id, completed)

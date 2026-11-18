@@ -33,6 +33,9 @@ type job struct {
 	runnerID                         int64
 	retryAt                          int64
 	retryReason                      string
+	githubCreatedAt, discoveredAt    int64
+	provisionedAt, githubStartedAt   int64
+	discoverySource                  string
 }
 
 type queue struct {
@@ -99,6 +102,11 @@ func (q *queue) migrate() error {
 	for _, column := range []struct{ name, definition string }{
 		{"retry_reason", "TEXT NOT NULL DEFAULT ''"},
 		{"runner_host", "TEXT"},
+		{"github_created_at", "INTEGER"},
+		{"discovered_at", "INTEGER"},
+		{"provisioned_at", "INTEGER"},
+		{"github_started_at", "INTEGER"},
+		{"discovery_source", "TEXT"},
 	} {
 		present, err := hasJobColumn(context.Background(), q.DB, column.name)
 		if err != nil {
@@ -114,7 +122,17 @@ func (q *queue) migrate() error {
         host TEXT PRIMARY KEY NOT NULL,
         cordoned INTEGER NOT NULL DEFAULT 0,
         untracked_slots INTEGER CHECK (untracked_slots >= 0)
-    )`)
+    );
+    CREATE TABLE IF NOT EXISTS repository_polls (
+        installation_id INTEGER NOT NULL,
+        repository_id INTEGER NOT NULL,
+        checked_at INTEGER NOT NULL,
+        full_at INTEGER NOT NULL,
+        active_at INTEGER NOT NULL,
+        last_error TEXT NOT NULL,
+        PRIMARY KEY (installation_id, repository_id)
+    );
+    CREATE INDEX IF NOT EXISTS jobs_recent ON jobs(installation_id, changed_at)`)
 	return err
 }
 
@@ -148,13 +166,22 @@ func (q *queue) close() {
 }
 
 func (q *queue) record(ctx context.Context, j job, now time.Time) (bool, error) {
+	var discoveredAt int64
+	var source string
+	if j.phase == queued && j.discoverySource != "" {
+		discoveredAt, source = now.Unix(), j.discoverySource
+	}
 	result, err := q.ExecContext(ctx, `
-        INSERT INTO jobs (job_id, repository, repository_id, installation_id, route, phase, changed_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO jobs (job_id, repository, repository_id, installation_id, route, phase, changed_at,
+                          github_created_at, discovered_at, discovery_source, github_started_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, nullif(?, 0), nullif(?, 0), nullif(?, ''), nullif(?, 0))
         ON CONFLICT (job_id) DO UPDATE SET phase = excluded.phase,
-            changed_at = excluded.changed_at, repository = excluded.repository
+            changed_at = excluded.changed_at, repository = excluded.repository,
+            github_created_at = coalesce(jobs.github_created_at, excluded.github_created_at),
+            github_started_at = coalesce(jobs.github_started_at, excluded.github_started_at)
         WHERE excluded.phase > jobs.phase`,
-		j.id, j.repository, j.repositoryID, j.installationID, j.route, j.phase, now.Unix())
+		j.id, j.repository, j.repositoryID, j.installationID, j.route, j.phase, now.Unix(),
+		j.githubCreatedAt, discoveredAt, source, j.githubStartedAt)
 	if err != nil {
 		return false, err
 	}
@@ -188,5 +215,15 @@ func (q *queue) jobs(ctx context.Context, condition string, args ...any) ([]job,
 func (q *queue) advance(ctx context.Context, id int64, p phase, now time.Time) error {
 	_, err := q.ExecContext(ctx, `UPDATE jobs SET phase = ?, changed_at = ?
         WHERE job_id = ? AND phase < ?`, p, now.Unix(), id, p)
+	return err
+}
+
+func (q *queue) advanceGitHubJob(ctx context.Context, id int64, p phase, now time.Time, observed workflowJob) error {
+	_, err := q.ExecContext(ctx, `UPDATE jobs SET phase = max(phase, ?),
+        changed_at = CASE WHEN phase < ? THEN ? ELSE changed_at END,
+        github_created_at = coalesce(github_created_at, nullif(?, 0)),
+        github_started_at = coalesce(github_started_at, nullif(?, 0))
+        WHERE job_id = ?`, p, p, now.Unix(), githubTimestamp(observed.CreatedAt),
+		githubTimestamp(observed.StartedAt), id)
 	return err
 }

@@ -34,10 +34,12 @@ type repository struct {
 }
 
 type workflowJob struct {
-	ID     int64    `json:"id"`
-	RunID  int64    `json:"run_id"`
-	Labels []string `json:"labels"`
-	Status string   `json:"status"`
+	ID        int64    `json:"id"`
+	RunID     int64    `json:"run_id"`
+	Labels    []string `json:"labels"`
+	Status    string   `json:"status"`
+	CreatedAt string   `json:"created_at"`
+	StartedAt string   `json:"started_at"`
 }
 
 type workflowEvent struct {
@@ -91,6 +93,7 @@ func webhook(q *queue, owner string, secret []byte) http.Handler {
 				return
 			}
 			if eligible {
+				job.discoverySource = "webhook"
 				changed, err := q.record(r.Context(), job, time.Now())
 				if err != nil {
 					slog.Error("save webhook", "job", job.id, "error", err)
@@ -129,8 +132,20 @@ func (j workflowJob) queueJob(owner string, repo repository, installationID int6
 	if !valid || j.ID <= 0 || j.RunID <= 0 || repo.ID <= 0 || installationID <= 0 {
 		return job{}, false, errors.New("invalid workflow job")
 	}
-	return job{id: j.ID, repositoryID: repo.ID, installationID: installationID,
-		repository: name, route: route, phase: p}, true, nil
+	observed := job{id: j.ID, repositoryID: repo.ID, installationID: installationID,
+		repository: name, route: route, phase: p, githubCreatedAt: githubTimestamp(j.CreatedAt)}
+	if p != queued {
+		observed.githubStartedAt = githubTimestamp(j.StartedAt)
+	}
+	return observed, true, nil
+}
+
+func githubTimestamp(raw string) int64 {
+	at, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return 0
+	}
+	return max(0, at.Unix())
 }
 
 func ownedRepositoryPath(fullName, owner string) (string, bool) {

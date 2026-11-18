@@ -25,7 +25,10 @@ func TestStatusReadsLegacyQueueAndPersistedRetries(t *testing.T) {
 	}
 	pending := job{id: 40, repository: "owner/repo", repositoryID: 2, installationID: 1,
 		route: "runquill-17-1-ci"}
-	_, err = (&queue{DB: legacy}).record(ctx, pending, now)
+	_, err = legacy.ExecContext(ctx, `INSERT INTO jobs
+        (job_id, repository, repository_id, installation_id, route, phase, changed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)`, pending.id, pending.repository, pending.repositoryID,
+		pending.installationID, pending.route, pending.phase, now.Unix())
 	legacy.Close()
 	if err != nil {
 		t.Fatal(err)
@@ -202,5 +205,41 @@ func TestStatusReadsConfiguredLimitsAndCordon(t *testing.T) {
 	if decoded.Runners != nil || decoded.Hosts == nil || len(decoded.Hosts) != 0 || len(decoded.Jobs) != 2 ||
 		!strings.Contains(decoded.DockerError, "identify the same engine") {
 		t.Fatalf("unexpected JSON on Docker failure: %s", out.String())
+	}
+}
+
+func TestStatusReportsObservedJobStagesWithoutOverwritingDiscovery(t *testing.T) {
+	ctx := t.Context()
+	q, err := openQueue(filepath.Join(t.TempDir(), "queue.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(q.close)
+	now := time.Now().UTC().Truncate(time.Second)
+	j := job{id: 7, phase: queued, githubCreatedAt: now.Add(-4 * time.Second).Unix(), discoverySource: "poll"}
+	if changed, err := q.record(ctx, j, now); !changed || err != nil {
+		t.Fatalf("record poll discovery: %v, %v", changed, err)
+	}
+	j.discoverySource = "webhook"
+	if changed, err := q.record(ctx, j, now.Add(time.Second)); changed || err != nil {
+		t.Fatalf("record duplicate webhook: %v, %v", changed, err)
+	}
+	observed := workflowJob{Status: "in_progress", StartedAt: now.Add(5 * time.Second).Format(time.RFC3339)}
+	if err := q.advanceGitHubJob(ctx, j.id, inProgress, now.Add(6*time.Second), observed); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.ExecContext(ctx, `UPDATE jobs SET runner_name = 'runner', provisioned_at = ? WHERE job_id = ?`, now.Add(2*time.Second).Unix(), j.id); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := readStatusJobs(ctx, q.DB)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("read job stages: %+v, %v", rows, err)
+	}
+	timing := jobTiming(rows[0], now.Add(time.Minute))
+	if timing == nil || timing.DiscoverySource != "poll" || !timing.DiscoveredAt.Equal(now) ||
+		timing.DiscoverySeconds == nil || *timing.DiscoverySeconds != 4 ||
+		timing.QueueSeconds == nil || *timing.QueueSeconds != 2 ||
+		timing.AssignmentSeconds == nil || *timing.AssignmentSeconds != 3 {
+		t.Fatalf("unexpected timing: %+v", timing)
 	}
 }

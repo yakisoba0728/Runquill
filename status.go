@@ -86,8 +86,16 @@ func readStatusJobs(ctx context.Context, db *sql.DB) ([]job, error) {
 	if hasHost {
 		host = "coalesce(runner_host, '')"
 	}
+	hasTiming, err := hasJobColumn(ctx, db, "discovery_source")
+	if err != nil {
+		return nil, err
+	}
+	timing := "0, 0, '', 0, 0"
+	if hasTiming {
+		timing = "coalesce(github_created_at, 0), coalesce(discovered_at, 0), coalesce(discovery_source, ''), coalesce(provisioned_at, 0), coalesce(github_started_at, 0)"
+	}
 	rows, err := db.QueryContext(ctx, `
-        SELECT job_id, repository, route, phase, coalesce(runner_name, ''), retry_at, `+reason+`, `+host+`
+        SELECT job_id, repository, route, phase, coalesce(runner_name, ''), retry_at, `+reason+`, `+host+`, `+timing+`
         FROM jobs WHERE phase = ? OR runner_name IS NOT NULL ORDER BY sequence`, queued)
 	if err != nil {
 		return nil, err
@@ -96,7 +104,8 @@ func readStatusJobs(ctx context.Context, db *sql.DB) ([]job, error) {
 	var jobs []job
 	for rows.Next() {
 		var j job
-		if err := rows.Scan(&j.id, &j.repository, &j.route, &j.phase, &j.runnerName, &j.retryAt, &j.retryReason, &j.runnerHost); err != nil {
+		if err := rows.Scan(&j.id, &j.repository, &j.route, &j.phase, &j.runnerName, &j.retryAt, &j.retryReason, &j.runnerHost,
+			&j.githubCreatedAt, &j.discoveredAt, &j.discoverySource, &j.provisionedAt, &j.githubStartedAt); err != nil {
 			return nil, err
 		}
 		jobs = append(jobs, j)
@@ -132,16 +141,84 @@ type statusHost struct {
 }
 
 type statusJob struct {
-	ID            int64      `json:"id"`
-	Repository    string     `json:"repository"`
-	Status        string     `json:"status"`
-	QueuePosition int        `json:"queue_position,omitempty"`
-	RetryAt       *time.Time `json:"retry_at,omitempty"`
-	RetryReason   string     `json:"retry_reason,omitempty"`
-	Runner        string     `json:"runner,omitempty"`
-	RunnerHost    string     `json:"runner_host,omitempty"`
-	URL           string     `json:"url,omitempty"`
+	ID            int64            `json:"id"`
+	Repository    string           `json:"repository"`
+	Status        string           `json:"status"`
+	QueuePosition int              `json:"queue_position,omitempty"`
+	RetryAt       *time.Time       `json:"retry_at,omitempty"`
+	RetryReason   string           `json:"retry_reason,omitempty"`
+	Runner        string           `json:"runner,omitempty"`
+	RunnerHost    string           `json:"runner_host,omitempty"`
+	URL           string           `json:"url,omitempty"`
+	Timing        *statusJobTiming `json:"timing,omitempty"`
 	detail        string
+}
+
+type statusJobTiming struct {
+	GitHubCreatedAt   *time.Time `json:"github_created_at,omitempty"`
+	DiscoveredAt      *time.Time `json:"discovered_at,omitempty"`
+	DiscoverySource   string     `json:"discovery_source,omitempty"`
+	ProvisionedAt     *time.Time `json:"provisioned_at,omitempty"`
+	GitHubStartedAt   *time.Time `json:"github_started_at,omitempty"`
+	DiscoverySeconds  *int64     `json:"creation_to_discovery_seconds,omitempty"`
+	QueueSeconds      *int64     `json:"runquill_queue_seconds,omitempty"`
+	AssignmentSeconds *int64     `json:"provision_to_start_seconds,omitempty"`
+}
+
+func jobTiming(j job, now time.Time) *statusJobTiming {
+	if j.githubCreatedAt == 0 && j.discoveredAt == 0 && j.provisionedAt == 0 && j.githubStartedAt == 0 {
+		return nil
+	}
+	queueEnd := j.provisionedAt
+	if queueEnd == 0 && j.phase == queued {
+		queueEnd = now.Unix()
+	}
+	return &statusJobTiming{
+		GitHubCreatedAt:   statusTime(j.githubCreatedAt),
+		DiscoveredAt:      statusTime(j.discoveredAt),
+		DiscoverySource:   j.discoverySource,
+		ProvisionedAt:     statusTime(j.provisionedAt),
+		GitHubStartedAt:   statusTime(j.githubStartedAt),
+		DiscoverySeconds:  elapsedSeconds(j.githubCreatedAt, j.discoveredAt),
+		QueueSeconds:      elapsedSeconds(j.discoveredAt, queueEnd),
+		AssignmentSeconds: elapsedSeconds(j.provisionedAt, j.githubStartedAt),
+	}
+}
+
+func statusTime(timestamp int64) *time.Time {
+	if timestamp == 0 {
+		return nil
+	}
+	at := time.Unix(timestamp, 0).UTC()
+	return &at
+}
+
+func elapsedSeconds(start, end int64) *int64 {
+	if start == 0 || end < start {
+		return nil
+	}
+	seconds := end - start
+	return &seconds
+}
+
+func (t statusJobTiming) text() string {
+	var stages []string
+	if t.DiscoverySource != "" {
+		stages = append(stages, "via "+t.DiscoverySource)
+	}
+	for _, stage := range []struct {
+		label string
+		value *int64
+	}{
+		{"creation to discovery", t.DiscoverySeconds},
+		{"Runquill queue", t.QueueSeconds},
+		{"provision to start", t.AssignmentSeconds},
+	} {
+		if stage.value != nil {
+			stages = append(stages, fmt.Sprintf("%s %ds", stage.label, *stage.value))
+		}
+	}
+	return strings.Join(stages, " · ")
 }
 
 func summarizeStatus(jobs []job, hosts []hostCapacity, unassigned, limit int, now time.Time) statusReport {
@@ -182,7 +259,7 @@ func summarizeStatus(jobs []job, hosts []hostCapacity, unassigned, limit int, no
 		state, detail := statusRow(j, hosts, now)
 		row := statusJob{
 			ID: j.id, Repository: j.repository, Status: state, RetryReason: j.retryReason,
-			Runner: j.runnerName, RunnerHost: j.runnerHost, URL: jobURL(j), detail: detail,
+			Runner: j.runnerName, RunnerHost: j.runnerHost, URL: jobURL(j), Timing: jobTiming(j, now), detail: detail,
 		}
 		if state == "WAITING" {
 			position++
@@ -243,6 +320,11 @@ func (r statusReport) writeText(out io.Writer) error {
 		fmt.Fprintf(table, "%s\t%s\t%d\t%s\n", j.Status, rank, j.ID, j.detail)
 		if j.URL != "" {
 			fmt.Fprintf(table, "\t\t\t%s\n", j.URL)
+		}
+		if j.Timing != nil {
+			if timing := j.Timing.text(); timing != "" {
+				fmt.Fprintf(table, "\t\t\t%s\n", timing)
+			}
 		}
 	}
 	return table.Flush()

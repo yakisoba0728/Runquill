@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -112,5 +113,124 @@ func TestPollerFindsQueuedJobsInActiveRunsAndDeduplicatesWebhooks(t *testing.T) 
 	}
 	if conditionalRequests.Load() != 1 || mintedTokens.Load() != 1 {
 		t.Fatalf("conditional responses=%d, minted tokens=%d", conditionalRequests.Load(), mintedTokens.Load())
+	}
+}
+
+func TestPollerFindsNewReposAndRotatesFullScansAcrossRestarts(t *testing.T) {
+	q, err := openQueue(filepath.Join(t.TempDir(), "queue.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(q.close)
+	var includeNew atomic.Bool
+	var fullChecks [6]atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		switch path {
+		case "/installation/repositories":
+			count := 4
+			if includeNew.Load() {
+				count++
+			}
+			repos := make([]repository, count)
+			for i := range repos {
+				repos[i] = repository{ID: int64(i + 1), FullName: fmt.Sprintf("owner/repo%d", i+1), Private: true}
+				repos[i].Owner.Login = "owner"
+			}
+			json.NewEncoder(w).Encode(map[string][]repository{"repositories": repos})
+		case "/repos/owner/repo4/actions/runs/40/jobs":
+			fmt.Fprint(w, `{"jobs":[{"id":400,"run_id":40,"status":"queued","labels":["runquill-40-1-test"]}]}`)
+		case "/repos/owner/repo5/actions/runs/50/jobs":
+			fmt.Fprint(w, `{"jobs":[{"id":500,"run_id":50,"status":"queued","labels":["runquill-50-1-test"]}]}`)
+		default:
+			if !strings.HasSuffix(path, "/actions/runs") {
+				http.NotFound(w, r)
+				return
+			}
+			var repoID int
+			if _, err := fmt.Sscanf(path, "/repos/owner/repo%d/actions/runs", &repoID); err != nil || repoID < 1 || repoID > 5 {
+				t.Errorf("unexpected repository path %q", path)
+				http.NotFound(w, r)
+				return
+			}
+			switch r.URL.Query().Get("status") {
+			case "pending":
+				fullChecks[repoID].Add(1)
+				if repoID == 4 {
+					fmt.Fprint(w, `{"workflow_runs":[{"id":40}]}`)
+					return
+				}
+			case "queued":
+				if repoID == 5 {
+					fmt.Fprint(w, `{"workflow_runs":[{"id":50}]}`)
+					return
+				}
+			}
+			fmt.Fprint(w, `{"workflow_runs":[]}`)
+		}
+	}))
+	t.Cleanup(server.Close)
+	for sweep := range 4 {
+		// Recreate the poller to ensure a manager restart doesn't reset the rotation.
+		p := &poller{github: &github{client: server.Client(), base: server.URL, owner: "owner"},
+			queue: q, installationID: 1, cache: make(map[string]pollPage),
+			token: installationToken{Token: "fixture", ExpiresAt: time.Now().Add(time.Hour)},
+		}
+		if sweep == 1 {
+			includeNew.Store(true)
+		}
+		if err := p.sweep(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if sweep == 1 {
+			rows, err := q.jobs(t.Context(), "WHERE job_id = ?", 500)
+			if err != nil || len(rows) != 1 {
+				t.Fatalf("new repository's queued run was missed in its first sweep: %v, %v", rows, err)
+			}
+		}
+	}
+	for id := 1; id <= 5; id++ {
+		if fullChecks[id].Load() == 0 {
+			t.Errorf("repository %d never received a full scan", id)
+		}
+	}
+	rows, err := q.jobs(t.Context(), "WHERE job_id = ?", 400)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("quiet repository's pending run was missed: %v, %v", rows, err)
+	}
+}
+
+func TestPollerStopsOnRateLimitAndRecordsFailedScan(t *testing.T) {
+	q, err := openQueue(filepath.Join(t.TempDir(), "queue.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(q.close)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/installation/repositories":
+			fmt.Fprint(w, `{"repositories":[
+				{"id":1,"full_name":"owner/first","private":true,"owner":{"login":"owner"}},
+				{"id":2,"full_name":"owner/second","private":true,"owner":{"login":"owner"}}]}`)
+		case "/repos/owner/first/actions/runs":
+			w.Header().Set("Retry-After", "5")
+			w.WriteHeader(http.StatusTooManyRequests)
+		default:
+			t.Errorf("GitHub call after a rate-limit response: %s", r.URL.Path)
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	t.Cleanup(server.Close)
+	p := &poller{github: &github{client: server.Client(), base: server.URL, owner: "owner"},
+		queue: q, installationID: 1, cache: make(map[string]pollPage),
+		token: installationToken{Token: "fixture", ExpiresAt: time.Now().Add(time.Hour)},
+	}
+	var apiErr *githubError
+	if err := p.sweep(t.Context()); !errors.As(err, &apiErr) || time.Until(apiErr.retryAt) < time.Second {
+		t.Fatalf("expected a rate limit with a retry time, got %v", err)
+	}
+	results, err := readRepositoryPolls(t.Context(), q.DB, 1)
+	if err != nil || len(results) != 1 || !strings.Contains(results[1].lastError, "HTTP 429") {
+		t.Fatalf("unexpected recorded poll results: %+v, %v", results, err)
 	}
 }

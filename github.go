@@ -237,13 +237,11 @@ func (g *github) eligible(ctx context.Context, j job, token string) (bool, error
 	return repo.Private && repo.ID == j.repositoryID && strings.EqualFold(repo.Owner.Login, g.owner), err
 }
 
-func (g *github) jobStatus(ctx context.Context, j job, token string) (string, error) {
-	var out struct {
-		Status string `json:"status"`
-	}
+func (g *github) jobDetails(ctx context.Context, j job, token string) (workflowJob, error) {
+	var out workflowJob
 	path := fmt.Sprintf("/repos/%s/actions/jobs/%d", j.repository, j.id)
 	err := g.request(ctx, http.MethodGet, path, token, nil, &out)
-	return out.Status, err
+	return out, err
 }
 
 func (g *github) provision(ctx context.Context, j job, name, token string) (int64, string, error) {
