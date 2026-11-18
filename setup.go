@@ -36,11 +36,21 @@ type setupOptions struct {
 	webhookURL string
 	port       int
 	kubernetes bool
+	panel      bool
+	panelURL   string
 }
 
 func (opts setupOptions) validate() error {
 	if opts.port < 0 || opts.port > 65535 {
 		return errors.New("listen port must be between 0 and 65535")
+	}
+	if opts.panelURL != "" {
+		if !opts.panel {
+			return errors.New("--panel-url requires --panel")
+		}
+		if _, err := parsePanelURL(opts.panelURL); err != nil {
+			return fmt.Errorf("--panel-url: %w", err)
+		}
 	}
 	if opts.webhookURL == "" {
 		return nil
@@ -97,8 +107,17 @@ func setup(ctx context.Context, out io.Writer, dir string, client *http.Client, 
 	}
 	api := &github{client: client, base: apiBase, appID: values["RUNQUILL_APP_ID"], owner: values["RUNQUILL_OWNER"], key: key}
 	fmt.Fprintf(out, "Configuration ready for %s in %s.\n", api.owner, filepath.Join(dir, setupEnvFile))
-	if err := waitForSetupInstallation(ctx, out, api); err != nil {
+	installation, err := waitForSetupInstallation(ctx, out, api)
+	if err != nil {
 		return fmt.Errorf("check GitHub App installation (rerun runquill setup to resume): %w", err)
+	}
+	var panel panelOAuthConfig
+	if opts.panel {
+		panel, err = configurePanelSetup(ctx, out, filepath.Join(dir, setupEnvFile), envData, values, opts, installation.Account.ID)
+		if err != nil {
+			return fmt.Errorf("configure panel (rerun runquill setup --panel to resume): %w", err)
+		}
+		fmt.Fprintln(out, "Panel settings saved in .env.")
 	}
 
 	if opts.kubernetes {
@@ -108,6 +127,10 @@ func setup(ctx context.Context, out io.Writer, dir string, client *http.Client, 
 		fmt.Fprintln(out, "  kubectl -n runquill-system create secret generic runquill-github-key --from-file=github-app.pem")
 		fmt.Fprintln(out, "  kubectl -n runquill-system rollout status deployment/runquill")
 		fmt.Fprintln(out, "  kubectl -n runquill-system exec deployment/runquill -- runquill doctor")
+		if opts.panel {
+			fmt.Fprintln(out, "  kubectl -n runquill-system port-forward svc/runquill 8081:8081")
+			printPanelSetupNext(out, panel, opts.kubernetes)
+		}
 		if endpoint := values["RUNQUILL_WEBHOOK_URL"]; endpoint != "" {
 			fmt.Fprintf(out, "Route %s to /webhook on the runquill Service's port 8080.\n", endpoint)
 		}
@@ -116,13 +139,20 @@ func setup(ctx context.Context, out io.Writer, dir string, client *http.Client, 
 	}
 
 	fmt.Fprintln(out, "GitHub App installed with access to all repositories. Run these commands from the Runquill project directory:")
+	compose := "docker compose"
+	if opts.panel {
+		compose += " -f compose.yaml -f compose.panel.yaml"
+	}
 	if runner := values["RUNQUILL_RUNNER_IMAGE"]; setupImage.MatchString(runner) && setupImage.MatchString(values["RUNQUILL_MANAGER_IMAGE"]) {
-		fmt.Fprintf(out, "  docker pull %s\n  docker compose pull manager\n  docker compose up -d --no-build\n", runner)
+		fmt.Fprintf(out, "  docker pull %s\n  %s pull manager\n  %s up -d --no-build\n", runner, compose, compose)
 	} else {
 		fmt.Fprintln(out, "  docker build --pull -t runquill-runner:local runner")
-		fmt.Fprintln(out, "  docker compose up -d --build")
+		fmt.Fprintf(out, "  %s up -d --build\n", compose)
 	}
-	fmt.Fprintln(out, "  docker compose exec manager runquill doctor")
+	fmt.Fprintf(out, "  %s exec manager runquill doctor\n", compose)
+	if opts.panel {
+		printPanelSetupNext(out, panel, opts.kubernetes)
+	}
 	if endpoint := values["RUNQUILL_WEBHOOK_URL"]; endpoint != "" {
 		fmt.Fprintf(out, "Forward %s to http://127.0.0.1:8080/webhook with your HTTPS reverse proxy.\n", endpoint)
 	}
@@ -258,6 +288,10 @@ func saveSetupFile(path string, data []byte) error {
 }
 
 func writeSetupFile(path string, data []byte) error {
+	return prepareSetupFile(path, data, func(tmp string) error { return os.Link(tmp, path) })
+}
+
+func prepareSetupFile(path string, data []byte, install func(string) error) error {
 	file, err := os.CreateTemp(filepath.Dir(path), ".runquill-setup-*")
 	if err != nil {
 		return err
@@ -274,17 +308,17 @@ func writeSetupFile(path string, data []byte) error {
 	if err := file.Close(); err != nil {
 		return err
 	}
-	return os.Link(file.Name(), path)
+	return install(file.Name())
 }
 
-func waitForSetupInstallation(ctx context.Context, out io.Writer, api *github) error {
+func waitForSetupInstallation(ctx context.Context, out io.Writer, api *github) (githubInstallation, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	instructionsShown := false
 	for {
 		jwt, err := api.jwt(time.Now())
 		if err != nil {
-			return err
+			return githubInstallation{}, err
 		}
 		inst, err := api.installation(ctx, jwt)
 		if err == nil {
@@ -292,18 +326,18 @@ func waitForSetupInstallation(ctx context.Context, out io.Writer, api *github) e
 			if err != nil {
 				fmt.Fprintf(out, "Review the App installation at https://github.com/settings/installations/%d\n", inst.ID)
 			}
-			return err
+			return inst, err
 		}
 		if !githubNotFound(err) {
-			return err
+			return githubInstallation{}, err
 		}
 		if !instructionsShown {
 			var app struct{ Slug string }
 			if err := api.request(ctx, http.MethodGet, "/app", jwt, nil, &app); err != nil {
-				return err
+				return githubInstallation{}, err
 			}
 			if app.Slug == "" {
-				return errors.New("GitHub did not return an App slug")
+				return githubInstallation{}, errors.New("GitHub did not return an App slug")
 			}
 			fmt.Fprintf(out, "Install the App on %s and select All repositories:\n  https://github.com/apps/%s/installations/new\n", api.owner, url.PathEscape(app.Slug))
 			fmt.Fprintln(out, "Waiting for installation. You can rerun setup to resume.")
@@ -313,7 +347,7 @@ func waitForSetupInstallation(ctx context.Context, out io.Writer, api *github) e
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return ctx.Err()
+			return githubInstallation{}, ctx.Err()
 		case <-timer.C:
 		}
 	}

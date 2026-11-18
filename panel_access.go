@@ -22,6 +22,7 @@ import (
 )
 
 const (
+	panelCallbackPath    = "/auth/github/callback"
 	panelSessionLifetime = 12 * time.Hour
 	panelLoginLifetime   = 10 * time.Minute
 	panelPendingLimit    = 256
@@ -96,11 +97,9 @@ func loadPanelOAuthConfig() (panelOAuthConfig, error) {
 }
 
 func parsePanelOAuthConfig(origin, id, secret, bootstrap string) (panelOAuthConfig, error) {
-	u, err := url.Parse(origin)
-	if err != nil || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery ||
-		u.Fragment != "" || (u.Path != "" && u.Path != "/") ||
-		(u.Scheme != "https" && !(u.Scheme == "http" && isPanelLoopback(u.Hostname()))) {
-		return panelOAuthConfig{}, errors.New("set RUNQUILL_PANEL_URL to its HTTPS origin or an HTTP loopback origin")
+	u, err := parsePanelURL(origin)
+	if err != nil {
+		return panelOAuthConfig{}, err
 	}
 	if id == "" || secret == "" {
 		return panelOAuthConfig{}, errors.New("set RUNQUILL_PANEL_GITHUB_CLIENT_ID and RUNQUILL_PANEL_GITHUB_CLIENT_SECRET")
@@ -112,12 +111,36 @@ func parsePanelOAuthConfig(origin, id, secret, bootstrap string) (panelOAuthConf
 			return panelOAuthConfig{}, errors.New("RUNQUILL_PANEL_BOOTSTRAP_ID must be a positive GitHub user ID")
 		}
 	}
-	host := strings.ToLower(u.Host)
-	if u.Scheme == "https" && u.Port() == "443" || u.Scheme == "http" && u.Port() == "80" {
-		host = strings.ToLower(strings.TrimSuffix(u.Host, ":"+u.Port()))
-	}
-	return panelOAuthConfig{origin: u.Scheme + "://" + host, host: host, clientID: id, clientSecret: secret,
+	return panelOAuthConfig{origin: u.String(), host: u.Host, clientID: id, clientSecret: secret,
 		secure: u.Scheme == "https", bootstrapID: bootstrapID}, nil
+}
+
+func parsePanelURL(origin string) (*url.URL, error) {
+	u, err := url.Parse(origin)
+	if err != nil || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery ||
+		u.Fragment != "" || strings.ContainsAny(origin, "#$\\'\"") || (u.EscapedPath() != "" && u.EscapedPath() != "/") ||
+		(u.Scheme != "https" && !(u.Scheme == "http" && isPanelLoopback(u.Hostname()))) {
+		return nil, errors.New("set RUNQUILL_PANEL_URL to its HTTPS origin or an HTTP loopback origin")
+	}
+	if strings.HasSuffix(u.Host, ":") {
+		return nil, errors.New("RUNQUILL_PANEL_URL has an invalid port")
+	}
+	if port := u.Port(); port != "" {
+		n, err := strconv.Atoi(port)
+		if err != nil || n < 1 || n > 65535 {
+			return nil, errors.New("RUNQUILL_PANEL_URL has an invalid port")
+		}
+		if u.Scheme == "https" && n == 443 || u.Scheme == "http" && n == 80 {
+			u.Host = strings.TrimSuffix(u.Host, ":"+port)
+		}
+	}
+	u.Host = strings.ToLower(u.Host)
+	u.Path, u.RawPath = "", ""
+	return u, nil
+}
+
+func (cfg panelOAuthConfig) callbackURL() string {
+	return cfg.origin + panelCallbackPath
 }
 
 func isPanelLoopback(host string) bool {
@@ -215,7 +238,7 @@ func (a *panelAccess) githubLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	a.setCookie(w, "oauth", state, int(panelLoginLifetime.Seconds()))
 	challenge := panelDigest(verifier)
-	query := url.Values{"client_id": {a.cfg.clientID}, "redirect_uri": {a.cfg.origin + "/auth/github/callback"},
+	query := url.Values{"client_id": {a.cfg.clientID}, "redirect_uri": {a.cfg.callbackURL()},
 		"state": {state}, "code_challenge": {base64.RawURLEncoding.EncodeToString(challenge[:])},
 		"code_challenge_method": {"S256"}, "allow_signup": {"false"}}
 	http.Redirect(w, r, "https://github.com/login/oauth/authorize?"+query.Encode(), http.StatusFound)
@@ -255,7 +278,7 @@ func (a *panelAccess) githubCallback(w http.ResponseWriter, r *http.Request) {
 
 func (a *panelAccess) exchangeGitHubIdentity(ctx context.Context, code, verifier string, user *panelIdentity) error {
 	form := url.Values{"client_id": {a.cfg.clientID}, "client_secret": {a.cfg.clientSecret},
-		"code": {code}, "code_verifier": {verifier}, "redirect_uri": {a.cfg.origin + "/auth/github/callback"}}
+		"code": {code}, "code_verifier": {verifier}, "redirect_uri": {a.cfg.callbackURL()}}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://github.com/login/oauth/access_token", strings.NewReader(form.Encode()))
 	if err != nil {
 		return err

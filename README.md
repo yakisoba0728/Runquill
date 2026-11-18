@@ -4,11 +4,21 @@ English · [한국어](README.ko.md)
 
 Runquill runs GitHub Actions jobs from your personal account's private repositories on your Linux Docker servers or K3s cluster. Install one GitHub App with **All repositories** access, then opt jobs in through `runs-on`. New private repositories use the same installation.
 
-[Quickstart](#install-a-public-release) · [First job](#verify-your-first-job) · [K3s](deploy/k3s/README.md) · [Worker servers](#add-docker-worker-servers) · [Release downloads](https://github.com/yakisoba0728/Runquill/releases)
+[Quickstart](#quickstart) · [First job](#verify-your-first-job) · [Sample panel](#sample-panel) · [Team panel](#web-panel-and-team-access) · [Release downloads](https://github.com/yakisoba0728/Runquill/releases)
 
-- Each job receives a repository-scoped runner with a fresh filesystem. Docker workers support `docker build`, service containers, and job containers. K3s supports restricted runner Pods and an explicit Docker-in-Docker mode.
-- A SQLite queue limits concurrent runners across repositories and provisions them in job discovery order. The queue and runner records survive a manager restart.
-- A workflow can select a GitHub-hosted runner for any job.
+## Quickstart
+
+1. Install on [Docker](#install-a-public-release) or [K3s](deploy/k3s/README.md). Approve the private GitHub App and install it on your personal account with **All repositories** access.
+2. In a private Git checkout, run `"$HOME/runquill/runquill" workflow init` with the binary from your install directory. Commit the generated workflow to the default branch and select **Actions → Runquill first job → Run workflow**. [First-job walkthrough](#verify-your-first-job)
+3. Check the workflow log for a runner name starting with `runquill-`. After the job finishes, look for `runner removed` in the manager log or confirm cleanup in the [web panel](#web-panel-and-team-access).
+
+| Backend | Runner and workload support |
+| --- | --- |
+| [Docker](#install-a-public-release) | One disposable container per job. Supports `docker build`, service containers and job containers. [Add SSH workers](#add-docker-worker-servers) to share the queue across Docker hosts. |
+| [K3s](deploy/k3s/README.md), `plain` | One restricted Pod per job. Runs shell and other steps that can execute directly in the runner Pod. |
+| [K3s](deploy/k3s/README.md), `dind` | One privileged Docker-in-Docker Pod per job. Opt in for Docker builds, service containers and job containers. |
+
+One manager and its persistent SQLite queue limit runner concurrency across repositories. Each job receives a repository-scoped runner with a fresh filesystem. Workflows can also select GitHub-hosted runners.
 
 **Trust model** · Runquill uses privileged containers for Docker-in-Docker. Run it on a dedicated server and route only trusted code to it. Use a GitHub-hosted runner for workflows that execute untrusted pull request code. Protect the GitHub App key and the manager's Docker socket: the key can administer the repositories granted to the app, and the socket can control the host daemon.
 
@@ -211,11 +221,19 @@ Deploy the manager and its SQLite volume with Kubernetes and provision one Pod p
 
 ## Operate and upgrade
 
+### Sample panel
+
+Once published, the [GitHub Pages demo](https://yakisoba0728.github.io/Runquill/) shows first-job cleanup, recovery from a missed webhook, and an offline worker with synthetic data. Run `"$HOME/runquill/runquill" panel --demo` and open [127.0.0.1:8081](http://127.0.0.1:8081/) to try the same scenarios locally. From a source checkout, use `go run . panel --demo`.
+
+To publish the sample panel, set **Settings → Pages → Source** to **GitHub Actions** and run [Publish sample panel](.github/workflows/demo-pages.yml) from `main`. The workflow publishes the demo's HTML, CSS, scripts, and license. Its run summary links to the deployed site. [GitHub Pages setup](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site)
+
 ### Web panel and team access
 
-Start a sample fleet with `go run . panel --demo` from a source checkout, or `./runquill panel --demo` with the compiled binary. Open [127.0.0.1:8081](http://127.0.0.1:8081/) to try first-job cleanup, webhook recovery, and an offline worker. The `panelweb/` directory can be served as a static demo.
+For a live panel, run `sh install.sh --dir "$HOME/runquill" --panel` with a release that supports guided panel setup. The installer starts Compose with the panel overlay. To add it to an install configured by `setup`, run `./runquill setup --panel` from the install directory and follow the Compose commands it prints. For a browser-accessible HTTPS origin, add `--panel-url https://panel.example.com`. The default origin is `http://127.0.0.1:8081`.
 
-For a live fleet, create a dedicated [GitHub OAuth App](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app) for panel sign-in. The existing runner GitHub App continues to handle provisioning. Register the exact panel origin as the homepage and append `/auth/github/callback` for the authorization callback. Use the GitHub account's numeric ID for the first administrator. The account holder can retrieve it with `gh api user --jq .id`.
+Create a dedicated [GitHub OAuth App](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app) with the homepage and callback URLs shown by setup. Enter its client ID and client secret in the local setup form. Confirm the first administrator's numeric GitHub account ID, which defaults to the runner App installation owner when available. The account holder can look up their ID with `gh api user --jq .id`. The runner GitHub App continues to handle runner provisioning. After the manager starts, sign in with the enrolled GitHub account to verify the OAuth callback end to end.
+
+For v0.2.0 and manual installs, register the panel origin as the OAuth App homepage and append `/auth/github/callback` for the authorization callback. Put the following values in `.env`.
 
 ```dotenv
 RUNQUILL_PANEL_URL=http://127.0.0.1:8081
@@ -275,6 +293,8 @@ The runner Dockerfile pins the upstream GitHub Actions runner image by digest. U
 
 Run the nested Docker smoke test with `RUNQUILL_TEST_DOCKER_IMAGE=runquill-runner:local go test -run '^TestDockerRunner$' -v` after building the runner image. It checks Docker build, PostgreSQL, bind mounts, and removal with a local stand-in for the GitHub listener.
 
-On a version tag, the [release workflow](.github/workflows/release.yml) runs CI, publishes amd64 and arm64 images to GHCR, and attaches the matching Linux binaries and checksums to the release. After the first publish, set both packages to public if they should be anonymously pullable. The workflow publishes to the repository owner's namespace, so forks use their own image names. [GitHub Container registry access](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
+On amd64, [CI](.github/workflows/ci.yml) also starts a disposable K3s cluster. It checks that pausing assignments leaves jobs queued, resuming starts their runners, and job completion removes the runner Pods and credential Secrets. The [two-account OAuth check](panel_live_oauth_test.go) can be run locally with a dedicated OAuth App and separate GitHub accounts for the administrator and viewer.
+
+On a version tag, the [release workflow](.github/workflows/release.yml) runs CI, publishes amd64 and arm64 images to GHCR, and attaches the matching Linux binaries and checksums to the release. After publication in this repository, it verifies the exact tag with the public installer in clean Linux containers on both architectures. After the first publish, set both packages to public if they should be anonymously pullable. The workflow publishes to the repository owner's namespace, so forks use their own image names. [GitHub Container registry access](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
 
 Copyright © 2026 Runquill contributors. [Apache License 2.0](LICENSE)

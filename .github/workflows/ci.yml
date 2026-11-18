@@ -40,3 +40,12 @@ jobs:
         env:
           RUNQUILL_TEST_DOCKER_IMAGE: runquill-runner:ci
         run: go test -run '^TestDockerRunner$' -v -timeout 5m
+      - name: Exercise the K3s runner lifecycle and host maintenance
+        if: matrix.os == 'ubuntu-24.04'
+        run: |
+          curl --proto '=https' --proto-redir '=https' -fsSL \
+            https://github.com/k3d-io/k3d/releases/download/v5.9.0/k3d-linux-amd64 -o "$RUNNER_TEMP/k3d"
+          printf '%s  %s\n' 06d8f25bc3a971c4eb29e0ff08429b180402db0f4dec838c9eac427e296800a0 "$RUNNER_TEMP/k3d" |
+            sha256sum --check -
+          chmod 0755 "$RUNNER_TEMP/k3d"
+          K3D="$RUNNER_TEMP/k3d" bash .github/scripts/smoke-k3s.sh

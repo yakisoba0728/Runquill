@@ -161,6 +161,7 @@ func githubRateLimit(res *http.Response, now time.Time) time.Time {
 type githubInstallation struct {
 	ID      int64
 	Account struct {
+		ID    int64
 		Login string
 		Type  string
 	}

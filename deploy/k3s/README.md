@@ -7,7 +7,7 @@ Run one manager Deployment and let Kubernetes schedule a fresh Pod for each GitH
 Use a K3s cluster with a default StorageClass and nodes that can pull the release images and reach GitHub. Keep these namespaces dedicated to Runquill. The manifest places the manager and runner Pods in separate namespaces enforced by restricted Pod Security. A job receives no Kubernetes API credentials.
 
 1. Download the release with `sh install.sh --download-only --dir runquill`. From that directory, run `./runquill setup --k3s` and install the GitHub App with **All repositories** coverage.
-2. Add any [panel settings](../../README.md#web-panel-and-team-access) to `.env` now if you want a panel. Also set `RUNQUILL_PANEL_ADDR=0.0.0.0:8081` in that file.
+2. To enable the panel, use `./runquill setup --k3s --panel` with a release that supports guided panel setup. For v0.2.0 and manual installs, add the [panel settings](../../README.md#web-panel-and-team-access) to `.env` and set `RUNQUILL_PANEL_ADDR=0.0.0.0:8081` in that file.
 3. Apply the manager manifest and create the configuration Secrets from the installation files.
 
 ```sh

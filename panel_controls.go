@@ -56,7 +56,7 @@ func panelPermission(user panelIdentity, required string) bool {
 
 func (a *panelAccess) register(mux *http.ServeMux, panel *panelState) {
 	mux.HandleFunc("GET /auth/github", a.githubLogin)
-	mux.HandleFunc("GET /auth/github/callback", a.githubCallback)
+	mux.HandleFunc("GET "+panelCallbackPath, a.githubCallback)
 	mux.HandleFunc("GET /api/me", a.require("browser", func(w http.ResponseWriter, r *http.Request, user panelIdentity) {
 		panelJSON(w, http.StatusOK, user)
 	}))

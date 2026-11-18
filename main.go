@@ -63,9 +63,11 @@ func main() {
 		var options setupOptions
 		flags.StringVar(&options.webhookURL, "webhook-url", "", "public HTTPS URL ending in /webhook (otherwise use polling)")
 		flags.IntVar(&options.port, "listen-port", 0, "local browser setup port (0 selects a free port)")
+		flags.BoolVar(&options.panel, "panel", false, "guide GitHub OAuth and web panel configuration")
+		flags.StringVar(&options.panelURL, "panel-url", "", "panel origin (defaults to http://127.0.0.1:8081)")
 		flags.BoolVar(&options.kubernetes, "k3s", false, "print Kubernetes deployment instructions after setup")
 		flags.Usage = func() {
-			fmt.Fprintln(flags.Output(), "Usage: runquill setup [--webhook-url URL] [--listen-port PORT] [--k3s]")
+			fmt.Fprintln(flags.Output(), "Usage: runquill setup [--webhook-url URL] [--listen-port PORT] [--k3s] [--panel [--panel-url URL]]")
 			fmt.Fprintln(flags.Output(), "Connect a personal GitHub App and create .env and github-app.pem in the current directory.")
 			flags.PrintDefaults()
 		}

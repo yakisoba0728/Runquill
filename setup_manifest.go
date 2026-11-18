@@ -115,28 +115,38 @@ func registerManifestApp(ctx context.Context, out io.Writer, client *http.Client
 		converted <- result{app, err}
 	})
 
+	res, err := runSetupBrowser(ctx, out, listener, mux, "to create your GitHub App", " https://github.com", converted)
+	if err != nil {
+		return manifestApp{}, err
+	}
+	return res.app, res.err
+}
+
+func runSetupBrowser[T any](ctx context.Context, out io.Writer, listener net.Listener, handler http.Handler, action, formOrigin string, finished <-chan T) (T, error) {
+	var zero T
+	host := listener.Addr().String()
 	server := &http.Server{
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Cache-Control", "no-store")
 			w.Header().Set("Referrer-Policy", "no-referrer")
-			w.Header().Set("Content-Security-Policy", "default-src 'none'; form-action 'self' https://github.com; frame-ancestors 'none'; base-uri 'none'")
+			w.Header().Set("Content-Security-Policy", "default-src 'none'; form-action 'self'"+formOrigin+"; frame-ancestors 'none'; base-uri 'none'")
 			w.Header().Set("X-Content-Type-Options", "nosniff")
 			if r.Host != host {
 				http.Error(w, "Invalid setup host.", http.StatusBadRequest)
 				return
 			}
-			mux.ServeHTTP(w, r)
+			handler.ServeHTTP(w, r)
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		WriteTimeout:      20 * time.Second,
 		IdleTimeout:       10 * time.Second,
 	}
-	if _, err := fmt.Fprintf(out, "Open %s/ in your browser to create your GitHub App.\n", localURL); err != nil {
-		return manifestApp{}, err
+	if _, err := fmt.Fprintf(out, "Open http://%s/ in your browser %s.\n", host, action); err != nil {
+		return zero, err
 	}
 	port := listener.Addr().(*net.TCPAddr).Port
 	if _, err := fmt.Fprintf(out, "For a remote server, forward the setup port from your computer. Then open the URL above.\n  ssh -N -L 127.0.0.1:%[1]d:127.0.0.1:%[1]d user@server\n", port); err != nil {
-		return manifestApp{}, err
+		return zero, err
 	}
 	defer func() {
 		shutdown, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -148,12 +158,12 @@ func registerManifestApp(ctx context.Context, out io.Writer, client *http.Client
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- server.Serve(listener) }()
 	select {
-	case res := <-converted:
-		return res.app, res.err
+	case res := <-finished:
+		return res, nil
 	case err := <-serveErr:
-		return manifestApp{}, fmt.Errorf("serve GitHub App setup: %w", err)
+		return zero, fmt.Errorf("serve browser setup: %w", err)
 	case <-ctx.Done():
-		return manifestApp{}, fmt.Errorf("wait for GitHub App registration: %w", ctx.Err())
+		return zero, fmt.Errorf("wait for browser setup: %w", ctx.Err())
 	}
 }
 

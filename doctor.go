@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -42,10 +44,53 @@ func doctor(ctx context.Context, out io.Writer, repo string) error {
 			api.checkInstallation(ctx, repo, cfg.secret != "", report)
 		}
 	}
+	if addr := os.Getenv("RUNQUILL_PANEL_ADDR"); addr != "" {
+		cfg, err := loadPanelOAuthConfig()
+		report("panel OAuth configuration", err)
+		if err == nil {
+			fmt.Fprintf(out, "Expected GitHub OAuth authorization callback URL: %s\n", cfg.callbackURL())
+			report("panel sign-in listener", checkPanelListener(ctx, addr, cfg))
+			fmt.Fprintf(out, "Open %s/ and sign in to verify the GitHub callback registration and OAuth credentials.\n", cfg.origin)
+		}
+	}
 	if len(failures) == 0 {
 		fmt.Fprintln(out, "Preflight passed. Run your first workflow to verify job discovery, runner assignment, and cleanup.")
 	}
 	return errors.Join(failures...)
+}
+
+func checkPanelListener(ctx context.Context, addr string, cfg panelOAuthConfig) error {
+	host, port, err := net.SplitHostPort(addr)
+	n, portErr := strconv.Atoi(port)
+	if err != nil || portErr != nil || n < 1 || n > 65535 {
+		return errors.New("set RUNQUILL_PANEL_ADDR to a host and fixed port, such as 127.0.0.1:8081")
+	}
+	switch host {
+	case "", "0.0.0.0":
+		host = "127.0.0.1"
+	case "::":
+		host = "::1"
+	}
+	endpoint := url.URL{Scheme: "http", Host: net.JoinHostPort(host, port), Path: "/api/me"}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	if err != nil {
+		return errors.New("could not build the panel probe; review RUNQUILL_PANEL_ADDR")
+	}
+	// Probe the local listener without creating an OAuth state or sending credentials.
+	req.Host = cfg.host
+	transport := &http.Transport{}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: 3 * time.Second,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	res, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("start the panel listener at %s and rerun doctor: %w", addr, err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusUnauthorized {
+		return fmt.Errorf("expected the panel at %s to require sign-in (HTTP 401), got HTTP %d; check the listener and RUNQUILL_PANEL_URL", addr, res.StatusCode)
+	}
+	return nil
 }
 
 func checkDockerFleet(ctx context.Context, image string, report func(string, error)) {

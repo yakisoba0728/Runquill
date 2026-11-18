@@ -7,28 +7,37 @@ directory=./runquill
 webhook=
 listen_port=
 download_only=false
+panel=false
+panel_url=
 
 usage() {
-    printf '%s\n' 'Usage: sh install.sh [--version vX.Y.Z] [--dir PATH] [--webhook-url URL] [--listen-port PORT] [--download-only]'
+    printf '%s\n' 'Usage: sh install.sh [--version vX.Y.Z] [--dir PATH] [--webhook-url URL] [--listen-port PORT] [--download-only] [--panel [--panel-url URL]]'
 }
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --version|--dir|--webhook-url|--listen-port)
+        --version|--dir|--webhook-url|--listen-port|--panel-url)
             if [ "$#" -lt 2 ] || [ -z "$2" ]; then usage >&2; exit 2; fi
             case "$1" in
                 --version) tag=$2 ;;
                 --dir) directory=$2 ;;
                 --webhook-url) webhook=$2 ;;
                 --listen-port) listen_port=$2 ;;
+                --panel-url) panel_url=$2 ;;
             esac
             shift 2
             ;;
+        --panel) panel=true; shift ;;
         --download-only) download_only=true; shift ;;
         -h|--help) usage; exit 0 ;;
         *) usage >&2; exit 2 ;;
     esac
 done
+
+if [ -n "$panel_url" ] && [ "$panel" = false ]; then
+    printf '%s\n' '--panel-url requires --panel.' >&2
+    exit 2
+fi
 
 if [ "$(uname -s)" != Linux ]; then
     printf '%s\n' 'Run the installer on the Linux server that will run Runquill.' >&2
@@ -102,6 +111,14 @@ if [ "$download_only" = true ]; then exit 0; fi
 set -- setup
 if [ -n "$webhook" ]; then set -- "$@" --webhook-url "$webhook"; fi
 if [ -n "$listen_port" ]; then set -- "$@" --listen-port "$listen_port"; fi
+if [ "$panel" = true ]; then
+    if [ ! -f compose.panel.yaml ] || ! ./runquill setup --help 2>&1 | grep -q -- '--panel'; then
+        printf '%s\n' 'This release does not support guided panel setup. Select a newer release.' >&2
+        exit 1
+    fi
+    set -- "$@" --panel
+    if [ -n "$panel_url" ]; then set -- "$@" --panel-url "$panel_url"; fi
+fi
 ./runquill "$@"
 runner_image=$(awk -F= '$1 == "RUNQUILL_RUNNER_IMAGE" {print $2}' .env)
 if ! printf '%s\n' "$runner_image" | grep -Eq '^ghcr\.io/[a-z0-9_./-]+:[A-Za-z0-9_.-]+$' ||
@@ -109,8 +126,10 @@ if ! printf '%s\n' "$runner_image" | grep -Eq '^ghcr\.io/[a-z0-9_./-]+:[A-Za-z0-
     printf '%s\n' 'Setup did not provide a versioned runner image.' >&2
     exit 1
 fi
+set --
+if [ "$panel" = true ]; then set -- -f compose.yaml -f compose.panel.yaml; fi
 docker pull "$runner_image"
-docker compose pull manager
-docker compose up -d --no-build
-docker compose exec -T manager runquill doctor
+docker compose "$@" pull manager
+docker compose "$@" up -d --no-build
+docker compose "$@" exec -T manager runquill doctor
 printf 'First job guide: %s/blob/%s/README.md#verify-your-first-job\n' "$repo" "$tag"

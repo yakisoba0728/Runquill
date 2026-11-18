@@ -84,9 +84,10 @@ func TestGitHubPanelLoginRolesAndTokens(t *testing.T) {
 		t.Fatalf("invalid state cookie: %v", stateCookie)
 	}
 	calls := 0
+	profile := `{"id":101,"login":"fleet-admin"}`
 	access.oauth.Transport = panelTransport(func(r *http.Request) (*http.Response, error) {
 		calls++
-		body := `{"id":101,"login":"fleet-admin"}`
+		body := profile
 		switch r.URL.Host + r.URL.Path {
 		case "github.com/login/oauth/access_token":
 			if err := r.ParseForm(); err != nil {
@@ -134,11 +135,26 @@ func TestGitHubPanelLoginRolesAndTokens(t *testing.T) {
 		access.cfg.origin, "", adminCookie), 409)
 	assertStatus(request("PUT", "/api/team/102", `{"role":"viewer","disabled":false}`,
 		access.cfg.origin, "", adminCookie), 204)
-	viewer, err := access.startSession(t.Context(), panelIdentity{GitHubID: 102, Login: "viewer"})
+	profile = `{"id":102,"login":"fleet-viewer"}`
+	redirect = request("GET", "/auth/github", "", "", "")
+	assertStatus(redirect, 302)
+	authorize, err = url.Parse(redirect.Header().Get("Location"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	viewerCookie := &http.Cookie{Name: access.cookieName("session"), Value: viewer}
+	pkce, state = authorize.Query().Get("code_challenge"), authorize.Query().Get("state")
+	result = request("GET", "/auth/github/callback?code=viewer&state="+state, "", "", "", redirect.Result().Cookies()[0])
+	assertStatus(result, 303)
+	var viewerCookie *http.Cookie
+	for _, cookie := range result.Result().Cookies() {
+		if cookie.Name == access.cookieName("session") {
+			viewerCookie = cookie
+		}
+	}
+	if viewerCookie == nil || viewerCookie.Value == adminCookie.Value || calls != 4 {
+		t.Fatal("viewer did not complete a separate OAuth sign-in")
+	}
+	assertStatus(request("GET", "/api/me", "", "", "", viewerCookie), 200)
 	host := `{"host":"local","cordoned":true}`
 	assertStatus(request("GET", "/api/team", "", "", "", viewerCookie), 403)
 	assertStatus(request("POST", "/api/hosts/cordon", host, access.cfg.origin, "", viewerCookie), 403)

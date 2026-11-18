@@ -1,0 +1,31 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: runquill-runtime-test
+  namespace: runquill-system
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 180
+  template:
+    spec:
+      restartPolicy: Never
+      serviceAccountName: runquill-manager
+      securityContext:
+        runAsUser: 1001
+        runAsGroup: 1001
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: fixture
+          image: runquill-kube-tester:ci
+          imagePullPolicy: Never
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+          args: ["-test.v", "-test.run=^TestKubernetesRunnerLifecycle$", "-test.timeout=2m"]
+          env:
+            - name: RUNQUILL_TEST_K8S_IMAGE
+              value: runquill-kube-fixture:ci
+            - name: RUNQUILL_K8S_RUNNER_NAMESPACE
+              value: runquill-runners

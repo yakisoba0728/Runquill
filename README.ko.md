@@ -4,11 +4,23 @@
 
 개인 GitHub 계정의 비공개 저장소에서 요청한 Actions 작업을 내 서버에서 실행합니다. GitHub App을 **All repositories**로 한 번 설치하면 이후에 만드는 비공개 저장소도 같은 설치로 처리됩니다. 서버에서 관리할 저장소 목록은 필요 없습니다.
 
-[빠른 시작](#공개-릴리스-설치) · [첫 작업](#첫-작업-확인) · [작업 서버 추가](#docker-작업-서버-추가) · [릴리스 다운로드](https://github.com/yakisoba0728/Runquill/releases)
+[빠른 시작](#빠른-시작) · [첫 작업](#첫-작업-확인) · [샘플 패널](#샘플-패널) · [팀 패널](#웹-패널과-팀-권한) · [릴리스 다운로드](https://github.com/yakisoba0728/Runquill/releases)
+
+## 빠른 시작
+
+1. [Docker](#공개-릴리스-설치) 또는 [k3s](deploy/k3s/README.md)에 설치합니다. 비공개 GitHub App 생성을 승인하고 개인 계정에 **All repositories**로 설치합니다.
+2. 비공개 저장소를 내려받은 디렉터리에서 설치한 실행 파일로 `"$HOME/runquill/runquill" workflow init`을 실행합니다. 생성한 워크플로를 기본 브랜치에 커밋한 뒤 GitHub에서 **Actions → Runquill first job → Run workflow**를 선택합니다. [첫 작업 실행 방법](#첫-작업-확인)
+3. 작업 로그에서 `runquill-`로 시작하는 러너 이름을 확인합니다. 작업이 끝나면 매니저의 `runner removed` 로그 또는 [웹 패널](#웹-패널과-팀-권한)에서 정리 결과를 확인합니다.
+
+| 실행 환경 | 러너와 작업 지원 범위 |
+| --- | --- |
+| [Docker](#공개-릴리스-설치) | 작업마다 일회용 컨테이너를 생성합니다. `docker build`, 서비스 컨테이너, 작업 컨테이너를 지원합니다. [SSH 워커](#docker-작업-서버-추가)를 추가하면 여러 Docker 호스트가 대기열을 공유합니다. |
+| [k3s](deploy/k3s/README.md) `plain` | 작업마다 권한을 제한한 Pod를 생성합니다. 셸 등 러너 Pod에서 직접 실행할 수 있는 단계를 지원합니다. |
+| [k3s](deploy/k3s/README.md) `dind` | 작업마다 권한을 부여한 Docker-in-Docker Pod를 생성합니다. Docker 빌드, 서비스 컨테이너, 작업 컨테이너가 필요할 때 선택합니다. |
+
+매니저 한 대와 영속 SQLite 대기열이 저장소 전체의 동시 실행 수를 제한합니다. 작업마다 새 파일시스템을 사용하는 저장소 범위 러너를 받습니다. 워크플로에서 GitHub 호스팅 러너도 선택할 수 있습니다.
 
 **신뢰 범위** · Docker-in-Docker에는 `--privileged`가 필요합니다. 전용 서버에서 신뢰하는 코드만 실행하고, 신뢰하기 어려운 PR 코드는 GitHub 호스팅 러너로 보냅니다. GitHub App 키와 매니저의 Docker 소켓은 각각 설치 범위의 저장소와 호스트 Docker를 관리할 수 있으므로 접근을 제한합니다.
-
-k3s에서는 매니저와 SQLite 볼륨을 배포하고, 각 작업을 독립 Pod에서 실행할 수 있습니다. 설치 방법과 Docker-in-Docker 옵션은 [k3s 가이드](deploy/k3s/README.md)를 확인하세요.
 
 ## 서버 설치
 
@@ -207,11 +219,19 @@ runs-on: ${{ format('runquill-{0}-{1}-test-{2}', github.run_id, github.run_attem
 
 ## 대기열과 작업 환경
 
+### 샘플 패널
+
+[GitHub Pages 데모](https://yakisoba0728.github.io/Runquill/)가 게시되면 첫 작업 정리, 웹훅 누락 후 복구, 워커 오프라인을 샘플 데이터로 체험할 수 있습니다. 로컬에서는 `"$HOME/runquill/runquill" panel --demo`를 실행하고 [127.0.0.1:8081](http://127.0.0.1:8081/)을 엽니다. 소스 체크아웃에서는 `go run . panel --demo`를 사용합니다.
+
+데모를 게시하려면 **Settings → Pages → Source**에서 **GitHub Actions**를 선택하고 `main`에서 [Publish sample panel](.github/workflows/demo-pages.yml) 워크플로를 실행합니다. 워크플로는 데모의 HTML, CSS, 스크립트와 라이선스를 게시합니다. 배포 주소는 실행 결과에 표시됩니다. [GitHub Pages 설정](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site)
+
 ### 웹 패널과 팀 권한
 
-소스 체크아웃에서 `go run . panel --demo`를 실행하거나 빌드한 바이너리로 `./runquill panel --demo`를 실행합니다. [127.0.0.1:8081](http://127.0.0.1:8081/)에서 첫 작업 정리, 웹훅 누락 후 복구, 워커 오프라인 시나리오를 볼 수 있습니다. `panelweb/` 디렉터리를 정적 호스팅에 올리면 같은 데모를 제공할 수 있습니다.
+안내형 패널 설정을 지원하는 릴리스에서 `sh install.sh --dir "$HOME/runquill" --panel`을 실행하면 설치 프로그램이 패널 오버레이를 포함해 Compose를 시작합니다. `setup`으로 구성한 기존 설치에 추가하려면 설치 디렉터리에서 `./runquill setup --panel`을 실행하고 화면에 표시된 Compose 명령을 따릅니다. 브라우저에서 HTTPS 주소로 접속하려면 `--panel-url https://panel.example.com`을 추가합니다. 기본 주소는 `http://127.0.0.1:8081`입니다.
 
-실제 플릿 패널용으로 [GitHub OAuth App](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app)을 만듭니다. 기존 러너용 GitHub App은 러너 등록에 계속 사용합니다. OAuth App의 홈페이지 주소에 패널 주소를 넣고, 콜백 주소에는 `/auth/github/callback`을 붙입니다. 첫 관리자는 GitHub의 숫자 계정 ID로 지정합니다. 해당 계정에서 `gh api user --jq .id`로 확인할 수 있습니다.
+설정에서 표시한 홈페이지와 콜백 주소로 [GitHub OAuth App](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app)을 만듭니다. 로컬 설정 화면에 앱의 Client ID와 Client Secret을 입력하고 첫 관리자의 숫자 GitHub 계정 ID를 확인합니다. 계정 ID를 조회할 수 있으면 러너 App 설치 소유자 ID가 기본값으로 표시됩니다. 계정 ID는 해당 계정에서 `gh api user --jq .id`로 확인할 수 있습니다. 러너용 GitHub App은 러너 등록에 계속 사용합니다. 매니저 시작 후 등록한 GitHub 계정으로 로그인해 OAuth 콜백을 확인합니다.
+
+v0.2.0이나 수동 설치에서는 패널 주소를 OAuth App의 홈페이지 주소로 등록하고, 콜백 주소에는 `/auth/github/callback`을 붙입니다. `.env`에 다음 값을 입력합니다.
 
 ```dotenv
 RUNQUILL_PANEL_URL=http://127.0.0.1:8081
@@ -259,6 +279,8 @@ GitHub에서 작업이 대기 중이라면 `docker compose exec manager runquill
 
 로컬에서 대기열과 웹훅 테스트를 실행하려면 Go 1.26.11 이상에서 `go test -race ./...`를 사용합니다.
 
-[릴리스 검증](.github/workflows/release.yml)은 [CI](.github/workflows/ci.yml)를 통해 amd64와 arm64 Linux에서 Go 테스트와 Docker-in-Docker 검증을 실행합니다.
+[CI](.github/workflows/ci.yml)는 amd64와 arm64 Linux에서 Go 테스트와 Docker-in-Docker 검증을 실행합니다. amd64에서는 임시 k3s 클러스터를 띄워 워커 중지 시 작업이 대기하고, 재개 시 러너가 생성되며, 작업 완료 후 Pod와 자격 증명 Secret이 제거되는지 확인합니다. 관리자와 뷰어에 별도 GitHub 계정을 쓰는 [OAuth 검증](panel_live_oauth_test.go)은 전용 OAuth 앱을 준비해 로컬에서 실행할 수 있습니다.
+
+[릴리스 워크플로](.github/workflows/release.yml)는 이 저장소에 릴리스를 게시한 뒤 두 아키텍처의 깨끗한 Linux 컨테이너에서 공개 설치 스크립트로 해당 태그를 검증합니다.
 
 Copyright © 2026 Runquill contributors. [Apache License 2.0](LICENSE)

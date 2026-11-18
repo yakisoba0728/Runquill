@@ -76,20 +76,67 @@ func TestKubernetesRunnerLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer q.close()
-	s := &scheduler{queue: q, github: &github{base: api.URL, client: api.Client(), key: key, appID: "123", owner: "owner"}, runtime: runtime, limit: 1}
-	now := time.Now()
-	for _, id := range []int64{7001, 7002} {
+	panel := newPanel(config{})
+	access := panelAccessForTest(t, q)
+	handler := panelHandler(panel, access)
+	admin, err := access.startSession(ctx, panelIdentity{GitHubID: 101, Login: "fixture-admin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &scheduler{queue: q, github: &github{base: api.URL, client: api.Client(), key: key, appID: "123", owner: "owner"}, runtime: runtime, limit: 1, panel: panel}
+	tick := func() {
+		t.Helper()
+		if err := s.tick(ctx, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cordon := func(paused bool) {
+		t.Helper()
+		body := fmt.Sprintf(`{"host":%q,"cordoned":%t}`, kubeHost, paused)
+		req := httptest.NewRequest(http.MethodPost, access.cfg.origin+"/api/hosts/cordon", strings.NewReader(body))
+		req.Header.Set("Origin", access.cfg.origin)
+		req.Header.Set("Content-Type", "application/json")
+		req.AddCookie(&http.Cookie{Name: access.cookieName("session"), Value: admin})
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("set host pause to %t: HTTP %d: %s", paused, rec.Code, rec.Body)
+		}
+	}
+	assertPaused := func(wantJIT int32, waiting ...int64) {
+		t.Helper()
+		pods, err := runtime.pods.List(ctx, meta.ListOptions{LabelSelector: kubeRunnerLabel})
+		if err != nil || len(pods.Items) != 0 || generated.Load() != wantJIT {
+			t.Fatalf("unexpected provisioning while paused: JIT %d, Pod list error %v", generated.Load(), err)
+		}
+		snapshot := panel.snapshot.Fleet
+		if snapshot == nil || len(snapshot.Hosts) != 1 || !snapshot.Hosts[0].Cordoned || snapshot.Runners == nil ||
+			snapshot.Runners.OccupiedSlots != 0 || len(snapshot.Jobs) != len(waiting) {
+			t.Fatalf("unexpected fleet while paused: %+v", snapshot)
+		}
+		for i, id := range waiting {
+			job := snapshot.Jobs[i]
+			if job.ID != id || job.Status != "WAITING" || job.QueuePosition != i+1 {
+				t.Fatalf("job %d should be waiting in position %d, got %+v", id, i+1, job)
+			}
+		}
+	}
+	ids := []int64{7001, 7002}
+	tick()
+	cordon(true)
+	for _, id := range ids {
 		j := job{id: id, repository: "owner/fixture", repositoryID: 2, installationID: 1, route: fmt.Sprintf("runquill-17-1-ci-%d", id)}
 		for range 2 {
-			if _, err := q.record(ctx, j, now); err != nil {
+			if _, err := q.record(ctx, j, time.Now()); err != nil {
 				t.Fatal(err)
 			}
 		}
 	}
-	if err := s.tick(ctx, now); err != nil {
-		t.Fatal(err)
-	}
-	for i, id := range []int64{7001, 7002} {
+	tick()
+	assertPaused(0, ids...)
+	cordon(false)
+	tick()
+	for i, id := range ids {
 		list, err := runtime.pods.List(ctx, meta.ListOptions{LabelSelector: kubeRunnerLabel})
 		if err != nil || len(list.Items) != 1 || !strings.HasPrefix(list.Items[0].Name, fmt.Sprintf("runquill-%d-", id)) {
 			t.Fatalf("expected one Pod for FIFO job %d: %v", id, err)
@@ -98,6 +145,7 @@ func TestKubernetesRunnerLifecycle(t *testing.T) {
 		if generated.Load() != int32(i+1) {
 			t.Fatalf("unexpected number of JIT requests at job %d: %d", id, generated.Load())
 		}
+		cordon(true)
 		if err := wait.PollUntilContextCancel(ctx, 300*time.Millisecond, true, func(ctx context.Context) (bool, error) {
 			pod, err := runtime.pods.Get(ctx, name, meta.GetOptions{})
 			if err != nil {
@@ -113,9 +161,10 @@ func TestKubernetesRunnerLifecycle(t *testing.T) {
 		if err := q.advance(ctx, id, completed, time.Now()); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.tick(ctx, time.Now()); err != nil {
-			t.Fatal(err)
-		}
+		tick()
+		assertPaused(int32(i+1), ids[i+1:]...)
+		cordon(false)
+		tick()
 	}
 	pods, err := runtime.pods.List(ctx, meta.ListOptions{LabelSelector: kubeRunnerLabel})
 	if err != nil || len(pods.Items) != 0 || generated.Load() != 2 || deleted.Load() != 2 {
