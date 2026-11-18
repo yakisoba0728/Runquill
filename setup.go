@@ -39,9 +39,17 @@ type setupOptions struct {
 	panel           bool
 	panelURL        string
 	repositoryScope string
+	organization    string
+	runnerGroupID   int64
 }
 
 func (opts setupOptions) validate() error {
+	if opts.organization != "" && !setupLogin.MatchString(opts.organization) {
+		return errors.New("--organization must be a GitHub organization login")
+	}
+	if opts.runnerGroupID < 0 || opts.runnerGroupID > 0 && opts.organization == "" {
+		return errors.New("--runner-group-id must be a positive integer and requires --organization")
+	}
 	if _, err := parseRepositoryScope(opts.repositoryScope); err != nil {
 		return fmt.Errorf("--repository-scope: %w", err)
 	}
@@ -105,6 +113,16 @@ func setup(ctx context.Context, out io.Writer, dir string, client *http.Client, 
 		return fmt.Errorf("this directory is configured for %s. Change the App installation and update %s to switch this installation",
 			repositoryScopeLabel(scope), repositoryScopeEnv)
 	}
+	organization, group, err := parseGitHubTarget(values[ownerTypeEnv], values[runnerGroupEnv])
+	if err != nil {
+		return err
+	}
+	if opts.organization != "" && (!organization || !strings.EqualFold(opts.organization, values["RUNQUILL_OWNER"])) {
+		return errors.New("this directory is configured for a different GitHub account; use a new directory")
+	}
+	if opts.runnerGroupID > 0 && opts.runnerGroupID != group {
+		return fmt.Errorf("this directory uses a different runner group; review %s and your GitHub App permissions", runnerGroupEnv)
+	}
 	keyPath := values["RUNQUILL_KEY_FILE"]
 	if !filepath.IsAbs(keyPath) {
 		keyPath = filepath.Join(dir, keyPath)
@@ -117,7 +135,7 @@ func setup(ctx context.Context, out io.Writer, dir string, client *http.Client, 
 	if err != nil {
 		return fmt.Errorf("parse setup key: %w", err)
 	}
-	api := &github{client: client, base: apiBase, appID: values["RUNQUILL_APP_ID"], owner: values["RUNQUILL_OWNER"], key: key, repositoryScope: scope}
+	api := &github{client: client, base: apiBase, appID: values["RUNQUILL_APP_ID"], owner: values["RUNQUILL_OWNER"], key: key, repositoryScope: scope, organization: organization, runnerGroupID: group}
 	fmt.Fprintf(out, "Configuration ready for %s in %s.\n", api.owner, filepath.Join(dir, setupEnvFile))
 	installation, err := waitForSetupInstallation(ctx, out, api)
 	if err != nil {
@@ -126,7 +144,11 @@ func setup(ctx context.Context, out io.Writer, dir string, client *http.Client, 
 	fmt.Fprintf(out, "GitHub App installed with %s access.\n", repositoryScopeLabel(scope))
 	var panel panelOAuthConfig
 	if opts.panel {
-		panel, err = configurePanelSetup(ctx, out, filepath.Join(dir, setupEnvFile), envData, values, opts, installation.Account.ID)
+		adminID := installation.Account.ID
+		if organization {
+			adminID = 0 // An organization ID cannot sign in to the panel.
+		}
+		panel, err = configurePanelSetup(ctx, out, filepath.Join(dir, setupEnvFile), envData, values, opts, adminID)
 		if err != nil {
 			return fmt.Errorf("configure panel (rerun runquill setup --panel to resume): %w", err)
 		}
@@ -211,12 +233,15 @@ func setupFiles(ctx context.Context, out io.Writer, dir string, client *http.Cli
 		if err != nil {
 			return nil, err
 		}
-		if app.ID <= 0 || app.Owner.Type != "User" || !setupLogin.MatchString(app.Owner.Login) {
-			return nil, errors.New("GitHub did not return an App registered to a personal account")
-		}
 		pending = pendingSetup{
 			Env: setupEnvironment(app.Owner.Login, app.ID, releaseImage, version),
 			PEM: app.PEM,
+		}
+		if opts.organization != "" {
+			pending.Env += fmt.Sprintf("%s=%s\n", ownerTypeEnv, organizationOwnerType)
+		}
+		if opts.runnerGroupID > 0 {
+			pending.Env += fmt.Sprintf("%s=%d\n", runnerGroupEnv, opts.runnerGroupID)
 		}
 		if opts.repositoryScope != "" {
 			pending.Env += fmt.Sprintf("%s=%s\n", repositoryScopeEnv, opts.repositoryScope)
@@ -338,9 +363,13 @@ func waitForSetupInstallation(ctx context.Context, out io.Writer, api *github) (
 		}
 		inst, err := api.installation(ctx, jwt)
 		if err == nil {
-			err := errors.Join(inst.accessErrors(api.repositoryScope))
+			err := errors.Join(inst.accessErrors(api.repositoryScope, api.runnerGroupID > 0))
 			if err != nil {
-				fmt.Fprintf(out, "Review the App installation at https://github.com/settings/installations/%d\n", inst.ID)
+				fmt.Fprintf(out, "Review the App installation at %s\n", api.installationURL(inst.ID))
+				return inst, err
+			}
+			if api.runnerGroupID > 0 {
+				_, err = api.inspectRunnerGroup(ctx, jwt, inst.ID)
 			}
 			return inst, err
 		}

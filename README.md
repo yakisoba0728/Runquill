@@ -2,7 +2,7 @@
 
 English · [한국어](README.ko.md)
 
-Runquill runs GitHub Actions jobs from your personal account's private repositories on your Linux Docker servers or K3s cluster. Install one GitHub App, then opt jobs in through `runs-on`. The default **All repositories** installation discovers new private repositories automatically. You can also [connect selected repositories](#connect-selected-repositories).
+Runquill runs GitHub Actions jobs from private repositories in a personal account or a GitHub organization on your Linux Docker servers or K3s cluster. Install one GitHub App, then opt jobs in through `runs-on`. The default **All repositories** installation discovers new private repositories automatically. You can also [connect selected repositories](#connect-selected-repositories).
 
 [Quickstart](#quickstart) · [First job](#verify-your-first-job) · [Sample panel](#sample-panel) · [Team panel](#web-panel-and-team-access) · [Release downloads](https://github.com/yakisoba0728/Runquill/releases)
 
@@ -77,6 +77,20 @@ sh install.sh --dir "$HOME/runquill" --repository-scope selected
 On GitHub, choose **Only select repositories** and select the private repositories you want to use. GitHub stores that list and the setup saves `RUNQUILL_REPOSITORY_SCOPE=selected` in `.env`. Add or remove repositories through the GitHub App installation settings. With polling enabled, the next sweep can discover jobs in newly approved repositories without restarting the manager. With webhook-only configuration, jobs are discovered through deliveries from GitHub. Run `runquill doctor --repo OWNER/REPO` in the manager environment to check coverage before your first run. [Change GitHub App repository access](https://docs.github.com/en/apps/using-github-apps/reviewing-and-modifying-installed-github-apps)
 
 To switch an existing installation between **All repositories** and **Only select repositories**, change its GitHub settings and set `RUNQUILL_REPOSITORY_SCOPE` to the corresponding `all` or `selected` in the manager configuration. Recreate the Compose manager or update the K3s Secret and restart the Deployment. A configuration without this setting defaults to `all`.
+
+### Connect a GitHub organization
+
+Run setup as an organization owner and install the generated App on that organization. Each manager handles one GitHub account. Use a fresh directory and queue when switching to a different account or runner registration level.
+
+```sh
+./runquill setup --organization YOUR_ORG --repository-scope selected
+```
+
+Pass the same options to the public installer for a Compose deployment. For K3s, add `--k3s` to `setup` as usual. By default, Runquill registers each runner on the repository that requested it, with repository **Actions → Read-only** and **Administration → Read and write** permissions. To use an existing App, set `RUNQUILL_OWNER=YOUR_ORG` and `RUNQUILL_OWNER_TYPE=organization` in `.env`. For panel setup in an organization, enter the GitHub user ID of the person who will administer the panel. [GitHub App manifest registration](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest)
+
+To register runners in an organization runner group, create an organization-owned group with **Selected repositories** access and public repository access disabled. Choose a group without GitHub's workflow-level restrictions. Add only private repositories covered by the App and pass `--runner-group-id ID` to setup or the installer. For an existing App, set `RUNQUILL_RUNNER_GROUP_ID=ID` in `.env` and grant **Self-hosted runners → Read and write** under organization permissions. Runquill checks group policy and repository access before registering each runner. Use the configured group name if your workflow specifies a runner group, and keep the job-specific label. GitHub routes organization runners by group access and matching labels, so share a group only among repositories that trust each other's workflows. [GitHub runner groups](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/manage-access) · [Organization runner API](https://docs.github.com/en/rest/actions/self-hosted-runners#create-configuration-for-a-just-in-time-runner-for-an-organization)
+
+`runquill doctor --repo YOUR_ORG/REPO` checks App coverage and group membership. Use `runquill diagnose YOUR_ORG/REPO` for queued jobs.
 
 ### Start the manager
 

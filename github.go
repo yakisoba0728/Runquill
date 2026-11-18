@@ -37,6 +37,8 @@ type github struct {
 	key             *rsa.PrivateKey
 	owner           string
 	repositoryScope string
+	organization    bool
+	runnerGroupID   int64
 }
 
 func parseRepositoryScope(value string) (string, error) {
@@ -213,29 +215,36 @@ func (inst githubInstallation) checkRepositoryScope(expected string) error {
 	return nil
 }
 
-func (inst githubInstallation) accessErrors(expected string) (scopeErr, permissionErr error) {
+func (inst githubInstallation) accessErrors(expected string, organizationGroup bool) (scopeErr, permissionErr error) {
 	scopeErr = inst.checkRepositoryScope(expected)
 	if actions := inst.Permissions["actions"]; actions != "read" && actions != "write" {
 		permissionErr = errors.New("set Actions to at least Read-only")
 	}
-	if inst.Permissions["administration"] != "write" {
-		permissionErr = errors.Join(permissionErr, errors.New("set Administration to Read and write"))
+	switch {
+	case organizationGroup && inst.Permissions[organizationRunnerPermission] != "write":
+		permissionErr = errors.Join(permissionErr, errors.New("set organization Self-hosted runners to Read and write"))
+	case !organizationGroup && inst.Permissions["administration"] != "write":
+		permissionErr = errors.Join(permissionErr, errors.New("set repository Administration to Read and write"))
 	}
 	return scopeErr, permissionErr
 }
 
 func (g *github) installation(ctx context.Context, jwt string) (githubInstallation, error) {
 	var inst githubInstallation
-	path := "/users/" + url.PathEscape(g.owner) + "/installation"
+	accountPath, accountLabel, accountType := "/users/", "personal account", "User"
+	if g.organization {
+		accountPath, accountLabel, accountType = "/orgs/", "organization", "Organization"
+	}
+	path := accountPath + url.PathEscape(g.owner) + "/installation"
 	err := g.request(ctx, http.MethodGet, path, jwt, nil, &inst)
 	if githubNotFound(err) {
-		return inst, fmt.Errorf("install the GitHub App on the personal account %s: %w", g.owner, err)
+		return inst, fmt.Errorf("install the GitHub App on the %s %s: %w", accountLabel, g.owner, err)
 	}
 	if err != nil {
 		return inst, err
 	}
-	if inst.ID <= 0 || inst.Account.Type != "User" || !strings.EqualFold(inst.Account.Login, g.owner) {
-		return inst, errors.New("GitHub did not return an installation on the configured personal account")
+	if inst.ID <= 0 || inst.Account.Type != accountType || !strings.EqualFold(inst.Account.Login, g.owner) {
+		return inst, fmt.Errorf("GitHub did not return an installation on the configured %s", accountLabel)
 	}
 	if inst.SuspendedAt != nil {
 		return inst, errors.New("the GitHub App installation is suspended")
@@ -249,14 +258,17 @@ func (g *github) repositoryInstallation(ctx context.Context, jwt, name string, i
 	if githubNotFound(err) || err == nil && inst.ID != installationID {
 		return inst, errRepositoryOutsideInstallation
 	}
+	if err == nil && g.organization && (inst.Account.Type != "Organization" || !strings.EqualFold(inst.Account.Login, g.owner)) {
+		return inst, errRepositoryOutsideInstallation
+	}
 	if err == nil && inst.SuspendedAt != nil {
 		return inst, errors.New("the GitHub App installation is suspended")
 	}
 	return inst, err
 }
 
-func (g *github) checkSelectedRepository(ctx context.Context, j job) error {
-	if g.repositoryScope != scopeSelected {
+func (g *github) checkRepositoryAccess(ctx context.Context, j job) error {
+	if !g.organization && g.repositoryScope != scopeSelected {
 		return nil
 	}
 	jwt, err := g.jwt(time.Now())
@@ -267,7 +279,7 @@ func (g *github) checkSelectedRepository(ctx context.Context, j job) error {
 	if err != nil {
 		return err
 	}
-	return inst.checkRepositoryScope(scopeSelected)
+	return inst.checkRepositoryScope(g.repositoryScope)
 }
 
 type installationToken struct {
@@ -292,12 +304,14 @@ func (g *github) token(ctx context.Context, j job) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	body := struct {
-		RepositoryIDs []int64 `json:"repository_ids"`
-	}{[]int64{j.repositoryID}}
+	body := map[string]any{"repository_ids": []int64{j.repositoryID}}
+	if g.runnerGroupID > 0 {
+		// Repository reads never use the organization runner-registration token.
+		body["permissions"] = map[string]string{"actions": "read"}
+	}
 	out, err := g.mintToken(ctx, jwt, j.installationID, body)
 	var apiErr *githubError
-	if g.repositoryScope == scopeSelected && errors.As(err, &apiErr) &&
+	if (g.organization || g.repositoryScope == scopeSelected) && errors.As(err, &apiErr) &&
 		(apiErr.status == http.StatusNotFound || apiErr.status == http.StatusUnprocessableEntity ||
 			apiErr.status == http.StatusForbidden && apiErr.retryAt.IsZero()) {
 		// A token request can fail while a repository is being removed from the installation.
@@ -311,7 +325,7 @@ func (g *github) token(ctx context.Context, j job) (string, error) {
 func (g *github) eligible(ctx context.Context, j job, token string) (repository, bool, error) {
 	var repo repository
 	err := g.request(ctx, http.MethodGet, "/repos/"+j.repository, token, nil, &repo)
-	return repo, repo.ID == j.repositoryID && repo.privateFor(g.owner), err
+	return repo, repo.ID == j.repositoryID && repo.privateFor(g.owner) && !repo.Archived && !repo.Disabled && (!g.organization || repo.Visibility == "private"), err
 }
 
 func (g *github) jobDetails(ctx context.Context, j job, token string) (workflowJob, error) {
@@ -324,16 +338,16 @@ func (g *github) jobDetails(ctx context.Context, j job, token string) (workflowJ
 func (g *github) provision(ctx context.Context, j job, name, token string) (int64, string, error) {
 	body := struct {
 		Name   string   `json:"name"`
-		Group  int      `json:"runner_group_id"`
+		Group  int64    `json:"runner_group_id"`
 		Labels []string `json:"labels"`
-	}{name, 1, []string{j.route}}
+	}{name, max(1, g.runnerGroupID), []string{j.route}}
 	var out struct {
 		Runner struct {
 			ID int64 `json:"id"`
 		} `json:"runner"`
 		Config string `json:"encoded_jit_config"`
 	}
-	path := "/repos/" + j.repository + "/actions/runners/generate-jitconfig"
+	path := g.runnersPath(j) + "/generate-jitconfig"
 	if err := g.request(ctx, http.MethodPost, path, token, body, &out); err != nil {
 		return 0, "", err
 	}
@@ -344,14 +358,20 @@ func (g *github) provision(ctx context.Context, j job, name, token string) (int6
 }
 
 func (g *github) remove(ctx context.Context, j job) error {
-	token, err := g.token(ctx, j)
+	var token string
+	var err error
+	if g.runnerGroupID > 0 {
+		token, err = g.organizationJobToken(ctx, j, false)
+	} else {
+		token, err = g.token(ctx, j)
+	}
 	if err != nil {
 		if githubNotFound(err) || errors.Is(err, errRepositoryOutsideInstallation) {
 			return nil
 		}
 		return err
 	}
-	path := "/repos/" + j.repository + "/actions/runners"
+	path := g.runnersPath(j)
 	id := j.runnerID
 	if id == 0 {
 		// GitHub may have accepted a request before the manager saved the runner ID.

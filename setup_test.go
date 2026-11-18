@@ -24,11 +24,12 @@ import (
 )
 
 func TestSetupCreatesComposeConfiguration(t *testing.T) {
-	t.Run("all by default", func(t *testing.T) { testSetupCreatesComposeConfiguration(t, "") })
-	t.Run("selected", func(t *testing.T) { testSetupCreatesComposeConfiguration(t, scopeSelected) })
+	t.Run("all by default", func(t *testing.T) { testSetupCreatesComposeConfiguration(t, "", false) })
+	t.Run("selected", func(t *testing.T) { testSetupCreatesComposeConfiguration(t, scopeSelected, false) })
+	t.Run("organization selected", func(t *testing.T) { testSetupCreatesComposeConfiguration(t, scopeSelected, true) })
 }
 
-func testSetupCreatesComposeConfiguration(t *testing.T, scope string) {
+func testSetupCreatesComposeConfiguration(t *testing.T, scope string, organization bool) {
 	dir := t.TempDir()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -41,13 +42,19 @@ func testSetupCreatesComposeConfiguration(t *testing.T, scope string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	accountType, installationPath := "User", "/users/owner/installation"
+	opts := setupOptions{webhookURL: webhookURL, repositoryScope: scope}
+	if organization {
+		accountType, installationPath = "Organization", "/orgs/owner/installation"
+		opts.organization = "owner"
+	}
 	service := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/app-manifests/create-test-app/conversions":
 			w.WriteHeader(http.StatusCreated)
-			fmt.Fprintf(w, `{"id":123,"slug":"runquill-test","pem":%q,"webhook_secret":%q,"owner":{"login":"owner","type":"User"}}`, pemData, webhookSecret)
-		case "/users/owner/installation":
-			fmt.Fprintf(w, `{"id":1,"account":{"type":"User","login":"owner"},"repository_selection":%q,"permissions":{"actions":"read","administration":"write"}}`, selected)
+			fmt.Fprintf(w, `{"id":123,"slug":"runquill-test","pem":%q,"webhook_secret":%q,"owner":{"login":"owner","type":%q}}`, pemData, webhookSecret, accountType)
+		case installationPath:
+			fmt.Fprintf(w, `{"id":1,"account":{"type":%q,"login":"owner"},"repository_selection":%q,"permissions":{"actions":"read","administration":"write"}}`, accountType, selected)
 		default:
 			t.Errorf("unexpected GitHub call %s", r.URL.Path)
 			http.NotFound(w, r)
@@ -60,7 +67,7 @@ func testSetupCreatesComposeConfiguration(t *testing.T, scope string) {
 	out := make(manifestTestOutput, 16)
 	done := make(chan error, 1)
 	go func() {
-		done <- setup(ctx, out, dir, service.Client(), service.URL, setupOptions{webhookURL: webhookURL, repositoryScope: scope})
+		done <- setup(ctx, out, dir, service.Client(), service.URL, opts)
 	}()
 	var browserURL string
 	select {
@@ -102,6 +109,9 @@ func testSetupCreatesComposeConfiguration(t *testing.T, scope string) {
 		t.Fatal(err)
 	}
 	expectedEnv := setupEnvironment("owner", 123, releaseImage, version)
+	if organization {
+		expectedEnv += ownerTypeEnv + "=" + organizationOwnerType + "\n"
+	}
 	if scope != "" {
 		expectedEnv += "RUNQUILL_REPOSITORY_SCOPE=" + scope + "\n"
 	}

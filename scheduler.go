@@ -240,7 +240,7 @@ func retryMessage(operation string, cause error) string {
 }
 
 func (s *scheduler) launch(ctx context.Context, j job, host, pool string, now time.Time) (bool, error) {
-	err := s.github.checkSelectedRepository(ctx, j)
+	err := s.github.checkRepositoryAccess(ctx, j)
 	var token string
 	if err == nil {
 		token, err = s.github.token(ctx, j)
@@ -274,6 +274,15 @@ func (s *scheduler) launch(ctx context.Context, j job, host, pool string, now ti
 			return false, s.queue.advanceGitHubJob(ctx, j.id, p, now, observed)
 		}
 		return false, fmt.Errorf("waiting for GitHub to queue job, status %q", observed.Status)
+	}
+	if s.github.runnerGroupID > 0 {
+		token, err = s.github.organizationJobToken(ctx, j, true)
+		if errors.Is(err, errRepositoryOutsideInstallation) {
+			return false, s.discardOutsideInstallation(ctx, j)
+		}
+		if err != nil {
+			return false, err
+		}
 	}
 	var nonce [6]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
@@ -395,12 +404,15 @@ func (s *scheduler) reconcile(ctx context.Context, j job, containers map[string]
 			return err
 		}
 	}
+	if !outsideInstallation || s.github.runnerGroupID > 0 {
+		if err := s.github.remove(ctx, j); err != nil {
+			return err
+		}
+	}
 	if outsideInstallation {
 		if err := s.discardOutsideInstallation(ctx, j); err != nil {
 			return err
 		}
-	} else if err := s.github.remove(ctx, j); err != nil {
-		return err
 	}
 	_, err := s.queue.ExecContext(ctx, `UPDATE jobs SET runner_name = NULL, runner_host = NULL, runner_id = NULL,
         launched_at = NULL, retry_at = ?,

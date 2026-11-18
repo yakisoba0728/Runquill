@@ -85,13 +85,13 @@ func (p *poller) sweep(ctx context.Context) (err error) {
 		if err != nil {
 			return err
 		}
-		if selected {
-			if err := inst.checkRepositoryScope(scopeSelected); err != nil {
+		if selected || p.github.organization {
+			if err := inst.checkRepositoryScope(p.github.repositoryScope); err != nil {
 				return err
 			}
 		}
 		// Keep the account-wide discovery token read-only. The scheduler still mints
-		// a separate repository-scoped token when it needs to register a runner.
+		// a separate scoped token when it needs to register a runner.
 		body := map[string]any{"permissions": map[string]string{"actions": "read"}}
 		token, err := p.github.mintToken(ctx, jwt, inst.ID, body)
 		if err != nil {

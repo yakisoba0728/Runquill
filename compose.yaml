@@ -7,7 +7,9 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
     environment:
-      RUNQUILL_OWNER: ${RUNQUILL_OWNER:?Set your GitHub login in .env}
+      RUNQUILL_OWNER: ${RUNQUILL_OWNER:?Set your GitHub user or organization login in .env}
+      RUNQUILL_OWNER_TYPE: ${RUNQUILL_OWNER_TYPE:-user}
+      RUNQUILL_RUNNER_GROUP_ID: ${RUNQUILL_RUNNER_GROUP_ID:-}
       RUNQUILL_APP_ID: ${RUNQUILL_APP_ID:?Set your GitHub App ID in .env}
       RUNQUILL_REPOSITORY_SCOPE: ${RUNQUILL_REPOSITORY_SCOPE:-all}
       RUNQUILL_WEBHOOK_SECRET: ${RUNQUILL_WEBHOOK_SECRET:-}

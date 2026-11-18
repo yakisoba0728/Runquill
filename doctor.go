@@ -165,9 +165,14 @@ func (g *github) checkInstallation(ctx context.Context, repo string, webhooks bo
 	if err != nil {
 		return
 	}
-	scopeErr, permissionErr := inst.accessErrors(g.repositoryScope)
+	scopeErr, permissionErr := inst.accessErrors(g.repositoryScope, g.runnerGroupID > 0)
 	report("GitHub App repository access ("+repositoryScopeLabel(inst.RepositorySelection)+")", scopeErr)
 	report("GitHub App permissions", permissionErr)
+	var group map[int64]string
+	if g.runnerGroupID > 0 && scopeErr == nil && permissionErr == nil {
+		group, err = g.inspectRunnerGroup(ctx, jwt, inst.ID)
+		report(fmt.Sprintf("GitHub organization runner group %d", g.runnerGroupID), err)
+	}
 	if webhooks {
 		var eventErr error
 		if !slices.Contains(inst.Events, "workflow_job") {
@@ -198,8 +203,18 @@ func (g *github) checkInstallation(ctx context.Context, repo string, webhooks bo
 		}
 		_, err := g.repositoryInstallation(ctx, jwt, name, inst.ID)
 		if errors.Is(err, errRepositoryOutsideInstallation) && inst.RepositorySelection == scopeSelected {
-			err = fmt.Errorf("%w. Add %s at https://github.com/settings/installations/%d", err, name, inst.ID)
+			err = fmt.Errorf("%w. Add %s at %s", err, name, g.installationURL(inst.ID))
 		}
 		report("GitHub App covers "+name, err)
+		if err == nil && group != nil {
+			groupErr := fmt.Errorf("runner group %d does not allow %s", g.runnerGroupID, name)
+			for _, allowed := range group {
+				if allowed == name {
+					groupErr = nil
+					break
+				}
+			}
+			report("GitHub runner group covers "+name, groupErr)
+		}
 	}
 }

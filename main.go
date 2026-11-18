@@ -67,9 +67,11 @@ func main() {
 		flags.StringVar(&options.panelURL, "panel-url", "", "panel origin (defaults to http://127.0.0.1:8081)")
 		flags.BoolVar(&options.kubernetes, "k3s", false, "print Kubernetes deployment instructions after setup")
 		flags.StringVar(&options.repositoryScope, "repository-scope", "", "GitHub App repository access: all (default for new setups) or selected")
+		flags.StringVar(&options.organization, "organization", "", "register the GitHub App in this organization")
+		flags.Int64Var(&options.runnerGroupID, "runner-group-id", 0, "register organization runners in this GitHub runner group (defaults to repository runners)")
 		flags.Usage = func() {
-			fmt.Fprintln(flags.Output(), "Usage: runquill setup [--webhook-url URL] [--listen-port PORT] [--k3s] [--repository-scope all|selected] [--panel [--panel-url URL]]")
-			fmt.Fprintln(flags.Output(), "Connect a personal GitHub App and create .env and github-app.pem in the current directory.")
+			fmt.Fprintln(flags.Output(), "Usage: runquill setup [--webhook-url URL] [--listen-port PORT] [--k3s] [--repository-scope all|selected] [--organization ORG [--runner-group-id ID]] [--panel [--panel-url URL]]")
+			fmt.Fprintln(flags.Output(), "Connect a GitHub App and create .env and github-app.pem in the current directory.")
 			flags.PrintDefaults()
 		}
 		flags.Parse(flag.Args()[1:])
@@ -167,6 +169,8 @@ func main() {
 type config struct {
 	owner, appID, secret, keyPath, runnerImage string
 	repositoryScope                            string
+	organization                               bool
+	runnerGroupID                              int64
 	limit                                      int
 	pollInterval                               time.Duration
 }
@@ -200,6 +204,13 @@ func loadConfig() (config, error) {
 	if err != nil {
 		return cfg, fmt.Errorf("%s: %w", repositoryScopeEnv, err)
 	}
+	cfg.organization, cfg.runnerGroupID, err = parseGitHubTarget(os.Getenv(ownerTypeEnv), os.Getenv(runnerGroupEnv))
+	if err != nil {
+		return cfg, err
+	}
+	if cfg.organization && !setupLogin.MatchString(cfg.owner) {
+		return cfg, errors.New("set RUNQUILL_OWNER to the GitHub organization login")
+	}
 	cfg.pollInterval, err = time.ParseDuration(env("RUNQUILL_POLL_INTERVAL", "30s"))
 	if err != nil || cfg.pollInterval < 0 {
 		return cfg, errors.New("RUNQUILL_POLL_INTERVAL must be a duration such as 30s, or 0 to disable polling")
@@ -228,7 +239,8 @@ func (cfg config) github() (*github, error) {
 		return nil, fmt.Errorf("parse GitHub App key: %w", err)
 	}
 	return &github{client: &http.Client{Timeout: 10 * time.Second}, base: githubAPIBase,
-		appID: cfg.appID, key: key, owner: cfg.owner, repositoryScope: cfg.repositoryScope}, nil
+		appID: cfg.appID, key: key, owner: cfg.owner, repositoryScope: cfg.repositoryScope,
+		organization: cfg.organization, runnerGroupID: cfg.runnerGroupID}, nil
 }
 
 func run(ctx context.Context) error {

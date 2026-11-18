@@ -211,7 +211,7 @@ func TestSelectedRepositoryLifecycle(t *testing.T) {
 	if got := jobs("WHERE job_id = 42"); len(got) != 0 || len(runtime.removed) != 2 || removed.Load() != 1 {
 		t.Fatalf("revoked repository should release its local runner without remote access: %+v", got)
 	}
-	if err := api.checkSelectedRepository(ctx, job{repository: "owner/approved", installationID: 7}); !errors.Is(err, errRepositoryOutsideInstallation) {
+	if err := api.checkRepositoryAccess(ctx, job{repository: "owner/approved", installationID: 7}); !errors.Is(err, errRepositoryOutsideInstallation) {
 		t.Fatalf("expected explicit revoked access, got %v", err)
 	}
 }

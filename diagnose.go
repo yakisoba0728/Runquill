@@ -46,12 +46,12 @@ func diagnoseRepository(ctx context.Context, out io.Writer, api *github, db *sql
 	}
 	if _, err := api.repositoryInstallation(ctx, jwt, name, inst.ID); err != nil {
 		if errors.Is(err, errRepositoryOutsideInstallation) && inst.RepositorySelection == scopeSelected {
-			return fmt.Errorf("check GitHub App access to %s: %w. Add it at https://github.com/settings/installations/%d", name, err, inst.ID)
+			return fmt.Errorf("check GitHub App access to %s: %w. Add it at %s", name, err, api.installationURL(inst.ID))
 		}
 		return fmt.Errorf("check GitHub App access to %s: %w", name, err)
 	}
 	fmt.Fprintf(out, "GitHub App installation covers %s\n", name)
-	scopeErr, permissionErr := inst.accessErrors(api.repositoryScope)
+	scopeErr, permissionErr := inst.accessErrors(api.repositoryScope, api.runnerGroupID > 0)
 	fmt.Fprintf(out, "Repository access: %s\n", repositoryScopeLabel(inst.RepositorySelection))
 	if scopeErr != nil {
 		return errors.Join(scopeErr, permissionErr)
@@ -73,6 +73,19 @@ func diagnoseRepository(ctx context.Context, out io.Writer, api *github, db *sql
 	}
 	if !repo.privateFor(api.owner) || repo.Archived || repo.Disabled || repo.ID <= 0 {
 		return errors.New("Runquill requires an active private repository owned by RUNQUILL_OWNER")
+	}
+	if api.runnerGroupID > 0 {
+		if permissionErr != nil {
+			return permissionErr
+		}
+		repositories, err := api.inspectRunnerGroup(ctx, jwt, inst.ID)
+		if err != nil {
+			return err
+		}
+		if err := api.checkRunnerGroupRepository(repositories, repo.ID, name); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "GitHub runner group %d covers %s\n", api.runnerGroupID, name)
 	}
 	poll, err := latestRepositoryPoll(ctx, db, inst.ID, repo.ID)
 	if err != nil {

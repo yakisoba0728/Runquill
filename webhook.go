@@ -24,12 +24,13 @@ var (
 )
 
 type repository struct {
-	ID       int64  `json:"id"`
-	FullName string `json:"full_name"`
-	Private  bool   `json:"private"`
-	Archived bool   `json:"archived"`
-	Disabled bool   `json:"disabled"`
-	Owner    struct {
+	ID         int64  `json:"id"`
+	FullName   string `json:"full_name"`
+	Private    bool   `json:"private"`
+	Visibility string `json:"visibility"`
+	Archived   bool   `json:"archived"`
+	Disabled   bool   `json:"disabled"`
+	Owner      struct {
 		Login string `json:"login"`
 	} `json:"owner"`
 }
@@ -94,9 +95,9 @@ func webhook(q *queue, api *github, secret []byte, panel *panelState) http.Handl
 				return
 			}
 			if eligible {
-				if api.repositoryScope == scopeSelected {
+				if api.organization || api.repositoryScope == scopeSelected {
 					ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
-					err := api.checkSelectedRepository(ctx, job)
+					err := api.checkRepositoryAccess(ctx, job)
 					cancel()
 					if errors.Is(err, errRepositoryOutsideInstallation) {
 						w.WriteHeader(http.StatusAccepted)
@@ -129,7 +130,7 @@ func webhook(q *queue, api *github, secret []byte, panel *panelState) http.Handl
 }
 
 func (repo repository) privateFor(owner string) bool {
-	return repo.Private && strings.EqualFold(repo.Owner.Login, owner)
+	return repo.Private && (repo.Visibility == "" || repo.Visibility == "private") && strings.EqualFold(repo.Owner.Login, owner)
 }
 
 func (j workflowJob) queueJob(owner string, repo repository, installationID int64, status string) (job, bool, error) {

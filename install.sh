@@ -7,17 +7,19 @@ directory=./runquill
 webhook=
 listen_port=
 repository_scope=
+organization=
+runner_group_id=
 download_only=false
 panel=false
 panel_url=
 
 usage() {
-    printf '%s\n' 'Usage: sh install.sh [--version vX.Y.Z] [--dir PATH] [--webhook-url URL] [--listen-port PORT] [--repository-scope all|selected] [--download-only] [--panel [--panel-url URL]]'
+    printf '%s\n' 'Usage: sh install.sh [--version vX.Y.Z] [--dir PATH] [--webhook-url URL] [--listen-port PORT] [--repository-scope all|selected] [--organization ORG [--runner-group-id ID]] [--download-only] [--panel [--panel-url URL]]'
 }
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --version|--dir|--webhook-url|--listen-port|--panel-url|--repository-scope)
+        --version|--dir|--webhook-url|--listen-port|--panel-url|--repository-scope|--organization|--runner-group-id)
             if [ "$#" -lt 2 ] || [ -z "$2" ]; then usage >&2; exit 2; fi
             case "$1" in
                 --version) tag=$2 ;;
@@ -25,6 +27,8 @@ while [ "$#" -gt 0 ]; do
                 --webhook-url) webhook=$2 ;;
                 --listen-port) listen_port=$2 ;;
                 --panel-url) panel_url=$2 ;;
+                --organization) organization=$2 ;;
+                --runner-group-id) runner_group_id=$2 ;;
                 --repository-scope)
                     case "$2" in all|selected) repository_scope=$2 ;; *) usage >&2; exit 2 ;; esac
                     ;;
@@ -38,6 +42,10 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
+if [ -n "$runner_group_id" ] && [ -z "$organization" ]; then
+    printf '%s\n' '--runner-group-id requires --organization.' >&2
+    exit 2
+fi
 if [ -n "$panel_url" ] && [ "$panel" = false ]; then
     printf '%s\n' '--panel-url requires --panel.' >&2
     exit 2
@@ -121,6 +129,14 @@ if [ -n "$repository_scope" ]; then
         exit 1
     fi
     set -- "$@" --repository-scope "$repository_scope"
+fi
+if [ -n "$organization" ]; then
+    if ! ./runquill setup --help 2>&1 | grep -q -- '--organization'; then
+        printf '%s\n' 'This release does not support organization setup. Select a newer release.' >&2
+        exit 1
+    fi
+    set -- "$@" --organization "$organization"
+    if [ -n "$runner_group_id" ]; then set -- "$@" --runner-group-id "$runner_group_id"; fi
 fi
 if [ "$panel" = true ]; then
     if [ ! -f compose.panel.yaml ] || ! ./runquill setup --help 2>&1 | grep -q -- '--panel'; then

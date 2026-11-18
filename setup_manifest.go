@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 )
@@ -33,9 +34,9 @@ var appManifestPage = template.Must(template.New("manifest").Parse(`<!doctype ht
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Runquill setup</title></head>
 <body>
 <h1>Connect Runquill to GitHub</h1>
-<p>Create a private GitHub App with Actions read and Administration write permissions.
+<p>Create a private GitHub App with Actions read and {{.RunnerPermission}} write permissions.
 {{if .Webhook}}GitHub will send workflow job events to your HTTPS webhook.{{else}}Runquill will discover jobs by polling GitHub.{{end}}</p>
-<form method="post" action="https://github.com/settings/apps/new?state={{.State}}">
+<form method="post" action="{{.Action}}?state={{.State}}">
   <input type="hidden" name="manifest" value="{{.Manifest}}">
   <button type="submit">Create GitHub App</button>
 </form>
@@ -54,6 +55,14 @@ func registerManifestApp(ctx context.Context, out io.Writer, client *http.Client
 	host := listener.Addr().String()
 	localURL := "http://" + host
 	state := rand.Text()
+	action := "https://github.com/settings/apps/new"
+	if opts.organization != "" {
+		action = "https://github.com/organizations/" + url.PathEscape(opts.organization) + "/settings/apps/new"
+	}
+	runnerPermission, permissionLabel := "administration", "repository Administration"
+	if opts.runnerGroupID > 0 {
+		runnerPermission, permissionLabel = organizationRunnerPermission, "organization Self-hosted runners"
+	}
 	fields := map[string]any{
 		"name":            "Runquill-" + rand.Text()[:8],
 		"url":             "https://github.com/yakisoba0728/Runquill",
@@ -61,7 +70,7 @@ func registerManifestApp(ctx context.Context, out io.Writer, client *http.Client
 		"public":          false,
 		"hook_attributes": map[string]any{"url": "https://example.com/webhook", "active": false},
 		"default_permissions": map[string]string{
-			"actions": "read", "administration": "write",
+			"actions": "read", runnerPermission: "write",
 		},
 	}
 	if opts.webhookURL != "" {
@@ -83,9 +92,9 @@ func registerManifestApp(ctx context.Context, out io.Writer, client *http.Client
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		page := struct {
-			State, Manifest string
-			Webhook         bool
-		}{state, string(manifest), opts.webhookURL != ""}
+			Action, State, Manifest, RunnerPermission string
+			Webhook                                   bool
+		}{action, state, string(manifest), permissionLabel, opts.webhookURL != ""}
 		_ = appManifestPage.Execute(w, page)
 	})
 	mux.HandleFunc("GET /callback", func(w http.ResponseWriter, r *http.Request) {
@@ -106,6 +115,9 @@ func registerManifestApp(ctx context.Context, out io.Writer, client *http.Client
 			return
 		}
 		app, err := convertManifestCode(ctx, client, apiBase, code)
+		if err == nil {
+			err = checkManifestOwner(app, opts.organization)
+		}
 		if err != nil {
 			http.Error(w, "GitHub App registration needs attention. Check the terminal for details.", http.StatusBadGateway)
 		} else {
@@ -194,8 +206,19 @@ func convertManifestCode(ctx context.Context, client *http.Client, apiBase, code
 	if err := json.NewDecoder(io.LimitReader(res.Body, 64<<10)).Decode(&app); err != nil {
 		return manifestApp{}, errors.New("decode GitHub App manifest conversion response")
 	}
-	if app.ID <= 0 || app.Slug == "" || app.Owner.Login == "" || app.Owner.Type != "User" || app.PEM == "" {
-		return manifestApp{}, errors.New("expected GitHub App credentials for a personal account")
+	if app.ID <= 0 || app.Slug == "" || app.Owner.Login == "" || app.PEM == "" {
+		return manifestApp{}, errors.New("expected complete GitHub App credentials")
 	}
 	return app, nil
+}
+
+func checkManifestOwner(app manifestApp, organization string) error {
+	if organization != "" {
+		if app.Owner.Type != "Organization" || !strings.EqualFold(app.Owner.Login, organization) {
+			return fmt.Errorf("GitHub did not return an App registered to the organization %s", organization)
+		}
+	} else if app.Owner.Type != "User" || !setupLogin.MatchString(app.Owner.Login) {
+		return errors.New("GitHub did not return an App registered to a personal account")
+	}
+	return nil
 }

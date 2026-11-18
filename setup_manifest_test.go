@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"html"
 	"io"
 	"net/http"
@@ -23,6 +24,21 @@ func (o manifestTestOutput) Write(p []byte) (int, error) {
 }
 
 func TestRegisterManifestApp(t *testing.T) {
+	for _, test := range []struct {
+		name, owner, accountType, action, permission string
+		opts                                         setupOptions
+	}{
+		{"personal", "alice", "User", "/settings/apps/new", "administration", setupOptions{}},
+		{"organization", "team", "Organization", "/organizations/team/settings/apps/new", "administration", setupOptions{organization: "team"}},
+		{"organization group", "team", "Organization", "/organizations/team/settings/apps/new", organizationRunnerPermission, setupOptions{organization: "team", runnerGroupID: 12}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			testRegisterManifestApp(t, test.opts, test.owner, test.accountType, test.action, test.permission)
+		})
+	}
+}
+
+func testRegisterManifestApp(t *testing.T, opts setupOptions, owner, accountType, action, permission string) {
 	converting := make(chan struct{}, 1)
 	finish := make(chan struct{})
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -40,7 +56,7 @@ func TestRegisterManifestApp(t *testing.T) {
 		case <-r.Context().Done():
 		}
 		w.WriteHeader(http.StatusCreated)
-		io.WriteString(w, `{"id":123,"slug":"runquill-test","pem":"fixture-key","owner":{"login":"alice","type":"User"}}`)
+		fmt.Fprintf(w, `{"id":123,"slug":"runquill-test","pem":"fixture-key","owner":{"login":%q,"type":%q}}`, owner, accountType)
 	}))
 	defer api.Close()
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -49,7 +65,7 @@ func TestRegisterManifestApp(t *testing.T) {
 	apps := make(chan manifestApp, 1)
 	errs := make(chan error, 1)
 	go func() {
-		app, err := registerManifestApp(ctx, output, api.Client(), api.URL, setupOptions{})
+		app, err := registerManifestApp(ctx, output, api.Client(), api.URL, opts)
 		apps <- app
 		errs <- err
 	}()
@@ -91,7 +107,7 @@ func TestRegisterManifestApp(t *testing.T) {
 	if status != http.StatusOK || headers.Get("Cache-Control") != "no-store" || headers.Get("Referrer-Policy") != "no-referrer" {
 		t.Fatalf("setup page has HTTP %d and headers %v", status, headers)
 	}
-	form := regexp.MustCompile(`action="https://github.com/settings/apps/new\?state=([a-zA-Z0-9_-]+)"`).FindStringSubmatch(page)
+	form := regexp.MustCompile(`action="https://github.com` + regexp.QuoteMeta(action) + `\?state=([a-zA-Z0-9_-]+)"`).FindStringSubmatch(page)
 	field := regexp.MustCompile(`name="manifest" value="([^"]+)"`).FindStringSubmatch(page)
 	if len(form) != 2 || len(form[1]) < 22 || len(field) != 2 {
 		t.Fatalf("could not find the registration form, token, and manifest: %s", page)
@@ -107,7 +123,7 @@ func TestRegisterManifestApp(t *testing.T) {
 	}
 	if manifest.Public == nil || *manifest.Public || manifest.HookAttributes.Active == nil || *manifest.HookAttributes.Active ||
 		manifest.RedirectURL != browserURL+"callback" ||
-		!reflect.DeepEqual(manifest.Permissions, map[string]string{"actions": "read", "administration": "write"}) {
+		!reflect.DeepEqual(manifest.Permissions, map[string]string{"actions": "read", permission: "write"}) {
 		t.Fatalf("unexpected App configuration: %+v", manifest)
 	}
 	callback := manifest.RedirectURL + "?" + url.Values{"code": {"test-code"}, "state": {form[1]}}.Encode()
@@ -149,7 +165,7 @@ func TestRegisterManifestApp(t *testing.T) {
 		t.Fatalf("unexpected callback result HTTP %d: %s", result.res.StatusCode, body)
 	}
 	app, err := <-apps, <-errs
-	if err != nil || app.ID != 123 || app.Slug != "runquill-test" || app.Owner.Login != "alice" || app.PEM != "fixture-key" {
+	if err != nil || app.ID != 123 || app.Slug != "runquill-test" || app.Owner.Login != owner || app.PEM != "fixture-key" {
 		t.Fatalf("manifest conversion returned unexpected credentials or error: %v", err)
 	}
 }
