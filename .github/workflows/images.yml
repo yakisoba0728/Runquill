@@ -173,9 +173,9 @@ jobs:
         env:
           GHCR_TOKEN: ${{ github.token }}
           ARCH: ${{ matrix.arch }}
-          RUNNER_OS: ${{ matrix.os }}
+          RUNNER_VARIANT: ${{ matrix.os }}
         run: |
-          image="ghcr.io/${GITHUB_REPOSITORY,,}-runner:$VERSION-$RUNNER_OS-$ARCH"
+          image="ghcr.io/${GITHUB_REPOSITORY,,}-runner:$VERSION-$RUNNER_VARIANT-$ARCH"
           printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           docker tag runquill-runner:ci "$image"
           docker push "$image"
