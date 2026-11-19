@@ -8,8 +8,10 @@ COPY panelweb/ ./panelweb/
 ARG TARGETOS
 ARG TARGETARCH
 ARG VERSION=dev
+# Release builds name their registry so the runner image catalogue can offer the published OS variants.
+ARG RELEASE_IMAGE=
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-    go build -trimpath -ldflags="-s -w -X main.version=$VERSION" -o /out/runquill .
+    go build -trimpath -ldflags="-s -w -X main.version=$VERSION -X main.releaseImage=$RELEASE_IMAGE" -o /out/runquill .
 
 FROM docker:29-cli
 LABEL org.opencontainers.image.licenses="Apache-2.0"

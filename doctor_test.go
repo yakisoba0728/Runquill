@@ -49,7 +49,7 @@ esac
 			t.Setenv("DOCTOR_TEST_INFO", test.info)
 			t.Setenv("DOCTOR_TEST_PLATFORM", test.platform)
 			var out strings.Builder
-			checkDocker(t.Context(), test.target, func(name string, err error) {
+			checkDocker(t.Context(), test.target, nil, func(name string, err error) {
 				if err != nil {
 					fmt.Fprintf(&out, "FAIL %s: %s\n", name, err)
 				} else {

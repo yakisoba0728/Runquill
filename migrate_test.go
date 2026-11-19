@@ -12,6 +12,8 @@ const routeBuild = "${{ format('runquill-{0}-{1}-build', github.run_id, github.r
 
 var testMapping = []runsOnMapping{{From: []string{"ubuntu-latest"}}, {From: []string{"ubuntu-22.04", "large"}, Pool: "big"}}
 
+var fuzzRunnerImages, _ = buildRunnerImages("", "ghcr.io/o/runquill", "v1.2.3", "runner:1")
+
 func rewriteForTest(t *testing.T, src string) rewriteResult {
 	t.Helper()
 	res, err := rewriteWorkflow([]byte(src), testMapping)
@@ -283,6 +285,14 @@ func FuzzRewriteWorkflow(f *testing.F) {
 		again, err := rewriteWorkflow(res.Output, testMapping)
 		if err != nil || !bytes.Equal(again.Output, res.Output) {
 			t.Fatalf("rewrite is not idempotent:\n%q\n%q", res.Output, again.Output)
+		}
+		// Keeping hosted Ubuntu versions as os__ selectors keeps the same guarantees.
+		images, err := rewriteWorkflowImages(src, testMapping, fuzzRunnerImages)
+		if err != nil || images.Refused != "" && !bytes.Equal(images.Output, src) {
+			t.Fatalf("rewrite with a catalogue: %v", err)
+		}
+		if again, err := rewriteWorkflowImages(images.Output, testMapping, fuzzRunnerImages); err != nil || !bytes.Equal(again.Output, images.Output) {
+			t.Fatalf("rewrite with a catalogue is not idempotent:\n%q\n%q", images.Output, again.Output)
 		}
 		// Bytes outside the edited spans keep their order and value.
 		at, out := 0, res.Output

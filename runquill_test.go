@@ -308,6 +308,74 @@ func TestSchedulerRestoresLeasesAndMaintainsFIFO(t *testing.T) {
 	}
 }
 
+// TestDockerRunnerToolCache starts cache-enabled runners through the real start path in both modes. Each
+// replaced run.sh checks the runner user sees RUNNER_TOOL_CACHE on a writable directory, then writes or
+// looks for a toolchain marker: it must survive into a second runner of the same repository only.
+func TestDockerRunnerToolCache(t *testing.T) {
+	image := os.Getenv("RUNQUILL_TEST_DOCKER_IMAGE")
+	if image == "" {
+		t.Skip("set RUNQUILL_TEST_DOCKER_IMAGE to a locally built runner image")
+	}
+	dir := t.TempDir()
+	tag := fmt.Sprintf("runquill-toolcache:%d", time.Now().UnixNano())
+	for file, content := range map[string]string{
+		"Dockerfile": "FROM " + image + "\nCOPY --chmod=755 run.sh /home/runner/run.sh\n",
+		"run.sh": `#!/bin/bash
+set -euo pipefail
+test "$(id -u)" = 1001
+test "$1" = --jitconfig
+test "$RUNNER_TOOL_CACHE" = /home/runner/.cache/tools
+test -d "$RUNNER_TOOL_CACHE" -a -w "$RUNNER_TOOL_CACHE"
+test "$(stat -c %u "$RUNNER_TOOL_CACHE")" = 1001
+marker="$RUNNER_TOOL_CACHE/node/22.0.0/x64.complete"
+case "$2" in
+  write) mkdir -p "$(dirname "$marker")"; echo ok > "$marker" ;;
+  present) test "$(cat "$marker")" = ok ;;
+  absent) test ! -e "$marker" ;;
+  *) exit 2 ;;
+esac
+`,
+	} {
+		if err := os.WriteFile(filepath.Join(dir, file), []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
+	defer cancel()
+	if output, err := exec.CommandContext(ctx, "docker", "build", "-t", tag, dir).CombinedOutput(); err != nil {
+		t.Fatalf("build tool cache image: %v\n%s", err, output)
+	}
+	t.Cleanup(func() { dockerCommand(context.Background(), nil, "image", "rm", tag) })
+	base := time.Now().UnixNano() % 1_000_000_000
+	for i, mode := range []struct {
+		name         string
+		unprivileged bool
+	}{{"plain", true}, {"privileged", false}} {
+		t.Run(mode.name, func(t *testing.T) {
+			d := docker{image: tag, cache: true, unprivileged: mode.unprivileged}
+			repository, other := 2_000_000_000+base*4+int64(i)*2, 2_000_000_000+base*4+int64(i)*2+1
+			for _, id := range []int64{repository, other} {
+				t.Cleanup(func() { dockerCommand(context.Background(), nil, "volume", "rm", fmt.Sprintf("runquill-cache-%d", id)) })
+			}
+			for step, run := range []struct {
+				repository int64
+				check      string
+			}{{repository, "write"}, {repository, "present"}, {other, "absent"}} {
+				name := fmt.Sprintf("runquill-toolcache-%s-%d-%d", mode.name, base, step)
+				t.Cleanup(func() { d.remove(context.Background(), name) })
+				if err := d.start(withRunnerRepository(ctx, run.repository), name, run.check); err != nil {
+					t.Fatal(err)
+				}
+				exit, err := exec.CommandContext(ctx, "docker", "wait", name).CombinedOutput()
+				if err != nil || strings.TrimSpace(string(exit)) != "0" {
+					logs, _ := exec.Command("docker", "logs", "--tail", "50", name).CombinedOutput()
+					t.Fatalf("%s for repository %d: exit=%s, error=%v\n%s", run.check, run.repository, exit, err, logs)
+				}
+			}
+		})
+	}
+}
+
 func TestDockerRunner(t *testing.T) {
 	image := os.Getenv("RUNQUILL_TEST_DOCKER_IMAGE")
 	if image == "" {

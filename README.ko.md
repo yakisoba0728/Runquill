@@ -43,7 +43,7 @@ sh install.sh --dir "$HOME/runquill"
 2. 설치 프로그램이 Compose를 시작하고 `Preflight passed.`를 출력할 때까지 기다립니다.
 3. 내 비공개 저장소에서 [첫 작업을 실행합니다](#첫-작업-확인).
 
-설치 스크립트는 다운로드 체크섬을 확인하고 같은 버전의 매니저와 러너 이미지를 받습니다. 위 명령은 `$HOME/runquill`에 설치합니다. `--version v0.3.0`로 버전을 지정하거나 `--download-only`로 바이너리와 배포 파일을 먼저 받을 수 있습니다.
+설치 스크립트는 다운로드 체크섬을 확인하고 같은 버전의 매니저와 러너 이미지를 받습니다. 위 명령은 `$HOME/runquill`에 설치합니다. `--version v0.3.1`로 버전을 지정하거나 `--download-only`로 바이너리와 배포 파일을 먼저 받을 수 있습니다.
 
 ### GitHub App 연결
 
@@ -107,7 +107,7 @@ docker build --pull -t runquill-runner:local runner
 docker compose up -d --build
 ```
 
-릴리스 실행 파일을 사용하면 `setup`이 같은 태그의 매니저와 러너 이미지 이름을 `.env`에 기록합니다. `setup`이 출력한 러너 이미지 다운로드 명령을 실행한 뒤 매니저를 시작합니다.
+릴리스 실행 파일을 사용하면 `setup`이 같은 태그의 매니저와 러너 이미지 이름을 `.env`에 기록합니다. 없는 러너 이미지는 매니저가 `local`과 `ssh://` 호스트에 직접 받으므로, `setup`이 출력한 러너 이미지 다운로드 명령은 첫 작업 전에 이미지를 미리 받아 두는 선택 단계입니다. 다음 명령으로 매니저를 받아 시작합니다.
 
 ```sh
 docker compose pull manager
@@ -139,7 +139,7 @@ docker compose logs -f manager
 
 앱을 수동으로 만들 때는 **Only on this account**를 선택하고 **Actions → Read-only**와 **Administration → Read and write** 권한을 부여합니다. 발급한 PEM 키를 보관하고 앱을 개인 계정에 설치합니다. [환경 변수 예제](.env.example)를 `.env`로 복사해 GitHub 로그인, App ID, PEM 키 경로를 입력하고 두 파일의 권한을 `0600`으로 설정합니다. **Only select repositories**로 설치했다면 `RUNQUILL_REPOSITORY_SCOPE=selected`를 설정합니다. 폴링으로 연결할 때는 앱의 웹훅을 끄고 `RUNQUILL_WEBHOOK_SECRET`을 비워둡니다. [저장소 러너 JIT API](https://docs.github.com/en/rest/actions/self-hosted-runners#create-configuration-for-a-just-in-time-runner-for-a-repository)
 
-수동으로 작성한 `.env`에 릴리스 이미지를 사용하려면 예제에 있는 매니저와 러너 이미지 이름을 같은 버전 태그로 맞춥니다. 러너 이미지를 먼저 내려받은 뒤 Compose를 시작합니다.
+수동으로 작성한 `.env`에 릴리스 이미지를 사용하려면 예제에 있는 매니저와 러너 이미지 이름을 같은 버전 태그로 맞춥니다. 호스트에 러너 이미지가 없으면 매니저가 받아 옵니다.
 
 기존 App에서 웹훅을 켜려면 **Workflow job** 이벤트를 구독하고 공개 HTTPS 주소를 등록합니다. `openssl rand -hex 32`로 생성한 시크릿을 GitHub와 `RUNQUILL_WEBHOOK_SECRET`에 같은 값으로 설정합니다. HTTPS 프록시에서 `/webhook`을 매니저의 8080 포트로 전달합니다. 같은 서버에서 Caddy를 실행한다면 아래 설정을 사용합니다.
 
@@ -183,7 +183,7 @@ tailscale funnel status
 
 NAT 뒤에 있는 워커는 [아웃바운드 워커](docs/outbound-workers.md)로 등록해 HTTPS로 매니저에 연결할 수 있습니다.
 
-매니저 한 대에서 로컬 Docker와 SSH로 연결한 여러 Docker 서버를 사용합니다. 각 서버는 Linux의 rootful Docker, cgroup v2, `RUNQUILL_RUNNER_IMAGE`에 해당하는 이미지, Docker 소켓에 접근할 수 있는 SSH 계정이 필요합니다.
+매니저 한 대에서 로컬 Docker와 SSH로 연결한 여러 Docker 서버를 사용합니다. 각 서버는 Linux의 rootful Docker, cgroup v2, Docker 소켓에 접근할 수 있는 SSH 계정이 필요합니다. `RUNQUILL_RUNNER_IMAGE`에 해당하는 이미지는 매니저가 이 연결로 각 서버에 받습니다.
 
 ```dotenv
 RUNQUILL_DOCKER_HOSTS=local,ssh://builder@worker.example.com
@@ -219,7 +219,7 @@ docker compose -f compose.yaml -f compose.ssh.yaml exec manager runquill host un
 RUNQUILL_WORKER_POOLS='{"build":{"hosts":["ssh://builder@worker.example.com"],"repositories":["you/project"],"cpus":4,"memory_mib":8192}}'
 ```
 
-`repositories`에 입력한 저장소만 해당 풀을 사용합니다. 필드를 생략하면 조건을 충족하는 모든 저장소가 접근할 수 있고, 빈 목록을 설정하면 어느 저장소도 접근할 수 없습니다. `cpus`와 `memory_mib`는 새 러너 컨테이너에 적용되는 Docker 자원 한도이며, 생략하면 Docker 기본값을 사용합니다. 선택 항목인 `image`로 풀마다 다른 Runquill 호환 이미지를 지정할 수 있습니다. 매니저를 재시작하기 전에 풀의 모든 호스트에서 해당 이미지를 빌드하거나 내려받습니다. 전체 동시 실행 한도와 서버별 슬롯 한도도 적용됩니다.
+`repositories`에 입력한 저장소만 해당 풀을 사용합니다. 필드를 생략하면 조건을 충족하는 모든 저장소가 접근할 수 있고, 빈 목록을 설정하면 어느 저장소도 접근할 수 없습니다. `cpus`와 `memory_mib`는 새 러너 컨테이너에 적용되는 Docker 자원 한도이며, 생략하면 Docker 기본값을 사용합니다. 선택 항목인 `image`로 풀마다 다른 Runquill 호환 이미지를 지정할 수 있습니다. 매니저가 풀의 각 호스트에 이 이미지를 받습니다. 레지스트리에 없는 이미지라면 해당 호스트에서 직접 빌드합니다. 전체 동시 실행 한도와 서버별 슬롯 한도도 적용됩니다.
 
 작업 라벨의 접미사에 풀 이름을 지정합니다. 풀 접두사가 없는 작업은 `default`를 사용합니다. 매트릭스 빌드라면 작업별 라벨을 구분하는 `strategy.job-index`도 포함합니다.
 
@@ -234,16 +234,17 @@ runs-on: ${{ format('runquill-{0}-{1}-pool__build__compile-{2}', github.run_id, 
 풀에는 다음 선택 항목도 쓸 수 있습니다.
 
 ```dotenv
-RUNQUILL_WORKER_POOLS='{"lint":{"hosts":["local"],"privileged":false,"cache":true,"max_per_repository":2}}'
+RUNQUILL_WORKER_POOLS='{"lint":{"hosts":["local"],"privileged":false,"cache":true,"max_per_repository":2,"images":["ubuntu22.04"]}}'
 ```
 
 - `privileged`의 기본값은 `true`이며, 러너마다 `--privileged`와 내부 Docker 데몬을 사용합니다. `false`로 설정하면 러너를 UID 1001로 실행하고 모든 capability를 제거하며 `no-new-privileges`를 적용합니다. 이 풀의 작업은 `docker`, 서비스 컨테이너, 작업 컨테이너, `sudo`를 사용할 수 없습니다. 이런 풀에 사용자 지정 `image`를 쓰려면 `/home/runner`를 소유한 UID 1001 러너 사용자가 이미지에 있어야 합니다.
-- `cache: true`는 `runquill-cache-<저장소 ID>`라는 Docker 이름 있는 볼륨을 `/home/runner/.cache`에 마운트합니다. 같은 호스트에서 실행되는 같은 저장소의 이후 작업이 내용을 재사용하고, 동시에 실행되는 작업도 같은 볼륨을 공유합니다. 풀에서 실행되는 해당 저장소의 모든 작업이 캐시를 읽고 바꿀 수 있으므로 완전히 새 파일시스템에서 시작하지 않습니다. 볼륨은 호스트마다 따로 생기고 Runquill이 자동으로 정리하지 않습니다. `docker volume ls -f label=io.runquill.cache=1`로 확인하고, 사용하는 러너가 없을 때 `docker volume rm`으로 삭제합니다. 이 캐시는 [Docker 빌드 레이어 캐시](#다음-작업에서-docker-빌드-레이어-재사용)와 별개입니다.
+- `cache: true`는 `runquill-cache-<저장소 ID>`라는 Docker 이름 있는 볼륨을 `/home/runner/.cache`에 마운트합니다. 같은 호스트에서 실행되는 같은 저장소의 이후 작업이 내용을 재사용하고, 동시에 실행되는 작업도 같은 볼륨을 공유합니다. 풀에서 실행되는 해당 저장소의 모든 작업이 캐시를 읽고 바꿀 수 있으므로 완전히 새 파일시스템에서 시작하지 않습니다. 러너의 `RUNNER_TOOL_CACHE`도 이 볼륨 안을 가리키므로 `actions/setup-*`가 받은 도구도 남습니다. 볼륨은 호스트마다 따로 생기며, 30일 동안 어떤 러너도 쓰지 않은 볼륨은 매니저가 삭제합니다([정리](docs/runner-images.md#cleanup-of-unused-images-and-cache-volumes)). 목록은 `docker volume ls -f label=io.runquill.cache=1`로 확인합니다. 이 캐시는 [Docker 빌드 레이어 캐시](#다음-작업에서-docker-빌드-레이어-재사용)와 별개입니다.
 - `max_per_repository`는 해당 풀에서 저장소 하나가 사용할 수 있는 러너 수를 제한하며, 그 풀에서는 `RUNQUILL_MAX_PER_REPOSITORY`보다 우선합니다. 둘 다 없으면 저장소 하나가 빈 슬롯을 모두 쓸 수 있습니다.
+- `images`는 풀의 작업이 `os__NAME__`으로 고를 수 있는 [러너 OS](#러너-os-선택) 이름 목록입니다. 생략하면 모든 이름을 허용합니다.
 
 `privileged: false` 또는 `cache: true`를 설정한 풀의 [아웃바운드 워커](docs/outbound-workers.md)는 매니저와 같은 Runquill 릴리스를 실행해야 합니다. 이전 버전 에이전트는 이 설정이 담긴 러너 작업을 거부하므로 매니저와 함께 워커도 업그레이드하세요.
 
-관리자 패널의 풀 편집기에는 Docker-in-Docker와 공유 캐시 체크박스가 있습니다. 편집기는 저장할 때 풀의 `max_per_repository` 값을 유지하지만 바꾸지는 못합니다. 패널에서 설정을 한 번 저장하면 그 값이 `RUNQUILL_WORKER_POOLS`보다 우선합니다.
+관리자 패널의 풀 편집기에는 Docker-in-Docker와 공유 캐시 체크박스, 허용할 러너 OS 이름 입력란이 있습니다. 편집기는 저장할 때 풀의 `max_per_repository` 값을 유지하지만 바꾸지는 못합니다. 패널에서 설정을 한 번 저장하면 그 값이 `RUNQUILL_WORKER_POOLS`보다 우선합니다.
 
 ### 저장소 간 슬롯 공유
 
@@ -253,7 +254,7 @@ RUNQUILL_WORKER_POOLS='{"lint":{"hosts":["local"],"privileged":false,"cache":tru
 
 ### 러너 이미지와 컨테이너 엔진
 
-릴리스는 Ubuntu 24.04 기반 `runquill-runner:<버전>`과 `-ubuntu22.04`, `-debian12` 변형 이미지를 게시합니다. 러너는 `--pull never`로 시작하므로 모든 호스트에서 이미지를 직접 받거나 빌드해야 합니다. `RUNQUILL_CONTAINER_ENGINE=podman`을 설정하면 `local`과 `ssh://` 호스트에 Podman CLI를 사용하고, rootless 엔진의 러너는 Docker-in-Docker 없이 시작합니다. Podman과 rootless 엔진은 실제 호스트에서 아직 검증하지 않았습니다. [엔진과 이미지](docs/container-engines.md)
+릴리스는 Ubuntu 24.04 기반 `runquill-runner:<버전>`과 `-ubuntu22.04`, `-ubuntu26.04`, `-debian12`, `-debian13` 변형 이미지를 게시합니다. 매니저는 `local`과 `ssh://` 호스트에 없는 러너 이미지를 직접 받습니다(기본값 `RUNQUILL_IMAGE_PULL=missing`, 주기적으로 새로 받으려면 `always`). 아웃바운드 `agent://` 워커, 로컬에서 빌드한 이미지, `RUNQUILL_IMAGE_PULL=never` 설정에서는 이미지를 직접 준비합니다. 매니저는 자신이 받은 이미지와 30일 동안 어떤 러너도 쓰지 않은 캐시 볼륨도 삭제합니다. [러너 이미지](docs/runner-images.md) `RUNQUILL_CONTAINER_ENGINE=podman`을 설정하면 `local`과 `ssh://` 호스트에 Podman CLI를 사용하고, rootless 엔진의 러너는 Docker-in-Docker 없이 시작합니다. Podman과 rootless 엔진은 실제 호스트에서 아직 검증하지 않았습니다. [엔진과 이미지](docs/container-engines.md)
 
 ### 탄력적 러너 한도
 
@@ -277,6 +278,16 @@ runs-on: ${{ format('runquill-{0}-{1}-test-{2}', github.run_id, github.run_attem
 
 이 식을 `runs-on`의 단일 라벨로 사용합니다. 접미사는 영문자나 숫자로 시작하고 이후에는 하이픈과 밑줄도 쓸 수 있습니다. 라벨 전체는 100자 이내여야 합니다. Runquill은 작업마다 요청한 라벨로 일회용 러너를 등록하고, GitHub는 라벨이 일치하는 러너에 작업을 배정합니다. [GitHub Actions 컨텍스트 문서](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts)
 
+### 러너 OS 선택
+
+같은 작업별 라벨 안에서 풀 선택자 뒤에 `os__NAME__`을 넣어 OS 변형을 고릅니다. 이름은 `ubuntu2204`, `ubuntu2604`, `debian12`, `debian13`처럼 점 없이 씁니다. 지정하지 않은 작업은 호스트의 이미지로 실행됩니다.
+
+```yaml
+runs-on: ${{ format('runquill-{0}-{1}-os__ubuntu2204__build', github.run_id, github.run_attempt) }}
+```
+
+이름은 러너 이미지 목록에서 찾습니다. 릴리스 빌드에는 게시된 변형이 모두 들어 있고, `RUNQUILL_RUNNER_IMAGES`로 항목을 추가하거나 바꿀 수 있습니다. Runquill은 작업마다 고유한 라벨로 러너와 작업을 짝지으므로 `runs-on: ubuntu-22.04`처럼 GitHub 호스팅 라벨만 쓰는 방식은 지원하지 않습니다. [러너 이미지](docs/runner-images.md)
+
 ### 다음 작업에서 Docker 빌드 레이어 재사용
 
 루트에 `Dockerfile`이 있는 저장소의 `.github/workflows/`에 [빌드 캐시 예제](examples/runquill-build-cache.yml)를 복사합니다. 기본 브랜치의 커밋을 빌드하고, 같은 작업의 이후 단계에서 결과 이미지를 사용할 수 있습니다. 새 러너는 GitHub Actions 캐시에서 이전 빌드의 레이어를 복원합니다. 이미지마다 `scope`를 하나씩 정해 캐시 입력과 출력 양쪽에 같은 값을 쓰세요. 캐시 저장에 실패해도 빌드 결과를 사용할 수 있습니다. [Docker GitHub Actions 캐시](https://docs.docker.com/build/cache/backends/gha/)
@@ -285,9 +296,9 @@ runs-on: ${{ format('runquill-{0}-{1}-test-{2}', github.run_id, github.run_attem
 
 ### 기존 워크플로 이전
 
-관리자는 패널의 **이전** 화면에서 GitHub 호스팅 라벨을 쓰는 작업을 Runquill 라벨로 바꾸는 풀 리퀘스트를 열 수 있습니다. Contents, Pull requests, Workflows 쓰기 권한이 필요하며, 새 App에서는 `runquill setup --migrate`만 이 권한을 요청합니다. Runquill은 먼저 diff를 미리 보여주고 `runs-on`만 바꿉니다. 안전하게 바꿀 수 없는 작업은 이유와 함께 그대로 두며, 병합은 하지 않습니다. 실제 GitHub 저장소에서는 아직 검증하지 않았습니다. [워크플로 이전](docs/workflow-migration.md)
+관리자는 패널의 **이전** 화면에서 GitHub 호스팅 라벨을 쓰는 작업을 Runquill 라벨로 바꾸는 풀 리퀘스트를 열 수 있습니다. Contents, Pull requests, Workflows 쓰기 권한이 필요하며, 새 App에서는 `runquill setup --migrate`만 이 권한을 요청합니다. Runquill은 먼저 diff를 미리 보여주고 `runs-on`만 바꿉니다. 안전하게 바꿀 수 없는 작업은 이유와 함께 그대로 두며, 병합은 하지 않습니다. `ubuntu-22.04` 같은 GitHub 호스팅 Ubuntu 버전 라벨은 매니저의 러너 이미지 목록에 그 OS가 있으면 `os__` 선택자로 바뀝니다. 실제 GitHub 저장소에서는 아직 검증하지 않았습니다. [워크플로 이전](docs/workflow-migration.md)
 
-`runquill workflow check`는 로컬 워크플로 파일에서 잘못된 Runquill 라벨, 설정되지 않은 풀, self-hosted 러너의 위험한 트리거, 권한과 시간 제한 누락, 고정되지 않은 액션을 찾습니다. 심각도가 high인 항목이 있으면 상태 코드 1로 종료합니다. `--strict`를 붙이면 항목이 하나라도 있을 때 1로 종료하고, `--json`은 결과를 JSON으로 출력합니다. [점검 코드](docs/workflow-migration.md#check-workflows-offline)
+`runquill workflow check`는 로컬 워크플로 파일에서 잘못된 Runquill 라벨, 설정되지 않은 풀과 러너 OS 이름, self-hosted 러너의 위험한 트리거, 권한과 시간 제한 누락, 고정되지 않은 액션을 찾습니다. 심각도가 high인 항목이 있으면 상태 코드 1로 종료합니다. `--strict`를 붙이면 항목이 하나라도 있을 때 1로 종료하고, `--json`은 결과를 JSON으로 출력합니다. [점검 코드](docs/workflow-migration.md#check-workflows-offline)
 
 ## K3s에서 실행
 
@@ -386,9 +397,11 @@ GitHub에서 작업이 대기 중이라면 `docker compose exec manager runquill
 
 정리하려면 `docker compose exec manager runquill gc --remove-orphans`를 실행합니다. 대기열 리스가 없고 작업을 실행하고 있을 수 없는 러너 컨테이너를 삭제하며, 남겨둔 러너는 이유와 함께 출력합니다. `--grace`(기본 `10m`, 최소 `1m`)보다 최근에 만든 러너는 건드리지 않으므로 시작 중인 러너는 안전합니다. 리스가 다른 호스트에 기록된 러너, 큐에 작업 기록이 없는데 실행 중인 러너, GitHub에서 작업이 끝나지 않았거나 러너가 사용 중으로 보이는 경우, GitHub에 연결할 수 없는 경우에는 러너를 남깁니다. 큐에 작업이 있는 러너는 GitHub 러너 등록을 먼저 삭제한 뒤 Docker ID로 컨테이너를 삭제합니다. `local`과 `ssh://` 호스트에서만 동작하며, `agent://` 워커와 Kubernetes 백엔드는 건너뛰었다고 표시합니다. 호스트 조회나 삭제에 실패하면 상태 코드 1로 종료합니다.
 
+`docker compose exec manager runquill gc --unused --dry-run`은 Runquill이 받은 러너 이미지와 캐시 볼륨 중 `RUNQUILL_CLEANUP_AFTER`(기본 `30d`) 동안 어떤 러너도 쓰지 않은 항목을 보여줍니다. `--dry-run` 없이 실행하면 삭제하며, 매니저도 `RUNQUILL_CLEANUP_INTERVAL`마다 같은 기준으로 정리합니다. `--older-than`으로 다른 보존 기간을 지정할 수 있습니다. 직접 받거나 빌드한 이미지는 삭제하지 않습니다. [정리](docs/runner-images.md#cleanup-of-unused-images-and-cache-volumes)
+
 - `RUNQUILL_MAX_RUNNERS`(기본 2)가 전체 저장소의 동시 실행 수를 정합니다. 정원이 차면 SQLite에 대기합니다. 생성에 실패한 작업은 15초 뒤 재시도하며, 그동안 다음 작업이 빈자리를 사용할 수 있습니다. GitHub는 24시간 넘게 대기한 self-hosted 작업을 실패 처리합니다. [GitHub 러너 배정 규칙](https://docs.github.com/en/actions/reference/runners/self-hosted-runners#routing-precedence-for-self-hosted-runners)
 - Runquill은 24시간 안에 시작하지 못한 작업을 사유와 마지막 재시도 오류와 함께 실패로 기록합니다. 패널에서 취소한 작업도 실패로 기록됩니다. 실패한 작업은 대기열로 돌아오지 않습니다. GitHub의 실행은 GitHub에서 취소하거나 다시 실행할 때까지 대기 상태로 남고, 다시 실행하면 새 작업이 생깁니다. 사유는 패널의 작업 기록에 표시되며, 기한이 지난 작업은 매니저 로그에도 `job failed`로 남습니다.
-- 러너는 저장소 범위의 일회용 JIT 러너입니다. 기본 풀에서는 작업마다 새 컨테이너와 내부 Docker 데몬이 생기므로 `docker build`, `services:`, `container:`를 사용할 수 있습니다. 작업이 끝나면 컨테이너와 내부 이미지, 볼륨, 작업 디렉터리가 삭제됩니다. 풀에서 `cache`를 켰다면 저장소별 캐시 볼륨만 남습니다.
+- 러너는 저장소 범위의 일회용 JIT 러너입니다. 기본 풀에서는 작업마다 새 컨테이너와 내부 Docker 데몬이 생기므로 `docker build`, `services:`, `container:`를 사용할 수 있습니다. 작업이 끝나면 컨테이너와 내부 이미지, 볼륨, 작업 디렉터리가 삭제됩니다. 풀에서 `cache`를 켰다면 저장소별 캐시 볼륨만 남고, 정리 보존 기간 동안 쓰이지 않으면 삭제됩니다.
 - 매니저 로그는 `docker compose logs -f manager`로 확인합니다. 작업 단계 출력은 평소처럼 GitHub 워크플로에 남습니다. 소스 설치에서 새 GitHub 러너 버전을 적용하려면 `docker build --pull -t runquill-runner:local runner`를 다시 실행합니다. 이미 실행 중인 작업은 사용하던 이미지로 마무리됩니다. `RUNQUILL_LOG_FORMAT`을 `text` 또는 `json`으로 설정하면 구조화된 로그를 남기고, `RUNQUILL_LOG_LEVEL`은 `debug`, `info`, `warn`, `error` 중 하나로 설정합니다. 형식을 지정하지 않으면 기존 형태의 로그를 출력합니다. 잘못된 값을 넣으면 명령이 상태 코드 2로 종료합니다.
 - 8080 포트의 `GET /healthz`는 대기열 DB가 응답하면 HTTP 200을 반환합니다. `GET /readyz`는 여기에 더해 최근 2분 안에 스케줄링이 성공했고 GitHub App 인증 실패가 없어야 준비 상태로 봅니다. 그렇지 않으면 HTTP 503과 함께 `scheduler`가 `starting`, `failing`, `stalled` 중 하나인 JSON을 반환하며, `database`와 `github_auth`에 나머지 점검 결과가 표시됩니다. 오류 상세는 매니저 로그에만 남습니다.
 - 서버당 매니저 하나를 실행합니다. 원래 Python 버전에서 올라오는 경우를 포함해 업그레이드할 때는 Compose의 `queue` 볼륨을 유지합니다. 매니저를 재시작해도 대기열과 현재 러너 기록을 이어받습니다.
@@ -406,13 +419,13 @@ sh install.sh --upgrade --dir "$HOME/runquill"
 
 설치 스크립트는 릴리스 체크섬을 확인하고 바뀐 릴리스 파일만 교체합니다. 대상은 `runquill` 실행 파일, `compose.yaml`, `compose.ssh.yaml`, `LICENSE`, 그리고 릴리스에 포함된 경우 `compose.panel.yaml`, `compose.worker.yaml`, `runquill-k3s.yaml`입니다. 교체한 이전 파일은 `.previous/`로 옮기며, 이 디렉터리에는 가장 최근 업그레이드 한 번의 파일만 남습니다. 되돌리려면 `cp -p .previous/* .`를 실행합니다. `.env`, GitHub App 키, 그 밖의 파일과 대기열은 바꾸지 않습니다. `--upgrade`에는 `--version`과 `--dir`만 함께 쓸 수 있으며 Docker 점검은 하지 않습니다.
 
-설치 스크립트는 아무것도 재시작하지 않습니다. `.env`에 릴리스 이미지가 지정되어 있으면 새로 설정할 `RUNQUILL_MANAGER_IMAGE`와 `RUNQUILL_RUNNER_IMAGE` 값과 함께, 평소 쓰는 Compose 파일로 실행할 이미지 다운로드, `docker compose up -d --no-build`, `doctor` 명령을 출력합니다. 모든 워커 호스트에서도 새 러너 이미지를 받고, 아웃바운드 워커의 `runquill worker` 실행 파일도 업그레이드합니다. K3s 설치에서는 대신 `kubectl apply -f runquill-k3s.yaml`을 안내합니다.
+설치 스크립트는 아무것도 재시작하지 않습니다. `.env`에 릴리스 이미지가 지정되어 있으면 새로 설정할 `RUNQUILL_MANAGER_IMAGE`와 `RUNQUILL_RUNNER_IMAGE` 값과 함께, 평소 쓰는 Compose 파일로 실행할 이미지 다운로드, `docker compose up -d --no-build`, `doctor` 명령을 출력합니다. 새 러너 이미지는 매니저가 `local`과 `ssh://` 호스트에 받습니다. 아웃바운드 워커에서는 새 이미지를 받아 두고 `runquill worker` 실행 파일도 업그레이드합니다. K3s 설치에서는 대신 `kubectl apply -f runquill-k3s.yaml`을 안내합니다.
 
 `--upgrade`가 없는 릴리스나 수동 설치에서는 `.env`의 두 이미지 태그를 새 릴리스로 바꾸고 [매니저 시작](#매니저-시작)의 다운로드 명령을 다시 실행합니다.
 
 ### 매니저 설정 추가
 
-Compose는 `compose.yaml`에 적힌 변수만 매니저에 전달합니다. `RUNQUILL_MAX_PER_REPOSITORY`, `RUNQUILL_SCHEDULER_WORKERS`, `RUNQUILL_LOG_FORMAT`, `RUNQUILL_LOG_LEVEL`, [알림](#알림-보내기) 변수, `RUNQUILL_ELASTIC*`, `RUNQUILL_BACKUP_*`, `RUNQUILL_METRICS_*` 같은 선택 설정은 값을 `.env`에 두고 `compose.yaml` 옆에 `compose.settings.yaml` 같은 오버레이를 저장합니다. `--upgrade`는 `compose.yaml`을 교체하지만 이 파일은 그대로 둡니다.
+Compose는 `compose.yaml`에 적힌 변수만 매니저에 전달합니다. `RUNQUILL_MAX_PER_REPOSITORY`, `RUNQUILL_SCHEDULER_WORKERS`, `RUNQUILL_LOG_FORMAT`, `RUNQUILL_LOG_LEVEL`, [알림](#알림-보내기) 변수, `RUNQUILL_ELASTIC*`, `RUNQUILL_BACKUP_*`, `RUNQUILL_METRICS_*`, `RUNQUILL_IMAGE_PULL*`, `RUNQUILL_RUNNER_IMAGES`, `RUNQUILL_CLEANUP_*` 같은 선택 설정은 값을 `.env`에 두고 `compose.yaml` 옆에 `compose.settings.yaml` 같은 오버레이를 저장합니다. `--upgrade`는 `compose.yaml`을 교체하지만 이 파일은 그대로 둡니다.
 
 ```yaml
 services:
@@ -426,9 +439,16 @@ services:
       RUNQUILL_NOTIFY_FORMAT: ${RUNQUILL_NOTIFY_FORMAT:-}
       RUNQUILL_NOTIFY_COOLDOWN: ${RUNQUILL_NOTIFY_COOLDOWN:-}
       RUNQUILL_NOTIFY_STALL_AFTER: ${RUNQUILL_NOTIFY_STALL_AFTER:-}
+      RUNQUILL_IMAGE_PULL: ${RUNQUILL_IMAGE_PULL:-}
+      RUNQUILL_IMAGE_PULL_INTERVAL: ${RUNQUILL_IMAGE_PULL_INTERVAL:-}
+      RUNQUILL_RUNNER_IMAGES: ${RUNQUILL_RUNNER_IMAGES:-}
+      RUNQUILL_CLEANUP_AFTER: ${RUNQUILL_CLEANUP_AFTER:-}
+      RUNQUILL_CLEANUP_IMAGES_AFTER: ${RUNQUILL_CLEANUP_IMAGES_AFTER:-}
+      RUNQUILL_CLEANUP_CACHE_AFTER: ${RUNQUILL_CLEANUP_CACHE_AFTER:-}
+      RUNQUILL_CLEANUP_INTERVAL: ${RUNQUILL_CLEANUP_INTERVAL:-}
 ```
 
-`docker compose -f compose.yaml -f compose.settings.yaml up -d`로 적용합니다. 다른 오버레이도 함께 전달하고, 릴리스 이미지를 쓴다면 `--no-build`를 추가합니다. 예약 백업에는 백업 디렉터리 마운트와 암호 파일도 필요하므로 [백업 가이드](docs/backups.md#compose)의 오버레이를 사용합니다. 탄력적 한도 변수는 [탄력적 한도 가이드](docs/elastic-limits.md#compose)에 있습니다. 매니저 이미지에는 Docker CLI만 있으므로 Compose에서 `RUNQUILL_CONTAINER_ENGINE=podman`은 쓸 수 없습니다. k3s에서는 매니저가 `runquill-config` Secret의 모든 변수를 읽으므로 `.env`에 추가하고 Secret을 다시 만든 뒤 Deployment를 재시작합니다.
+`docker compose -f compose.yaml -f compose.settings.yaml up -d`로 적용합니다. 다른 오버레이도 함께 전달하고, 릴리스 이미지를 쓴다면 `--no-build`를 추가합니다. 예약 백업에는 백업 디렉터리 마운트와 암호 파일도 필요하므로 [백업 가이드](docs/backups.md#compose)의 오버레이를 사용합니다. 탄력적 한도 변수는 [탄력적 한도 가이드](docs/elastic-limits.md#compose)에 있습니다. 비공개 레지스트리에서 받으려면 [비공개 레지스트리](docs/runner-images.md#private-registries)처럼 Docker 로그인 정보를 매니저에 마운트하고 `DOCKER_CONFIG`를 설정합니다. 매니저 이미지에는 Docker CLI만 있으므로 Compose에서 `RUNQUILL_CONTAINER_ENGINE=podman`은 쓸 수 없습니다. k3s에서는 매니저가 `runquill-config` Secret의 모든 변수를 읽으므로 `.env`에 추가하고 Secret을 다시 만든 뒤 Deployment를 재시작합니다.
 
 ### 알림 보내기
 
@@ -488,13 +508,13 @@ SSH 워커나 패널을 사용한다면 기존 Compose 파일 조합을 그대�
 docker compose -f compose.yaml -f compose.panel.yaml down -v --rmi all
 ```
 
-러너 컨테이너, 캐시 볼륨, 러너 이미지는 Compose가 관리하지 않습니다. SSH 워커와 아웃바운드 워커를 포함한 각 Docker 호스트에서 남은 항목을 삭제합니다. 이미지는 `RUNQUILL_RUNNER_IMAGE`와 풀의 `image`에 지정한 이름을 사용합니다.
+러너 컨테이너, 캐시 볼륨, 러너 이미지는 Compose가 관리하지 않습니다. SSH 워커와 아웃바운드 워커를 포함한 각 Docker 호스트에서 남은 항목을 삭제합니다. 이미지는 `RUNQUILL_RUNNER_IMAGE`와 풀의 `image`에 지정한 이름, 작업이 고른 러너 이미지 목록의 이미지를 확인합니다.
 
 ```sh
 docker ps -a --filter label=io.runquill.runner=1
 docker rm -f $(docker ps -aq --filter label=io.runquill.runner=1)
 docker volume rm $(docker volume ls -q -f label=io.runquill.cache=1)
-docker image rm ghcr.io/yakisoba0728/runquill-runner:v0.3.0
+docker image rm ghcr.io/yakisoba0728/runquill-runner:v0.3.1
 ```
 
 그다음 `.env`, GitHub App 키, 토큰 파일이 들어 있는 설치 디렉터리를 삭제합니다. 직접 만든 Tailscale Funnel이나 Serve 리스너를 끄고, 아웃바운드 워커의 `runquill worker`도 중지합니다.
@@ -514,6 +534,12 @@ k3s에서는 `kubectl delete -f runquill-k3s.yaml`로 Runquill 네임스페이�
 - K3s, SSH, 아웃바운드 워커에서의 스케줄러 병렬 처리(`RUNQUILL_SCHEDULER_WORKERS`)
 - 부하가 걸린 실제 Docker 호스트의 탄력적 한도(`local` 호스트에만 적용)
 - 실제 운영 환경의 러너 로그 스트리밍
+- 실제 `actions/setup-*` 작업에서의 도구 캐시
+- `ssh://` 호스트에서 작업이 요청한 러너 이미지 받기
+- 비공개 레지스트리에서 러너 이미지 받기
+- 아웃바운드 `agent://` 워커에서의 러너 OS 선택(`os__NAME__`)
+
+러너 이미지 자동 받기와 실제 Docker에서의 정리, 다섯 가지 OS 변형의 러너 실행, 저장소별 도구 캐시 디렉터리 유지는 개발자 컴퓨터의 실제 Docker로 확인했지만 운영 환경에서는 아직 확인하지 않았습니다.
 
 이 기능에서 문제를 발견하면 이슈로 알려주세요.
 
@@ -527,7 +553,7 @@ go vet ./...
 CGO_ENABLED=0 go build -o runquill .
 ```
 
-러너 Dockerfile은 GitHub Actions 러너 이미지를 다이제스트로 고정합니다. `--build-arg RUNQUILL_RUNNER_BASE=IMAGE`로 호환 이미지에 자체 도구를 추가할 수 있습니다. 다른 기반 이미지는 `--build-arg RUNQUILL_RUNNER_OS=ubuntu22.04` 또는 `debian12`로 빌드합니다. Kubernetes `plain` 모드와 `privileged: false` 풀을 위해 러너 파일은 `/home/runner`에 두고 사용자 UID는 1001로 유지합니다.
+러너 Dockerfile은 GitHub Actions 러너 이미지를 다이제스트로 고정합니다. `--build-arg RUNQUILL_RUNNER_BASE=IMAGE`로 호환 이미지에 자체 도구를 추가할 수 있습니다. 다른 기반 이미지는 `--build-arg RUNQUILL_RUNNER_OS=`에 `ubuntu22.04`, `ubuntu26.04`, `debian12`, `debian13` 중 하나를 넣어 빌드합니다. Kubernetes `plain` 모드와 `privileged: false` 풀을 위해 러너 파일은 `/home/runner`에 두고 사용자 UID는 1001로 유지합니다.
 
 러너 이미지를 빌드한 뒤 `RUNQUILL_TEST_DOCKER_IMAGE=runquill-runner:local go test -run '^TestDockerRunner$' -v`로 중첩 Docker 검증을 실행합니다. 로컬 GitHub 리스너 대역으로 Docker 빌드, PostgreSQL, 바인드 마운트, 컨테이너 삭제를 확인합니다.
 

@@ -135,8 +135,8 @@ func validateRunsOnMapping(mapping []runsOnMapping) (map[string]string, error) {
 	return pools, nil
 }
 
-// runquillRunsOn renders the per-job route label for a job ID and pool.
-func runquillRunsOn(jobID, pool string, matrix bool) (string, error) {
+// runquillRunsOn renders the per-job route label for a job ID, pool and runner OS label.
+func runquillRunsOn(jobID, pool, osLabel string, matrix bool) (string, error) {
 	suffix := strings.ToLower(jobID)
 	if !jobRouteSuffix.MatchString(suffix) {
 		return "", errors.New("Runquill labels need a job ID that starts with a letter or digit")
@@ -144,6 +144,13 @@ func runquillRunsOn(jobID, pool string, matrix bool) (string, error) {
 	if strings.HasPrefix(suffix, "pool__") {
 		// worker_pools.go would read the job ID itself as a pool selector.
 		return "", errors.New("a job ID starting with pool__ would select a worker pool")
+	}
+	if strings.HasPrefix(suffix, "os__") {
+		// runner_images.go would read the job ID itself as a runner OS selector.
+		return "", errors.New("a job ID starting with os__ would select a runner image")
+	}
+	if osLabel != "" {
+		suffix = "os__" + osLabel + "__" + suffix
 	}
 	if pool != "" && pool != defaultWorkerPool {
 		suffix = "pool__" + pool + "__" + suffix
@@ -848,16 +855,43 @@ func (d *wfDoc) reusableDefinition() bool {
 }
 
 func rewriteWorkflow(src []byte, mapping []runsOnMapping) (rewriteResult, error) {
+	return rewriteWorkflowImages(src, mapping, nil)
+}
+
+// hostedRunnerOS returns the os__ label that keeps a job on the OS of its GitHub-hosted Ubuntu
+// label (ubuntu-22.04, ubuntu-24.04, ...) when the runner image catalogue has that entry.
+// The built-in ubuntu-latest is the default image, which a plain route already uses.
+func hostedRunnerOS(labels []string, images *runnerImages) string {
+	found := ""
+	for _, label := range labels {
+		lower := strings.ToLower(label)
+		if !strings.HasPrefix(lower, "ubuntu-") {
+			continue
+		}
+		entry, ok := images.lookup(lower)
+		if !ok || entry.Source == runnerImageSourceDefault && runnerImageKey(entry.Name) == runnerImageKey(runnerOSLatest) {
+			continue
+		}
+		if found != "" {
+			return ""
+		}
+		found = entry.Label
+	}
+	return found
+}
+
+// rewriteWorkflowImages rewrites with a runner image catalogue; nil maps labels to pools only.
+func rewriteWorkflowImages(src []byte, mapping []runsOnMapping, images *runnerImages) (rewriteResult, error) {
 	pools, err := validateRunsOnMapping(mapping)
 	if err != nil {
 		return rewriteResult{}, err
 	}
-	res := rewriteWith(src, pools)
+	res := rewriteWith(src, pools, images)
 	if !res.changed() {
 		return res, nil
 	}
 	// Re-read the output: every rewritten job must now read as Runquill and nothing else may move.
-	again := rewriteWith(res.Output, pools)
+	again := rewriteWith(res.Output, pools, images)
 	if again.Refused != "" || again.changed() || len(again.Jobs) != len(res.Jobs) {
 		return rewriteResult{Output: src, Refused: "the rewritten file did not pass the consistency check"}, nil
 	}
@@ -871,7 +905,7 @@ func rewriteWorkflow(src []byte, mapping []runsOnMapping) (rewriteResult, error)
 	return res, nil
 }
 
-func rewriteWith(src []byte, pools map[string]string) rewriteResult {
+func rewriteWith(src []byte, pools map[string]string, images *runnerImages) rewriteResult {
 	res := rewriteResult{Output: src}
 	d := parseWorkflow(src)
 	if d.refusal != "" {
@@ -908,7 +942,7 @@ func rewriteWith(src []byte, pools map[string]string) rewriteResult {
 			outcome.Code, outcome.Reason = code, reason
 		default:
 			pool, mapped := pools[labelSetKey(parsed.labels)]
-			value, labelErr := runquillRunsOn(j.id, pool, matrix)
+			value, labelErr := runquillRunsOn(j.id, pool, hostedRunnerOS(parsed.labels, images), matrix)
 			switch {
 			case !mapped:
 				outcome.Code, outcome.Reason = outcomeUnmapped, reasonUnmapped

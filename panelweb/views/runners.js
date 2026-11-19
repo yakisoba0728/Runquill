@@ -22,6 +22,12 @@ export default {
         { label: "Host", className: "long", cell: (runner) => runner.host || "—" },
         { label: "Pool", cell: (runner) => poolName(runner.pool || runner.job?.pool) },
         { label: "Runtime state", cell: runnerState },
+        { label: "Runner image", className: "long", cell: (runner) => {
+          const image = runner.runner_image || runner.job?.runner_image;
+          const os = runner.runner_os || runner.job?.runner_os;
+          return [image ? h("span", { class: "mono" }, image) : "—",
+            os ? h("span", { class: "sub" }, tr("Runner OS {name}", { name: os })) : null];
+        } },
         { label: "GitHub job", className: "long", cell: (runner) => {
           const job = runner.job;
           if (!job) return h("span", { class: "muted" }, tr("Untracked runner"));

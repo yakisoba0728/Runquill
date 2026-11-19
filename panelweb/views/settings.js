@@ -6,6 +6,20 @@ import { block, button, errorText, field, fill, h, intro, message, pageHead, sta
 
 let parts = null;
 
+// Pool images are runner image catalogue names (runner_images.go runnerImageName).
+const runnerImageName = /^[a-z0-9][a-z0-9.-]{0,39}$/;
+const maxRunnerImages = 64;
+
+// poolImages reads the allowed runner OS field; null (absent) allows every name.
+function poolImages(value, pool) {
+  const names = value.split(/[,\n]/).map((part) => part.trim()).filter(Boolean);
+  if (!names.length) return undefined;
+  const invalid = names.find((name) => !runnerImageName.test(name));
+  if (invalid) throw new ApiError(0, tr("Pool {pool}: {name} is not a runner OS name. Use 1 to 40 lowercase letters, digits, dots or hyphens.", { pool, name: invalid }));
+  if (names.length > maxRunnerImages) throw new ApiError(0, tr("Pool {pool} may allow at most {n} runner OS names.", { pool, n: maxRunnerImages }));
+  return names;
+}
+
 function hostRow(list, address = "", limit = "") {
   const input = h("input", { name: "address", placeholder: "local or ssh://user@host", maxLength: 260, required: true,
     "aria-label": tr("Worker address"), class: "mono" });
@@ -47,6 +61,8 @@ function poolEntry(list, originals, name = "", pool = {}) {
       field("CPU limit", input({ name: "cpus", type: "number", min: 0.01, step: "any" }, pool.cpus || "")),
       field("Memory limit (MiB)", input({ name: "memory", type: "number", min: 6 }, pool.memory_mib || "")),
       field("Pool runner image", input({ name: "image", maxLength: 256, placeholder: tr("Use default image") }, pool.image), { className: "span" }),
+      field("Allowed runner OS", input({ name: "images", maxLength: 2700, class: "mono", placeholder: tr("Allow every runner OS"),
+        title: tr("Comma-separated runner image catalogue names, such as ubuntu22.04, debian12") }, (pool.images || []).join(", ")), { className: "span" }),
       field("Worker addresses", input({ name: "hosts", rows: 2, placeholder: tr("One worker address per line") }, (pool.hosts || []).join("\n")), { className: "half" }),
       field("Allowed repositories", repositories, { className: "half" })),
     h("div", { class: "entry-foot" },
@@ -77,6 +93,7 @@ function settingsForm(ctx) {
   const hostList = h("tbody");
   const poolList = h("div");
   const webhook = h("p", { class: "hint" });
+  const catalogue = h("p", { class: "hint", hidden: true });
   const fleetFields = {
     slot_limit: h("input", { id: "set-slot-limit", name: "slot_limit", type: "number", inputMode: "numeric", min: 1, required: true }),
     poll_interval: h("input", { id: "set-poll", name: "poll_interval", placeholder: "30s", maxLength: 32, required: true, "aria-describedby": "set-poll-hint" }),
@@ -92,7 +109,7 @@ function settingsForm(ctx) {
       h("thead", {}, h("tr", {}, h("th", { scope: "col" }, tr("Worker address")), h("th", { scope: "col" }, tr("Worker slot limit")),
         h("th", { scope: "col" }, h("span", { class: "visually-hidden" }, tr("Actions"))))),
       hostList))),
-    block("Worker pools", { actions: [button("Add pool", () => poolEntry(poolList, originals).focus())] }, poolList));
+    block("Worker pools", { actions: [button("Add pool", () => poolEntry(poolList, originals).focus())] }, catalogue, poolList));
   const form = h("form", { "aria-label": tr("Operational settings"), hidden: true },
     block("Fleet", {}, h("div", { class: "form-grid" },
       h("label", { for: "set-slot-limit" }, tr("Fleet slot limit")), fleetFields.slot_limit,
@@ -101,7 +118,7 @@ function settingsForm(ctx) {
     docker,
     h("div", { class: "block" }, h("div", { class: "form-actions" }, button("Save settings", null, { type: "submit", primary: true }))));
 
-  function populate({ backend, webhook_enabled, policy }) {
+  function populate({ backend, webhook_enabled, policy, runner_images: images }) {
     revision = policy.revision;
     fleetFields.slot_limit.value = policy.slot_limit;
     fleetFields.poll_interval.value = policy.poll_interval;
@@ -109,6 +126,10 @@ function settingsForm(ctx) {
     webhook.textContent = tr(webhook_enabled ? "GitHub webhooks are enabled. Set polling to 0 for webhook-only discovery."
       : "GitHub webhooks are disabled. Keep polling enabled to receive jobs.");
     docker.hidden = backend !== "docker";
+    // The catalogue is read-only here; RUNQUILL_RUNNER_IMAGES changes it.
+    const labels = (images || []).map((entry) => entry.label).filter(Boolean);
+    catalogue.hidden = !labels.length;
+    catalogue.textContent = labels.length ? tr("Runner OS names jobs can select with os__NAME__: {names}", { names: labels.join(", ") }) : "";
     hostList.replaceChildren();
     poolList.replaceChildren();
     for (const address of policy.docker_hosts || []) hostRow(hostList, address, policy.host_limits?.[address]);
@@ -136,6 +157,7 @@ function settingsForm(ctx) {
         // An absent value means the privileged default; keep it absent unless it changes.
         privileged: row.privileged ? (row.original.privileged === false ? true : row.original.privileged) : false,
         cache: row.cache,
+        images: poolImages(row.images, row.pool_name),
       }])),
     }, { timeout: 10000 });
     populate(saved);

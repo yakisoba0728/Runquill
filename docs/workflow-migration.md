@@ -24,7 +24,7 @@ The request, the opened pull request or the failure are recorded in the audit lo
 
 ## What changes and what never changes
 
-For each matched job, only the `runs-on` value is replaced with a per-job Runquill label, with `strategy.job-index` added for matrix jobs and a `pool__NAME__` prefix for a pool other than `default`. No other line changes, and the rewritten file must parse back to the same jobs before it is accepted.
+For each matched job, only the `runs-on` value is replaced with a per-job Runquill label, with `strategy.job-index` added for matrix jobs and a `pool__NAME__` prefix for a pool other than `default`. When the job's labels include exactly one GitHub-hosted Ubuntu version label, such as `ubuntu-22.04`, and the manager's [runner image catalogue](runner-images.md#the-runner-image-catalogue) has that entry, the label also gets `os__ubuntu2204__` so the job keeps its OS. `ubuntu-latest` gets no `os__` selector because it is the default image. No other line changes, and the rewritten file must parse back to the same jobs before it is accepted.
 
 Runquill never merges, never pushes to an existing branch, never writes outside `.github/workflows`, and never touches public repositories, repositories outside the App installation or repositories of another owner. If a commit or the pull request fails, it deletes the branch it created when nothing else has moved it.
 
@@ -34,7 +34,7 @@ A job is left unchanged, with the reason in the preview, when:
 - `runs-on` is an expression, uses `group` or `labels`, already targets self-hosted or Runquill runners, or is missing;
 - the job calls a reusable workflow, or the file itself is a reusable workflow (`workflow_call`);
 - the job uses YAML anchors or a form the scanner does not read reliably;
-- its job ID cannot form a Runquill label, starts with `pool__`, or differs from another job ID only in letter case.
+- its job ID cannot form a Runquill label, starts with `pool__` or `os__`, or differs from another job ID only in letter case.
 
 A whole file is left unchanged when it is too large, has several YAML documents, is indented with tabs, contains a stray carriage return, or is not valid UTF-8.
 
@@ -55,14 +55,15 @@ runquill workflow check --json path/to/workflow.yml
 | --- | --- | --- |
 | `untrusted-trigger` | high | A self-hosted job runs on `pull_request_target` or `workflow_run`. |
 | `fork-trigger` | warning | A self-hosted job runs on `pull_request` or review events, which can run fork code. |
-| `runs-on` | warning | A Runquill label is malformed: not the only label, not built with `format()`, a matrix job without `strategy.job-index`, an invalid pool suffix or a label that can exceed 100 characters. Also flags self-hosted jobs that Runquill will not serve. |
+| `runs-on` | warning | A Runquill label is malformed: not the only label, not built with `format()`, a matrix job without `strategy.job-index`, an invalid pool or `os__` suffix or a label that can exceed 100 characters. Also flags self-hosted jobs that Runquill will not serve. |
 | `pool` | warning | The label names a pool missing from `RUNQUILL_WORKER_POOLS`. |
+| `runner-image` | warning | The label selects an `os__NAME__` image missing from the runner image catalogue, or one its pool's `images` list does not allow. |
 | `docker` | warning | The job seems to need Docker (by a heuristic), but its pool sets `privileged: false`. |
 | `permissions` | warning | The workflow has no top-level `permissions` block. |
 | `timeout` | warning | A job has no `timeout-minutes`. |
 | `unpinned-action` | info | An action outside `actions/` and `github/` is not pinned to a full commit SHA. |
 | `unparsed` | warning or info | A file or job could not be checked. |
 
-The pool checks run only when `RUNQUILL_WORKER_POOLS` is set in the environment of the command. Pools saved in the panel are not read.
+The pool checks run only when `RUNQUILL_WORKER_POOLS` is set in the environment of the command. Pools saved in the panel are not read. The `runner-image` check uses the catalogue built into the binary that runs the command plus `RUNQUILL_RUNNER_IMAGES` in its environment. Release builds know every published variant. If the manager sets `RUNQUILL_RUNNER_IMAGES`, set the same value for the command. [Runner images](runner-images.md)
 
 The command exits with status 1 when a high-severity finding exists, or for any finding with `--strict`, and with status 2 for a missing directory, an unreadable file or a file larger than 1 MiB. Otherwise it exits with 0. `--json` prints `{"files": N, "findings": [...]}`, where each finding has `file`, `line`, optional `job`, `severity`, `code` and `message`.

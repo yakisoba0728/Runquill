@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
 	"regexp"
 	"strings"
@@ -218,13 +219,18 @@ func (m *migrationRepo) preview(ctx context.Context, mapping []runsOnMapping) (m
 	}
 	// The hash covers what the pull request would contain, not the head commit, so
 	// unrelated commits to the default branch neither stale a preview nor fork a second PR.
+	// Hosted Ubuntu version labels keep their OS when the manager's runner image catalogue has it.
+	images, err := buildRunnerImages(os.Getenv(runnerImagesEnv), releaseImage, version, "")
+	if err != nil {
+		images = nil
+	}
 	digest := sha256.New()
 	canonical, _ := json.Marshal(mapping)
 	fmt.Fprintf(digest, "runquill-migrate-v1\x00%s\x00%s\x00%s\x00", m.name, m.base, canonical)
 	for i := range files {
 		file := &files[i]
 		if src, ok := sources[file.Path]; ok {
-			res, err := rewriteWorkflow(src, mapping)
+			res, err := rewriteWorkflowImages(src, mapping, images)
 			if err != nil {
 				return migrationPreview{}, err
 			}

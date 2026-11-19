@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -72,6 +73,7 @@ func inspectStatus(ctx context.Context, db *sql.DB) (*statusReport, error) {
 	// Bad GitHub configuration should not hide the local queue.
 	scope, _ := parseRepositoryScope(os.Getenv(repositoryScopeEnv))
 	report.configure(runners.kind, scope, runners.pools, jobs, hosts)
+	report.describeImages(runners.images, jobs)
 	if probeErr != nil {
 		report.DockerError = strings.Join(strings.Fields(probeErr.Error()), " ")
 	}
@@ -151,6 +153,8 @@ type statusHost struct {
 	OccupiedSlots int    `json:"occupied_slots"`
 	ReservedSlots int    `json:"reserved_slots"`
 	Error         string `json:"error,omitempty"`
+	// ImageStatus is ready, pulling, missing or failed while Runquill pulls runner images on this host.
+	ImageStatus string `json:"image_status,omitempty"`
 }
 
 type statusJob struct {
@@ -166,6 +170,8 @@ type statusJob struct {
 	RunnerHost    string           `json:"runner_host,omitempty"`
 	Pool          string           `json:"pool,omitempty"`
 	PoolError     string           `json:"pool_error,omitempty"`
+	RunnerOS      string           `json:"runner_os,omitempty"`    // the os__NAME__ selector in the label
+	RunnerImage   string           `json:"runner_image,omitempty"` // the image the job's runner starts from
 	URL           string           `json:"url,omitempty"`
 	Timing        *statusJobTiming `json:"timing,omitempty"`
 	detail        string
@@ -248,10 +254,13 @@ func summarizeStatus(jobs []job, hosts []hostCapacity, unassigned, limit int, no
 	if len(hosts) > 0 {
 		runners := &statusRunners{ReservedSlots: unassigned, UnassignedReservedSlots: unassigned}
 		for _, host := range hosts {
-			row := statusHost{Name: host.Name, Pool: host.Pool, Status: "UP", Cordoned: host.Cordoned, SlotLimit: host.Limit}
+			row := statusHost{Name: host.Name, Pool: host.Pool, Status: "UP", Cordoned: host.Cordoned, SlotLimit: host.Limit,
+				ImageStatus: host.ImageStatus}
 			if host.Err != nil {
 				row.Status = "UNAVAILABLE"
 				row.Error = strings.Join(strings.Fields(host.Err.Error()), " ")
+			} else if host.ImageWait != "" {
+				row.Status, row.Error = "UNAVAILABLE", host.ImageWait
 			}
 			if host.Containers == nil {
 				row.Status = "OFFLINE"
@@ -360,6 +369,9 @@ func (r statusReport) writeText(out io.Writer) error {
 			fmt.Fprintf(table, "\t\t\t%s\n", j.PoolError)
 		} else if j.Pool != "" {
 			fmt.Fprintf(table, "\t\t\tpool=%s\n", j.Pool)
+		}
+		if j.RunnerOS != "" {
+			fmt.Fprintf(table, "\t\t\tos=%s image=%s\n", j.RunnerOS, cmp.Or(j.RunnerImage, "unknown"))
 		}
 		if j.Diagnostic != nil && j.Diagnostic.Message != j.PoolError {
 			fmt.Fprintf(table, "\t\t\t%s\n", j.Diagnostic.Message)

@@ -41,7 +41,7 @@ docker compose -f compose.yaml -f compose.worker.yaml up -d
 
 Use a trusted HTTPS reverse proxy for `/worker/v1/*` to the manager's HTTP listener. Keep the manager's HTTP port bound to loopback or accessible only to that proxy. The proxy must overwrite `X-Forwarded-Proto` with the actual external scheme. Runquill accepts that header from a loopback peer or a single explicitly configured `RUNQUILL_WORKER_PROXY_IP`. Set this to the proxy's source IP as seen by the manager, which can be the Docker bridge gateway when proxying to a Compose port on the host. Restrict access to the backend listener to prevent other clients from impersonating that peer. Keep authorization headers and response bodies out of proxy logs.
 
-On the worker, start Runquill with the worker name, HTTPS manager origin, and private token file. Use the same image configured for this host in the manager or its pool. Load or pull that image through your usual trusted image supply first.
+On the worker, start Runquill with the worker name, HTTPS manager origin, and private token file. Use the same image configured for this host in the manager or its pool. Load or pull that image through your usual trusted image supply first. The manager pulls runner images only on the `local` host and `ssh://` hosts, never on an outbound worker. A worker starts only this image, so it never takes a job whose `os__NAME__` label selects a different [catalogue image](runner-images.md), and the manager's [cleanup of unused images and cache volumes](runner-images.md#cleanup-of-unused-images-and-cache-volumes) skips it.
 
 ```sh
 RUNQUILL_RUNNER_IMAGE=runquill-runner:local \

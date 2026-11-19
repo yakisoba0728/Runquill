@@ -22,8 +22,13 @@ function groups(snapshot) {
   };
 }
 
+// A job that waits for a runner image says so in retry_reason without a retry
+// time; that is more specific than the scheduler's generic explanation.
+const imageWait = "waiting for runner image ";
+
 function reason(job) {
-  const text = job.status === "RETRY" ? job.retry_reason || job.diagnostic?.message : job.diagnostic?.message || job.retry_reason;
+  const text = job.status === "RETRY" || job.retry_reason?.startsWith(imageWait)
+    ? job.retry_reason || job.diagnostic?.message : job.diagnostic?.message || job.retry_reason;
   return text ? serverText(text) : "";
 }
 
@@ -92,13 +97,15 @@ function renderDetail(job, target) {
   const link = isGitHubJobURL(job.url) ? externalLink(tr("Open in GitHub"), job.url) : null;
   const source = job.timing?.discovery_source;
   const facts = createKv([["status", "State"], ["source", "Discovered by"], ["pool", "Pool"], ["host", "Host"], ["runner", "Runner"],
-    ["label", "Runner label"], ["retry", "Retry time"]], { wide: true, label: "Job details" });
+    ["label", "Runner label"], ["os", "Runner OS"], ["image", "Runner image"], ["retry", "Retry time"]], { wide: true, label: "Job details" });
   facts.set("status", state(job.status || "CLEANED"));
   facts.set("source", source ? tr(source === "poll" ? "GitHub API polling" : "Webhook") : "—");
   facts.set("pool", poolName(job.pool));
   facts.set("host", job.runner_host || "—");
   facts.set("runner", job.runner ? h("span", { class: "mono" }, job.runner) : "—");
   facts.set("label", job.runner_label ? h("code", {}, job.runner_label) : "—");
+  facts.set("os", job.runner_os || "—");
+  facts.set("image", job.runner_image ? h("span", { class: "mono" }, job.runner_image) : "—");
   facts.show("retry", !!job.retry_at);
   if (job.retry_at) facts.set("retry", format.time(job.retry_at));
   const timings = createKv([["discovery", "Discovery time"], ["queue", "Queue time"], ["startup", "Startup time"]], { label: "Job timings" });
@@ -193,7 +200,8 @@ export default {
           } },
         }, job.repository) },
         { label: "Job", className: "id", cell: (job) => "#" + job.id },
-        { label: "Pool", cell: (job) => poolName(job.pool) },
+        { label: "Pool", cell: (job) => [poolName(job.pool),
+          job.runner_os ? h("span", { class: "sub" }, tr("Runner OS {name}", { name: job.runner_os })) : null] },
         { label: "State", cell: (job) => [state(job.status || "CLEANED"),
           job.retry_at ? h("span", { class: "sub" }, tr("Retry time {time}", { time: format.time(job.retry_at) })) : null] },
         { label: "Reason", className: "wrap", cell: (job) => reason(job) || "—" },

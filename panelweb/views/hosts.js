@@ -9,6 +9,10 @@ import {
 
 let parts = null;
 
+// image_status is set only for local and ssh:// hosts while RUNQUILL_IMAGE_PULL
+// is missing or always; the image name and pull error arrive in host.error.
+const imageStates = { ready: "Image ready", pulling: "Pulling image", missing: "Image missing", failed: "Image pull failed" };
+
 function pools(hosts) {
   const result = new Map();
   for (const host of hosts) {
@@ -34,7 +38,8 @@ export default {
     const hostColumns = [
       { label: "Host", className: "id long", cell: (host) => [host.name, host.error ? h("span", { class: "sub" }, serverText(host.error)) : null] },
       { label: "Pool", cell: (host) => poolName(host.pool) },
-      { label: "State", cell: (host) => state(workerState(host)) },
+      { label: "State", cell: (host) => [state(workerState(host)),
+        imageStates[host.image_status] ? h("span", { class: "sub" }, tr(imageStates[host.image_status])) : null] },
       { label: "Slot limit", num: true, cell: (host) => format.number(host.slot_limit) },
       { label: "Occupied", num: true, cell: (host) => format.number(host.occupied_slots) },
       { label: "Reserved", num: true, cell: (host) => format.number(host.reserved_slots) },

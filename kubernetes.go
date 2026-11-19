@@ -177,7 +177,12 @@ func (k *kubeRunners) startOn(ctx context.Context, host, name, jit string) error
 	if host != kubeHost {
 		return fmt.Errorf("unknown Kubernetes runner host %q", host)
 	}
-	pod, err := k.pods.Create(ctx, k.runnerPod(name), meta.CreateOptions{})
+	spec := k.runnerPod(name)
+	if image := runnerImageFrom(ctx); image != "" {
+		// A job's catalogue image replaces the configured one; the kubelet pulls it.
+		spec.Spec.InitContainers[0].Image, spec.Spec.Containers[0].Image = image, image
+	}
+	pod, err := k.pods.Create(ctx, spec, meta.CreateOptions{})
 	if err != nil {
 		return fmt.Errorf("create runner Pod: %w", err)
 	}

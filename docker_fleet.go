@@ -20,6 +20,10 @@ var sshName = regexp.MustCompile(`^[a-zA-Z0-9_][a-zA-Z0-9_.-]*$`)
 type dockerFleet struct {
 	hosts   []docker
 	workers *workerFleet
+	// images is shared by every fleet built from saved settings; nil leaves images to the operator.
+	images *imageReadiness
+	// inspect checks on-demand images when Runquill does not pull them; nil runs the engine.
+	inspect imageCommand
 }
 
 type dockerHostSnapshot struct {
@@ -28,6 +32,8 @@ type dockerHostSnapshot struct {
 	Containers        map[string]string
 	RunnerDiagnostics map[string]jobDiagnostic
 	Err               error
+	// The image fields are set while Runquill pulls images; ImageWait says why the host cannot start runners yet.
+	Image, ImageStatus, ImageWait string
 }
 
 const dockerHostProbeTimeout = 5 * time.Second
@@ -39,6 +45,9 @@ func newDockerFleet(image, hosts string) (*dockerFleet, error) {
 	}
 	fleet.workers, err = loadWorkerFleet(fleet.hosts, os.Getenv("RUNQUILL_WORKER_AUTH_FILE"))
 	if err != nil {
+		return nil, err
+	}
+	if fleet.images, err = loadImagePull(os.Getenv); err != nil {
 		return nil, err
 	}
 	return fleet, nil
@@ -113,7 +122,10 @@ func (f *dockerFleet) prepare(ctx context.Context) error {
 			continue
 		}
 		if err := host.checkRunnerImage(ctx); err != nil {
-			return err
+			if !f.images.enabled() || !imageMissing(err) {
+				return err
+			}
+			slog.Info("runner image is missing; pulling it in the background", "host", host.label(), "image", logImage(host.image))
 		}
 		info, err := host.probe(ctx)
 		if err != nil {
@@ -176,6 +188,11 @@ func (f *dockerFleet) snapshot(ctx context.Context) ([]dockerHostSnapshot, error
 			result.Containers, result.Err = host.containers(ctx)
 			if result.Err == nil && host.image != "" {
 				result.Err = host.checkRunnerImage(ctx)
+				if f.images.enabled() && (result.Err == nil || imageMissing(result.Err)) {
+					result.Image = host.image
+					result.ImageStatus, result.ImageWait = f.images.observe(result.Name, host.image, result.Err == nil)
+					result.Err = nil
+				}
 			}
 			if result.Err == nil {
 				result.Err = host.privilegeConflict(ctx)
@@ -218,6 +235,12 @@ func (f *dockerFleet) startOn(ctx context.Context, target, name, jit string) err
 	host, err := f.host(target)
 	if err != nil {
 		return err
+	}
+	if image := runnerImageFrom(ctx); image != "" && image != host.image {
+		if host.agentName() != "" {
+			return fmt.Errorf("outbound worker %s starts only its own runner image %s", host.label(), host.image)
+		}
+		host.image = image
 	}
 	if host.agentName() != "" {
 		task := workerTask{Operation: "start", Name: name, JIT: jit,

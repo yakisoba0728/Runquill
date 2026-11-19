@@ -147,6 +147,7 @@ func (ops *operations) resolve(policy operationPolicy) (*operationState, error) 
 	}
 	policy.PollInterval = interval.String()
 	runners := ops.base
+	runners.images = runners.images.withDefault(policy.Image)
 	switch base := ops.base.runtime.(type) {
 	case *dockerFleet:
 		fleet, err := parseDockerFleet(policy.Image, strings.Join(policy.Hosts, ","))
@@ -186,7 +187,7 @@ func (ops *operations) resolve(policy operationPolicy) (*operationState, error) 
 		for i, host := range fleet.hosts {
 			policy.Hosts[i] = host.label()
 		}
-		fleet.workers = base.workers
+		fleet.workers, fleet.images = base.workers, base.images
 		runners.runtime, runners.hostCount, runners.hostLimits, runners.pools = fleet, len(fleet.hosts), maps.Clone(policy.HostLimits), pools
 	case *kubeRunners:
 		if len(policy.Hosts) != 0 || len(policy.HostLimits) != 0 || len(policy.Pools) != 0 {

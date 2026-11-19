@@ -10,6 +10,11 @@ import {
 const pageSize = 25;
 let parts = null;
 
+// runnerOS is the os__NAME__ selector of a job's label as a sub-line, or null.
+function runnerOS(job) {
+  return job.runner_os ? h("span", { class: "sub" }, tr("Runner OS {name}", { name: job.runner_os })) : null;
+}
+
 function outcomeState(job) {
   if (job.outcome === "waiting") return job.retry_at ? "RETRY" : "WAITING";
   return job.outcome.toUpperCase();
@@ -100,7 +105,7 @@ export default {
             reason ? h("span", { class: "sub" }, tr(job.failure ? "Reason: {reason}" : "Last retry: {reason}", { reason: serverText(reason) })) : null,
             job.retry_at ? h("span", { class: "sub" }, tr("Retry time {time}", { time: format.time(job.retry_at) })) : null];
         } },
-        { label: "Pool", cell: (job) => job.pool ? poolName(job.pool) : "—" },
+        { label: "Pool", cell: (job) => [job.pool ? poolName(job.pool) : "—", runnerOS(job)] },
         { label: "Host", className: "long", cell: (job) => job.host || "—" },
         { label: "Queued", num: true, cell: (job) => time(job.queued_at) },
         { label: "Started", num: true, cell: (job) => time(job.started_at) },

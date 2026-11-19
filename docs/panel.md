@@ -15,17 +15,17 @@ Screens are addressed by the URL fragment, such as `#/queue`. An unknown screen 
 The sidebar shows counts of queued jobs, running runners and offline hosts.
 
 - **Overview** summarizes capacity, host health, the GitHub connection, a first-job checklist and the longest-waiting jobs.
-- **Queue** lists waiting, assigned and recently cleaned jobs with a repository, job ID and pool filter. Select a job to see its runner label, timings and the current queue or startup explanation. Administrators can run a repository check (`POST /api/diagnose`) from **Missing a job?**.
-- **Jobs** is the seven-day job history with repository, outcome and time filters.
-- **Runners** lists the runner containers or Pods in the latest snapshot.
-- **Hosts & pools** shows host health, slots and pool capacity, and lets operators pause or resume assignments. With [elastic limits](elastic-limits.md) enabled, it also shows the mode, per-host surplus and recent resize decisions from `GET /api/elastic`.
+- **Queue** lists waiting, assigned and recently cleaned jobs with a repository, job ID and pool filter. The pool column notes the runner OS a job selects with `os__NAME__`. Select a job to see its runner label, runner OS and image, timings and the current queue or startup explanation, including a wait for a runner image. Administrators can run a repository check (`POST /api/diagnose`) from **Missing a job?**.
+- **Jobs** is the seven-day job history with repository, outcome and time filters. The pool column notes the runner OS a job selected.
+- **Runners** lists the runner containers or Pods in the latest snapshot, with the runner image and OS of the job each one holds.
+- **Hosts & pools** shows host health, slots and pool capacity, and lets operators pause or resume assignments. While the manager [pulls runner images](runner-images.md#automatic-pulls), each `local` and `ssh://` host also shows whether its image is ready, missing, being pulled or failed to pull, with the pull error. With [elastic limits](elastic-limits.md) enabled, it also shows the mode, per-host surplus and recent resize decisions from `GET /api/elastic`.
 - **Usage** charts [usage statistics](#usage-statistics) by day, repository, pool or host.
 - **Logs** streams [runner logs](#runner-logs) for operators and administrators.
 - **Migrate** walks an administrator through [workflow migration](workflow-migration.md).
 - **Backups** shows the [scheduled backup](backups.md) settings and last run, and downloads a queue backup. Restore stays on the command line.
 - **Audit** lists audited actions with action and actor filters.
 - **Team & tokens** manages API tokens for every user and team members for administrators.
-- **Settings** edits the fleet limit, polling interval, runner image, Docker workers and pools, and applies them without a restart.
+- **Settings** edits the fleet limit, polling interval, runner image, Docker workers and pools, including the runner OS names each pool allows, and applies them without a restart. It lists the [runner image catalogue](runner-images.md#the-runner-image-catalogue) read-only.
 
 ## Roles and tokens
 

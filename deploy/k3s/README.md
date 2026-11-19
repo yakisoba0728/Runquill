@@ -38,13 +38,16 @@ Pending runner Pods can show scheduling, image pull, volume mount and container 
 | Setting | Default | Effect |
 | --- | --- | --- |
 | `RUNQUILL_MAX_RUNNERS` | `2` | Global limit across cluster nodes. Pending and terminating Pods consume slots. |
-| `RUNQUILL_K8S_IMAGE_PULL_SECRET` | unset | Optional registry Secret in `runquill-runners` for a custom runner image. |
+| `RUNQUILL_K8S_IMAGE_PULL_SECRET` | unset | Optional registry Secret in `runquill-runners` for a custom or private runner image, including catalogue images. |
+| `RUNQUILL_RUNNER_IMAGES` | unset | Optional JSON map of runner OS names to images that jobs select with `os__NAME__`. Release builds already include the published variants. |
 | `RUNQUILL_K8S_NODE_SELECTOR` | unset | Optional JSON map of node label names and values. |
 | `RUNQUILL_K8S_JOB_CPU` | unset | Optional CPU request and limit, for example `2`. |
 | `RUNQUILL_K8S_JOB_MEMORY` | unset | Optional memory request and limit, for example `4Gi`. |
 | `RUNQUILL_K8S_RUNNER_MODE` | `plain` | `plain` executes steps directly under UID 1001. `dind` adds the privileged Docker daemon for Docker builds and container-based jobs, actions, and services. |
 
 For DinD, use a dedicated cluster with trusted workflows. Label the approved worker nodes, set `RUNQUILL_K8S_NODE_SELECTOR` to select them, and allow privileged Pods in the runner namespace only. Keep the manager namespace restricted. Leave `RUNQUILL_DOCKER_HOSTS`, `RUNQUILL_DOCKER_HOST_LIMITS`, and `RUNQUILL_WORKER_POOLS` empty for this backend. `RUNQUILL_MAX_PER_REPOSITORY`, `RUNQUILL_SCHEDULER_WORKERS`, the `RUNQUILL_LOG_*` and `RUNQUILL_NOTIFY_*` settings apply here as well. Add them to `.env`, recreate `runquill-config`, and restart the Deployment. Use `runquill host cordon kubernetes` to pause new assignments without interrupting active jobs.
+
+A job can select another [runner OS](../../docs/runner-images.md#select-an-os-in-runs-on) with an `os__NAME__` label. The selected catalogue image replaces the runner Pod's image and the kubelet pulls it, so `RUNQUILL_IMAGE_PULL` has no effect here, and the cleanup of unused images and cache volumes skips this backend. All published variants keep the UID 1001 runner user that `plain` mode needs.
 
 Leave `RUNQUILL_CONTAINER_ENGINE` unset; this backend refuses any value other than `docker`. [Elastic limits](../../docs/elastic-limits.md) and [runner logs](../../docs/panel.md#runner-logs) do not apply to Kubernetes runners. [Scheduled backups](../../docs/backups.md) work here too: point `RUNQUILL_BACKUP_DIR` at a path on a persistent volume, preferably not the queue PVC, or upload them to S3.
 

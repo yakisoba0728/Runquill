@@ -58,7 +58,7 @@ func workerCommand(ctx context.Context, args []string) error {
 	}
 	target := docker{image: image, worker: *name}
 	var failures []error
-	checkDocker(ctx, target, func(_ string, err error) {
+	checkDocker(ctx, target, nil, func(_ string, err error) {
 		if err != nil {
 			failures = append(failures, err)
 		}

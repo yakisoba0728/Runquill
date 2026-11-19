@@ -24,6 +24,7 @@ type panelHistoryJob struct {
 	Repository  string     `json:"repository"`
 	RunnerLabel string     `json:"runner_label"`
 	Pool        string     `json:"pool,omitempty"`
+	RunnerOS    string     `json:"runner_os,omitempty"`
 	Host        string     `json:"host,omitempty"`
 	Outcome     string     `json:"outcome"`
 	Failure     string     `json:"failure,omitempty"`
@@ -176,7 +177,8 @@ func readPanelHistory(ctx context.Context, db *sql.DB, filter panelHistoryFilter
 
 func panelHistoryRow(j job, cleanedAt int64, pools workerPools, now time.Time) panelHistoryJob {
 	pool, _ := pools.forJob(j)
-	row := panelHistoryJob{ID: j.id, Repository: j.repository, RunnerLabel: j.route, Pool: pool, Host: j.runnerHost,
+	osName, _ := routeOS(j.route)
+	row := panelHistoryJob{ID: j.id, Repository: j.repository, RunnerLabel: j.route, Pool: pool, RunnerOS: osName, Host: j.runnerHost,
 		URL: jobURL(j), StartedAt: statusTime(j.githubStartedAt), CleanedAt: statusTime(cleanedAt)}
 	queuedAt := j.discoveredAt
 	if queuedAt == 0 {

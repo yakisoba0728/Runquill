@@ -82,7 +82,7 @@ func (d *wfDoc) workflowEvents() []string {
 
 type routeInfo struct {
 	runquill, selfHosted bool
-	pool                 string
+	pool, os             string
 	problem              string
 }
 
@@ -123,14 +123,15 @@ func checkRoute(labels []string, matrix bool) routeInfo {
 	}
 	suffix := strings.ToLower(m[1])
 	info.pool = defaultWorkerPool
-	if rest, ok := strings.CutPrefix(suffix, "pool__"); ok {
-		name, job, found := strings.Cut(rest, "__")
-		if !found || job == "" || !workerPoolName.MatchString(name) {
-			info.problem = "invalid worker pool label suffix (use pool__POOL__JOB)"
-			return info
-		}
-		info.pool = name
+	pool, osName, _, err := splitRouteSuffix(suffix)
+	if err != nil {
+		info.problem = err.Error()
+		return info
 	}
+	if pool != "" {
+		info.pool = pool
+	}
+	info.os = osName
 	if len(suffix) > maxRouteSuffix {
 		info.problem = "the Runquill label can exceed 100 characters; shorten the suffix"
 	}
@@ -155,6 +156,11 @@ func jobNeedsDocker(d *wfDoc, j *wfJob) bool {
 // checkWorkflow runs the offline checks on one workflow file. pools is nil when
 // no pool configuration is available.
 func checkWorkflow(path string, src []byte, pools workerPools) []workflowFinding {
+	return checkWorkflowImages(path, src, pools, nil)
+}
+
+// checkWorkflowImages also checks os__NAME__ selectors against the runner image catalogue when it is known.
+func checkWorkflowImages(path string, src []byte, pools workerPools, images *runnerImages) []workflowFinding {
 	var out []workflowFinding
 	add := func(line int, job, severity, code, message string) {
 		out = append(out, workflowFinding{File: path, Line: line, Job: job, Severity: severity, Code: code, Message: message})
@@ -207,6 +213,13 @@ func checkWorkflow(path string, src []byte, pools workerPools) []workflowFinding
 				add(line, j.id, severityWarning, "pool", fmt.Sprintf("Worker pool %q is not configured in RUNQUILL_WORKER_POOLS, so the job will wait.", info.pool))
 			case pool.Privileged != nil && !*pool.Privileged && jobNeedsDocker(d, j):
 				add(line, j.id, severityWarning, "docker", fmt.Sprintf("This job appears to need Docker (heuristic: container, services or docker commands), but worker pool %q runs without privileges and cannot use Docker.", info.pool))
+			}
+		}
+		if info.runquill && info.problem == "" && info.os != "" && images != nil {
+			if _, found := images.lookup(info.os); !found {
+				add(line, j.id, severityWarning, "runner-image", fmt.Sprintf("Runner image %q is not in the runner image catalogue (release images and %s), so the job will wait.", info.os, runnerImagesEnv))
+			} else if _, err := images.forJob("runquill-1-1-os__"+info.os+"__job", pools[info.pool]); err != nil {
+				add(line, j.id, severityWarning, "runner-image", fmt.Sprintf("Worker pool %q does not allow runner image %q, so the job will wait.", info.pool, info.os))
 			}
 		}
 		if _, ok := j.prop("timeout-minutes"); !ok && !reusable {
@@ -302,6 +315,10 @@ func workflowCheckCommand(args []string, dir string, stdout, stderr io.Writer, g
 	if poolErr != nil {
 		fmt.Fprintln(stderr, poolErr)
 	}
+	images, imagesErr := buildRunnerImages(getenv(runnerImagesEnv), releaseImage, version, "")
+	if imagesErr != nil {
+		fmt.Fprintln(stderr, imagesErr.Error()+"; runner image checks are skipped")
+	}
 	paths := flags.Args()
 	for i, path := range paths {
 		if !filepath.IsAbs(path) {
@@ -327,7 +344,7 @@ func workflowCheckCommand(args []string, dir string, stdout, stderr io.Writer, g
 		if rel, err := filepath.Rel(dir, file); err == nil && !strings.HasPrefix(rel, "..") {
 			name = filepath.ToSlash(rel)
 		}
-		findings = append(findings, checkWorkflow(name, data, pools)...)
+		findings = append(findings, checkWorkflowImages(name, data, pools, images)...)
 	}
 	high := 0
 	for _, f := range findings {

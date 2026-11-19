@@ -6,9 +6,12 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"maps"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -26,18 +29,9 @@ func gc(ctx context.Context, out io.Writer, removeOrphanRunners bool, grace time
 		return err
 	}
 	defer db.Close()
-	runners, err := configureRunnerRuntime("")
+	runners, err := gcRunners(ctx, db, "")
 	if err != nil {
 		return err
-	}
-	if _, saved, err := readOperationPolicy(ctx, db, operationPolicy{}); err != nil {
-		return err
-	} else if saved {
-		state, err := appliedRunnerSettings(ctx, db, env("RUNQUILL_RUNNER_IMAGE", "runquill-runner:local"), 1)
-		if err != nil {
-			return err
-		}
-		runners = state.runners
 	}
 	loadAPI := sync.OnceValues(func() (*github, error) {
 		cfg, err := loadConfig()
@@ -76,6 +70,24 @@ func gc(ctx context.Context, out io.Writer, removeOrphanRunners bool, grace time
 		return api.readRunnerJobStatus(ctx, j)
 	}
 	return writeGCInventory(ctx, out, db, hosts, lookup)
+}
+
+// gcRunners reads the runner configuration the manager uses, saved settings first.
+func gcRunners(ctx context.Context, db *sql.DB, image string) (runnerConfiguration, error) {
+	runners, err := configureRunnerRuntime(image)
+	if err != nil {
+		return runners, err
+	}
+	if _, saved, err := readOperationPolicy(ctx, db, operationPolicy{}); err != nil {
+		return runners, err
+	} else if saved {
+		state, err := appliedRunnerSettings(ctx, db, env("RUNQUILL_RUNNER_IMAGE", "runquill-runner:local"), 1)
+		if err != nil {
+			return runners, err
+		}
+		runners = state.runners
+	}
+	return runners, nil
 }
 
 func writeGCInventory(ctx context.Context, out io.Writer, db *sql.DB, hosts []dockerHostSnapshot, lookup func(context.Context, job) (string, error)) error {
@@ -390,4 +402,172 @@ func removeOrphan(ctx context.Context, db *sql.DB, host orphanHost, c runnerCont
 
 func oneLine(err error) string {
 	return strings.Join(strings.Fields(err.Error()), " ")
+}
+
+const gcUsage = `Usage: runquill gc (--dry-run | --remove-orphans [--grace DURATION] | --unused [--dry-run] [--older-than DURATION])
+  --dry-run                  list runners without a queue lease; changes nothing
+  --remove-orphans           remove untracked idle runners and their GitHub registrations
+  --grace DURATION           with --remove-orphans, keep runners created more recently (default 10m, at least 1m)
+  --unused                   remove runner images Runquill pulled itself and Runquill cache volumes unused for
+                             RUNQUILL_CLEANUP_AFTER (default 30d); the same selection as the automatic cleanup
+  --unused --dry-run         only list what --unused would remove
+  --older-than DURATION      with --unused, use this retention instead (at least 1h, such as 720h or 30d);
+                             required when RUNQUILL_CLEANUP_AFTER=off
+--unused cannot be combined with --remove-orphans.`
+
+// gcCommand parses runquill gc arguments and returns the process exit code.
+func gcCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("runquill gc", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	dryRun := flags.Bool("dry-run", false, "inspect runners and leases without changes; with --unused, list without removing")
+	removeOrphans := flags.Bool("remove-orphans", false, "remove untracked idle runners on local and SSH Docker hosts and delete their GitHub registrations")
+	grace := flags.Duration("grace", defaultOrphanGrace, "with --remove-orphans, keep runners created more recently than this (at least 1m)")
+	unused := flags.Bool("unused", false, "remove runner images Runquill pulled and Runquill cache volumes unused for the cleanup retention")
+	olderThan := flags.String("older-than", "", "with --unused, the retention instead of RUNQUILL_CLEANUP_AFTER, such as 720h or 30d (at least 1h)")
+	flags.Usage = func() {
+		fmt.Fprintln(flags.Output(), gcUsage)
+	}
+	if err := flags.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
+	var retention time.Duration
+	valid := flags.NArg() == 0 && *grace >= time.Minute
+	if *unused {
+		valid = valid && !*removeOrphans
+		if valid && *olderThan != "" {
+			var err error
+			if retention, err = parseRetention("--older-than", *olderThan); err != nil || retention == 0 {
+				fmt.Fprintln(stderr, "--older-than must be a duration of at least 1h, such as 720h or 30d")
+				valid = false
+			}
+		}
+	} else {
+		valid = valid && *olderThan == "" && *dryRun != *removeOrphans
+	}
+	if !valid {
+		flags.Usage()
+		return 2
+	}
+	var err error
+	if *unused {
+		err = gcUnused(ctx, stdout, *dryRun, retention)
+	} else {
+		err = gc(ctx, stdout, *removeOrphans, *grace)
+	}
+	if err != nil {
+		slog.Error("runquill gc", "error", err)
+		return 1
+	}
+	return 0
+}
+
+// gcUnused lists or removes what the automatic cleanup would remove, with the same selection.
+func gcUnused(ctx context.Context, out io.Writer, dryRun bool, olderThan time.Duration) error {
+	policy, err := loadAssetPolicy(os.Getenv)
+	if err != nil {
+		return err
+	}
+	if olderThan > 0 {
+		policy.Images, policy.Cache = olderThan, olderThan
+	} else if !policy.enabled() {
+		return errors.New("automatic cleanup is off (RUNQUILL_CLEANUP_AFTER=off); pass --older-than DURATION")
+	}
+	mode := "rw"
+	if dryRun {
+		mode = "ro"
+	}
+	db, err := openQueueDB(env("RUNQUILL_DB", "runquill.sqlite3"), mode)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if !dryRun {
+		if err := migrateAssets(ctx, db); err != nil {
+			return fmt.Errorf("migrate runner asset records: %w", err)
+		}
+	}
+	runners, err := gcRunners(ctx, db, env("RUNQUILL_RUNNER_IMAGE", "runquill-runner:local"))
+	if err != nil {
+		return err
+	}
+	topology := assetTopologyOf(runners)
+	cleaner := assetCleaner{run: runImageCommand, db: db, write: !dryRun, policy: policy, configured: topology.configured, now: time.Now()}
+	return writeUnusedAssets(ctx, out, cleaner, topology, dryRun)
+}
+
+func writeUnusedAssets(ctx context.Context, out io.Writer, cleaner assetCleaner, topology assetTopology, dryRun bool) error {
+	for _, name := range topology.skipped {
+		fmt.Fprintf(out, "Skipped %s: image and cache volume cleanup supports local and SSH Docker hosts only.\n", name)
+	}
+	table := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+	header := "HOST\tKIND\tNAME\tUNUSED FOR\tSIZE"
+	if !dryRun {
+		header += "\tRESULT"
+	}
+	fmt.Fprintln(table, header)
+	row := func(c assetCandidate) string {
+		size := "-"
+		if c.size > 0 {
+			size = formatBytes(c.size)
+		}
+		return fmt.Sprintf("%s\t%s\t%s\t%s\t%s", c.host, assetKindLabel(c.kind), logImage(c.name), formatIdle(c.idle), size)
+	}
+	var failures []error
+	var images, volumes, kept, listed int
+	var reclaimed int64
+	count := func(c assetCandidate) {
+		if c.kind == assetKindImage {
+			images++
+		} else {
+			volumes++
+		}
+		reclaimed += c.size
+	}
+	for _, target := range topology.hosts {
+		var err error
+		if dryRun {
+			var candidates []assetCandidate
+			candidates, err = cleaner.plan(ctx, target)
+			for _, c := range candidates {
+				fmt.Fprintln(table, row(c))
+				count(c)
+				listed++
+			}
+		} else {
+			_, err = cleaner.clean(ctx, target, func(c assetCandidate, reason string, err error) {
+				result := "removed"
+				switch {
+				case err != nil:
+					result = "kept: " + reason + ": " + oneLine(err)
+					kept++
+				case reason != "":
+					result = "kept: " + reason
+					kept++
+				default:
+					count(c)
+				}
+				fmt.Fprintln(table, row(c)+"\t"+result)
+				listed++
+			})
+		}
+		if err != nil {
+			failures = append(failures, fmt.Errorf("%s: %w", target.label(), err))
+		}
+	}
+	if listed == 0 {
+		fmt.Fprintln(table, "No unused runner images or cache volumes found on reachable hosts.")
+	}
+	flushErr := table.Flush()
+	for _, failure := range failures {
+		fmt.Fprintf(out, "Failed %s\n", oneLine(failure))
+	}
+	if dryRun {
+		fmt.Fprintf(out, "Would remove %d images and %d cache volumes (%s of images).\n", images, volumes, formatBytes(reclaimed))
+	} else {
+		fmt.Fprintf(out, "Removed %d images and %d cache volumes (%s of images); kept %d.\n", images, volumes, formatBytes(reclaimed), kept)
+	}
+	return errors.Join(flushErr, errors.Join(failures...), ctx.Err())
 }

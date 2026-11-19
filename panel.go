@@ -110,6 +110,9 @@ func (p *panelState) capture(ctx context.Context, q *queue, hosts []hostCapacity
 	}
 	report := summarizeStatus(jobs, hosts, unassigned, limit, now)
 	report.configure(p.backend, p.repositoryScope, pools, jobs, hosts)
+	if p.operations != nil {
+		report.describeImages(p.operations.current.Load().runners.images, jobs)
+	}
 	inventory := panelRunnerInventory(hosts, report.Jobs)
 	if probeErr != nil {
 		report.DockerError = "Runner host discovery failed. Check the manager logs."

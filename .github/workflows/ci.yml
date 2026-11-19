@@ -42,7 +42,7 @@ jobs:
       - name: Build the other runner base variants
         if: matrix.os == 'ubuntu-24.04'
         run: |
-          for os in ubuntu22.04 debian12; do
+          for os in ubuntu22.04 ubuntu26.04 debian12 debian13; do
             docker build --build-arg "RUNQUILL_RUNNER_OS=$os" -t "runquill-runner:ci-$os" runner
             docker run --rm --entrypoint bash "runquill-runner:ci-$os" -ec \
               'test "$(id -u runner):$(id -g runner)" = 1001:1001; runuser -u runner -- ./bin/Runner.Listener --version; dockerd --version'

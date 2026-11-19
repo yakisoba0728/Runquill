@@ -111,8 +111,8 @@ func TestWorkerPoolsSetPrivilegeAndRepositoryCache(t *testing.T) {
 		}
 	}
 	entries := archive()
-	if jit, dir, cache := entries["run/runquill/jit"], entries["run/runquill/"], entries["home/runner/.cache/"]; jit == nil || jit.Uid != 1001 ||
-		dir == nil || dir.Uid != 1001 || cache == nil || cache.Uid != 1001 || len(entries) != 3 {
+	if jit, dir, cache, tools := entries["run/runquill/jit"], entries["run/runquill/"], entries["home/runner/.cache/"], entries["home/runner/.cache/tools/"]; jit == nil || jit.Uid != 1001 ||
+		dir == nil || dir.Uid != 1001 || cache == nil || cache.Uid != 1001 || tools == nil || tools.Uid != 1001 || len(entries) != 4 {
 		t.Fatalf("unprivileged runner archive: %+v", entries)
 	}
 	if err := fleet.startOn(withRunnerRepository(t.Context(), 7), "local", "default-runner", "jit-config"); err != nil {
@@ -127,8 +127,9 @@ func TestWorkerPoolsSetPrivilegeAndRepositoryCache(t *testing.T) {
 	if err := fleet.startOn(withRunnerRepository(t.Context(), 7), "local", "privileged-cached", "jit-config"); err != nil {
 		t.Fatal(err)
 	}
-	if entries := archive(); len(entries) != 2 || entries["run/runquill-jit"] == nil || entries["run/runquill-jit"].Uid != 0 ||
-		entries["home/runner/.cache/"] == nil || entries["home/runner/.cache/"].Uid != 1001 {
+	if entries := archive(); len(entries) != 3 || entries["run/runquill-jit"] == nil || entries["run/runquill-jit"].Uid != 0 ||
+		entries["home/runner/.cache/"] == nil || entries["home/runner/.cache/"].Uid != 1001 ||
+		entries["home/runner/.cache/tools/"] == nil || entries["home/runner/.cache/tools/"].Uid != 1001 {
 		t.Fatalf("privileged cached runner archive: %+v", entries)
 	}
 	data, err := os.ReadFile(logPath)
@@ -139,14 +140,15 @@ func TestWorkerPoolsSetPrivilegeAndRepositoryCache(t *testing.T) {
 	for line := range strings.SplitSeq(string(data), "\n") {
 		unprivileged := !strings.Contains(line, "--privileged") &&
 			strings.Contains(line, "--user 1001:1001 --security-opt no-new-privileges --cap-drop ALL --env RUNQUILL_RUNNER_MODE=plain --env RUNQUILL_JIT_FILE=/run/runquill/jit")
-		mount := "--mount type=volume,src=runquill-cache-%d,dst=/home/runner/.cache,volume-label=io.runquill.cache=1"
+		mount := "--mount type=volume,src=runquill-cache-%d,dst=/home/runner/.cache,volume-label=io.runquill.cache=1 --env RUNNER_TOOL_CACHE=/home/runner/.cache/tools"
 		switch {
 		case strings.Contains(line, "create --name cached-7"):
 			cached7 = unprivileged && strings.Contains(line, fmt.Sprintf(mount, 7))
 		case strings.Contains(line, "create --name cached-8"):
 			cached8 = unprivileged && strings.Contains(line, fmt.Sprintf(mount, 8)) && !strings.Contains(line, "runquill-cache-7")
 		case strings.Contains(line, "create --name default-runner"):
-			privileged = strings.Contains(line, "--privileged") && !strings.Contains(line, "--mount") && !strings.Contains(line, "--user")
+			privileged = strings.Contains(line, "--privileged") && !strings.Contains(line, "--mount") && !strings.Contains(line, "--user") &&
+				!strings.Contains(line, "RUNNER_TOOL_CACHE")
 		case strings.Contains(line, "create --name privileged-cached"):
 			privilegedCached = strings.Contains(line, "--privileged") && strings.Contains(line, fmt.Sprintf(mount, 7)) && !strings.Contains(line, "--user")
 		case strings.Contains(line, "create --name uncached"):

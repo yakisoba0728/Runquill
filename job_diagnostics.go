@@ -58,7 +58,7 @@ func (r *statusReport) explainWaiting(pool string, hosts []hostCapacity) *jobDia
 			paused++
 		case host.Containers == nil:
 			offline++
-		case host.Err != nil:
+		case host.Err != nil || host.ImageWait != "":
 			unavailable++
 		}
 	}

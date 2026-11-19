@@ -22,7 +22,7 @@ var version = "dev"
 func main() {
 	showVersion := flag.Bool("version", false, "print the Runquill version")
 	flag.Usage = func() {
-		fmt.Fprintln(flag.CommandLine.Output(), "Usage: runquill [--version] | runquill setup | runquill wizard | runquill workflow {init|check [--json] [--strict] [PATH...]} | runquill doctor | runquill diagnose OWNER/REPO | runquill status [--json] | runquill gc (--dry-run | --remove-orphans [--grace DURATION]) | runquill host {cordon|uncordon} HOST | runquill panel --demo | runquill worker | runquill backup (--output FILE [--seal] | --upload) [--passphrase-file FILE] | runquill restore (--from FILE | --from-s3 KEY | --activate) [--passphrase-file FILE] | runquill {jobs|runners|pools|hosts|audit} ... --help | runquill mcp")
+		fmt.Fprintln(flag.CommandLine.Output(), "Usage: runquill [--version] | runquill setup | runquill wizard | runquill workflow {init|check [--json] [--strict] [PATH...]} | runquill doctor | runquill diagnose OWNER/REPO | runquill status [--json] | runquill gc (--dry-run | --remove-orphans [--grace DURATION] | --unused [--dry-run] [--older-than DURATION]) | runquill host {cordon|uncordon} HOST | runquill panel --demo | runquill worker | runquill backup (--output FILE [--seal] | --upload) [--passphrase-file FILE] | runquill restore (--from FILE | --from-s3 KEY | --activate) [--passphrase-file FILE] | runquill {jobs|runners|pools|hosts|audit} ... --help | runquill mcp")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -142,24 +142,7 @@ func main() {
 		return
 	}
 	if flag.Arg(0) == "gc" {
-		flags := flag.NewFlagSet("runquill gc", flag.ExitOnError)
-		dryRun := flags.Bool("dry-run", false, "inspect runners and leases without changes")
-		removeOrphans := flags.Bool("remove-orphans", false, "remove untracked idle runners on local and SSH Docker hosts and delete their GitHub registrations")
-		grace := flags.Duration("grace", defaultOrphanGrace, "with --remove-orphans, keep runners created more recently than this (at least 1m)")
-		flags.Usage = func() {
-			fmt.Fprintln(flags.Output(), "Usage: runquill gc (--dry-run | --remove-orphans [--grace DURATION])")
-			flags.PrintDefaults()
-		}
-		flags.Parse(flag.Args()[1:])
-		if *dryRun == *removeOrphans || flags.NArg() != 0 || *grace < time.Minute {
-			flags.Usage()
-			os.Exit(2)
-		}
-		if err := gc(ctx, os.Stdout, *removeOrphans, *grace); err != nil {
-			slog.Error("runquill gc", "error", err)
-			os.Exit(1)
-		}
-		return
+		os.Exit(gcCommand(ctx, flag.Args()[1:], os.Stdout, os.Stderr))
 	}
 	if flag.Arg(0) == "diagnose" {
 		if flag.NArg() != 2 {
@@ -322,12 +305,20 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	assets, err := startAssetCleanup(ctx, q.DB, ops)
+	if err != nil {
+		return err
+	}
+	defer assets.stop()
 	elasticConfig, err := loadElasticConfig(os.Getenv)
 	if err != nil {
 		return err
 	}
 	elastic := newElasticState(elasticConfig)
 	go runElastic(ctx, elasticDeps{Config: elasticConfig, State: elastic, Hosts: elasticHostsFrom(ops)})
+	if fleet, ok := runners.runtime.(*dockerFleet); ok {
+		go runImagePuller(ctx, imagePullerDeps{Images: fleet.images, Pairs: imagePairsFrom(ops)})
+	}
 	state := ops.current.Load()
 	runners = state.runners
 	if fleet, ok := runners.runtime.(*dockerFleet); ok && len(fleet.hosts) == 1 && state.policy.Revision == 0 {

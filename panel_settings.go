@@ -18,11 +18,13 @@ type operationSettingsResponse struct {
 	Backend string          `json:"backend"`
 	Webhook bool            `json:"webhook_enabled"`
 	Policy  operationPolicy `json:"policy"`
+	// RunnerImages is the read-only catalogue workflows select with os__NAME__.
+	RunnerImages []runnerImage `json:"runner_images,omitempty"`
 }
 
 func (p *panelState) operationSettings(w http.ResponseWriter, r *http.Request, _ panelIdentity) {
 	state := p.operations.current.Load()
-	panelJSON(w, http.StatusOK, operationSettingsResponse{state.runners.kind, p.operations.webhook, state.policy})
+	panelJSON(w, http.StatusOK, operationSettingsResponse{state.runners.kind, p.operations.webhook, state.policy, state.runners.images.list()})
 }
 
 var errSettingConflict = errors.New("Settings were changed in another session. Reload them and try again.")

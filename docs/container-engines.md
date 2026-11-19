@@ -22,18 +22,22 @@ Podman and rootless engines are implemented and covered by unit tests with recor
 
 ## Runner image variants
 
-Releases publish the runner image in three variants for amd64 and arm64.
+Releases publish the runner image in five variants for amd64 and arm64.
 
 | Tag | Base |
 | --- | --- |
-| `ghcr.io/yakisoba0728/runquill-runner:v0.3.0` | Ubuntu 24.04, the upstream GitHub Actions runner image |
-| `ghcr.io/yakisoba0728/runquill-runner:v0.3.0-ubuntu22.04` | Ubuntu 22.04 |
-| `ghcr.io/yakisoba0728/runquill-runner:v0.3.0-debian12` | Debian 12 |
+| `ghcr.io/yakisoba0728/runquill-runner:v0.3.1` | Ubuntu 24.04, the upstream GitHub Actions runner image |
+| `ghcr.io/yakisoba0728/runquill-runner:v0.3.1-ubuntu22.04` | Ubuntu 22.04 |
+| `ghcr.io/yakisoba0728/runquill-runner:v0.3.1-ubuntu26.04` | Ubuntu 26.04 |
+| `ghcr.io/yakisoba0728/runquill-runner:v0.3.1-debian12` | Debian 12 |
+| `ghcr.io/yakisoba0728/runquill-runner:v0.3.1-debian13` | Debian 13 |
 
-All variants carry the same pinned Actions runner and Docker binaries and a `runner` user with UID 1001. To build one from source, pass `--build-arg RUNQUILL_RUNNER_OS=ubuntu22.04` or `debian12` to `docker build runner`. Use a variant as the fleet-wide `RUNQUILL_RUNNER_IMAGE` or as a pool's `image`.
+All variants carry the same pinned Actions runner and Docker binaries and a `runner` user with UID 1001. To build one from source, pass `--build-arg RUNQUILL_RUNNER_OS=ubuntu22.04`, `ubuntu26.04`, `debian12` or `debian13` to `docker build runner`. Use a variant as the fleet-wide `RUNQUILL_RUNNER_IMAGE`, as a pool's `image`, or let jobs select it with an `os__NAME__` label. [Runner images](runner-images.md)
 
-CI builds the Ubuntu 22.04 and Debian 12 variants and checks the runner user and versions. Only the default variant runs the nested Docker test.
+CI builds every variant and checks the runner user and versions. Only the default variant runs the nested Docker test.
 
-## Pull images on every host
+## Images on each host
 
-Runquill starts runners with `--pull never`, so every host must already have the image. Pull or build the image named by `RUNQUILL_RUNNER_IMAGE`, and each pool `image`, on every Docker host, SSH worker and outbound worker before the manager uses it. `runquill doctor` reports a missing image or one built for another platform. A job sent to a host without the image fails to start and is retried.
+The manager pulls missing runner images onto the `local` host and `ssh://` hosts itself (`RUNQUILL_IMAGE_PULL=missing`, the default), and catalogue images when a job selects them. Runners still start with `--pull never`, so a host waits for its image instead of pulling during a launch. `runquill doctor` reports an image built for another platform, and a missing image as pending while pulls are on.
+
+Load the image yourself on outbound `agent://` workers, where the manager cannot pull, for locally built images such as `runquill-runner:local`, and on every host when you set `RUNQUILL_IMAGE_PULL=never`. A `local` or `ssh://` host without its image is then reported unavailable. With Podman, pulls use the `podman` CLI and its own registry login. [Automatic pulls](runner-images.md#automatic-pulls)

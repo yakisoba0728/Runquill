@@ -11,6 +11,8 @@ type panelRunner struct {
 	Pool         string `json:"pool,omitempty"`
 	RuntimeState string `json:"runtime_state,omitempty"`
 	JobID        int64  `json:"job_id,omitempty"`
+	RunnerOS     string `json:"runner_os,omitempty"`
+	RunnerImage  string `json:"runner_image,omitempty"`
 }
 
 func panelRunnerInventory(hosts []hostCapacity, jobs []statusJob) []panelRunner {
@@ -38,9 +40,10 @@ func panelRunnerInventory(hosts []hostCapacity, jobs []statusJob) []panelRunner 
 			index, found = byName[job.Runner]
 		}
 		if found && index >= 0 && runners[index].JobID == 0 {
-			runners[index].JobID = job.ID
+			runners[index].JobID, runners[index].RunnerOS, runners[index].RunnerImage = job.ID, job.RunnerOS, job.RunnerImage
 		} else {
-			runners = append(runners, panelRunner{Name: job.Runner, Host: job.RunnerHost, Pool: job.Pool, JobID: job.ID})
+			runners = append(runners, panelRunner{Name: job.Runner, Host: job.RunnerHost, Pool: job.Pool, JobID: job.ID,
+				RunnerOS: job.RunnerOS, RunnerImage: job.RunnerImage})
 		}
 	}
 	slices.SortFunc(runners, func(a, b panelRunner) int {

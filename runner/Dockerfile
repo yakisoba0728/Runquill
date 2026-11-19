@@ -1,10 +1,12 @@
 # One Dockerfile for every runner base. The Actions runner and the static Docker binaries always come
 # from the digest-pinned upstream runner image, so every variant runs the same pinned versions.
 ARG RUNQUILL_RUNNER_BASE=ghcr.io/actions/actions-runner:latest@sha256:6d0b2d80d80f143f77dcb676e50920100bbb547e39e883454d57f45ab8c31300
-# ubuntu24.04 (the upstream image itself), ubuntu22.04 or debian12.
+# ubuntu24.04 (the upstream image itself), ubuntu22.04, ubuntu26.04, debian12 or debian13.
 ARG RUNQUILL_RUNNER_OS=ubuntu24.04
 ARG RUNQUILL_UBUNTU2204=ubuntu:22.04@sha256:9abcaffc92a5279fff3a6a41635c0800ea33e528425fb389658806476e7defde
 ARG RUNQUILL_DEBIAN12=debian:12@sha256:268fb24c39bca92d326dd83ea3abebe4a3f7751c804ffef23bb6d857dd343ff8
+ARG RUNQUILL_UBUNTU2604=ubuntu:26.04@sha256:d66b366dac61b575bee2aef07e9c26e8070096fbe84a3d4d3eb0da069b5d76db
+ARG RUNQUILL_DEBIAN13=debian:13@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6
 
 FROM ${RUNQUILL_RUNNER_BASE} AS actions
 
@@ -16,6 +18,12 @@ ENV ImageOS=ubuntu22
 
 FROM ${RUNQUILL_DEBIAN12} AS os-debian12
 ENV ImageOS=debian12
+
+FROM ${RUNQUILL_UBUNTU2604} AS os-ubuntu26.04
+ENV ImageOS=ubuntu26
+
+FROM ${RUNQUILL_DEBIAN13} AS os-debian13
+ENV ImageOS=debian13
 
 # Reproduces the upstream image's runner user, sudo rule and Docker group on another base.
 FROM os-${RUNQUILL_RUNNER_OS} AS ported
@@ -43,6 +51,8 @@ RUN apt-get update \
 FROM actions AS runner-ubuntu24.04
 FROM ported AS runner-ubuntu22.04
 FROM ported AS runner-debian12
+FROM ported AS runner-ubuntu26.04
+FROM ported AS runner-debian13
 
 FROM runner-${RUNQUILL_RUNNER_OS}
 LABEL org.opencontainers.image.licenses="Apache-2.0"

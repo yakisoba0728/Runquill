@@ -39,6 +39,8 @@ type scheduler struct {
 	alerts     *fleetAlerts
 	// maxPerRepository caps runners per repository in pools without their own cap; 0 is unlimited.
 	maxPerRepository int
+	// images is the runner image catalogue jobs select from with os__NAME__.
+	images *runnerImages
 	// workers bounds concurrent launches and reconciles in a tick; 0 or 1 is serial.
 	workers int
 }
@@ -60,6 +62,7 @@ func (s *scheduler) tickOnce(ctx context.Context, now time.Time) error {
 		defer s.operations.topology.RUnlock()
 		state = s.operations.current.Load()
 		tick.runtime, tick.pools, tick.hostLimits, tick.limit = state.runners.runtime, state.runners.pools, state.runners.hostLimits, state.policy.Limit
+		tick.images = state.runners.images
 	}
 	if tick.workers > 1 {
 		// Concurrent work still reaches each host one runtime call at a time; outbound workers take one claim at once.
@@ -174,7 +177,8 @@ func (s *scheduler) tickFleet(ctx context.Context, now time.Time, state *operati
 	for _, host := range hosts {
 		occupied += host.Occupied
 	}
-	if occupied >= s.limit || availableHost(hosts, "") == nil {
+	// A host still waiting for its runner image counts here, so its jobs get a visible reason.
+	if occupied >= s.limit || freeHost(hosts, "", false) == nil {
 		return nil
 	}
 	// Read every waiting job: a repository cap or fairness can pass over the oldest ones.
@@ -256,8 +260,19 @@ func (s *scheduler) tickFleet(ctx context.Context, now time.Time, state *operati
 				// A capped job waits untouched and must not hold back other repositories.
 				continue
 			}
-			host := availableHost(hosts, pool)
+			host, image, wait, err := s.placeJob(ctx, j, hosts, pool, now)
+			if err != nil {
+				// An unknown or disallowed OS name can be fixed in the catalogue, so keep waiting.
+				if err := s.retry(ctx, j, now, "select runner image", err); err != nil {
+					return err
+				}
+				continue
+			}
+			if err := s.waitForImage(ctx, j, wait); err != nil {
+				return err
+			}
 			if host == nil {
+				// No GitHub registration is spent until a host has the job's image.
 				continue
 			}
 			if !s.github.backoffUntil(time.Now()).IsZero() {
@@ -269,7 +284,7 @@ func (s *scheduler) tickFleet(ctx context.Context, now time.Time, state *operati
 			host.Occupied++
 			perPool[repository]++
 			launch := func() {
-				claimed, err := s.launch(ctx, j, host.Name, pool, now)
+				claimed, err := s.launch(withRunnerImage(ctx, image), j, host.Name, pool, now)
 				results <- launchResult{j, host, repository, claimed, err}
 			}
 			if !parallel {
@@ -370,10 +385,16 @@ func (o *fairOrder) next() (job, bool) {
 }
 
 func availableHost(hosts []hostCapacity, pool string) *hostCapacity {
+	return freeHost(hosts, pool, true)
+}
+
+// freeHost picks the least occupied usable host with a free slot; ready also requires its runner image.
+func freeHost(hosts []hostCapacity, pool string, ready bool) *hostCapacity {
 	var best *hostCapacity
 	for i := range hosts {
 		host := &hosts[i]
-		if pool != "" && host.Pool != pool || host.Containers == nil || host.Err != nil || host.Cordoned || host.Occupied >= host.Limit {
+		if pool != "" && host.Pool != pool || host.Containers == nil || host.Err != nil || host.Cordoned || host.Occupied >= host.Limit ||
+			ready && host.ImageWait != "" {
 			continue
 		}
 		if best == nil || host.Occupied < best.Occupied {
@@ -485,6 +506,19 @@ func (s *scheduler) reconcileFleet(ctx context.Context, active []job, snapshots 
 		}
 	}
 	return nil
+}
+
+const imageWaitPrefix = "waiting for runner image "
+
+// waitForImage records why a job with no ready host waits for a runner image (from placeJob), and clears
+// that reason once a ready host is found or no host waits for an image any more.
+func (s *scheduler) waitForImage(ctx context.Context, j job, reason string) error {
+	if reason == j.retryReason || reason == "" && !strings.HasPrefix(j.retryReason, imageWaitPrefix) {
+		return nil
+	}
+	_, err := s.queue.ExecContext(ctx, "UPDATE jobs SET retry_reason = ? WHERE job_id = ? AND runner_name IS NULL AND retry_reason = ?",
+		reason, j.id, j.retryReason)
+	return err
 }
 
 // permanentError marks a launch error that retrying cannot fix.

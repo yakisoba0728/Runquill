@@ -43,7 +43,7 @@ sh install.sh --dir "$HOME/runquill"
 2. Wait for the installer to start Compose and report `Preflight passed.`
 3. [Run your first job](#verify-your-first-job) from a private repository you own.
 
-The installer verifies release checksums and pulls matching manager and runner images. The command above installs into `$HOME/runquill`. Use `--version v0.3.0` to pin a release, or `--download-only` to fetch the binary and deployment files before setup.
+The installer verifies release checksums and pulls matching manager and runner images. The command above installs into `$HOME/runquill`. Use `--version v0.3.1` to pin a release, or `--download-only` to fetch the binary and deployment files before setup.
 
 ### Create and install the GitHub App
 
@@ -107,7 +107,7 @@ docker build --pull -t runquill-runner:local runner
 docker compose up -d --build
 ```
 
-With a release binary, `setup` writes both image names pinned to its release tag. Run the runner image pull command printed by `setup`, then pull and start the manager.
+With a release binary, `setup` writes both image names pinned to its release tag. The manager pulls a missing runner image onto the `local` host and `ssh://` hosts itself, so the runner image pull command printed by `setup` is optional and only gets the image ready before the first job. Pull and start the manager.
 
 ```sh
 docker compose pull manager
@@ -139,7 +139,7 @@ docker compose logs -f manager
 
 For a manually configured App, select **Only on this account**, grant **Actions → Read-only** and **Administration → Read and write**, and create a private key. Install the App on your personal account. Copy [.env.example](.env.example) to `.env`, fill in your GitHub login, App ID, and key path, and set both files to mode `0600`. Set `RUNQUILL_REPOSITORY_SCOPE=selected` if you chose **Only select repositories**. For polling, disable webhooks in the App settings and leave `RUNQUILL_WEBHOOK_SECRET` empty. [GitHub App installation](https://docs.github.com/en/apps/using-github-apps/installing-your-own-github-app) · [Repository JIT runner API](https://docs.github.com/en/rest/actions/self-hosted-runners#create-configuration-for-a-just-in-time-runner-for-a-repository)
 
-To use published images with a manual `.env`, set the manager and runner image names from the example to the same release tag. Pull the runner image before starting Compose.
+To use published images with a manual `.env`, set the manager and runner image names from the example to the same release tag. The manager pulls the runner image when a host lacks it.
 
 For an existing App, subscribe to **Workflow job**, set its public HTTPS webhook URL, and set the same secret in GitHub and `RUNQUILL_WEBHOOK_SECRET`. Generate the secret with `openssl rand -hex 32`. Forward `/webhook` to the manager on port 8080. With Caddy on the same server, use the following configuration.
 
@@ -181,7 +181,7 @@ Workers on your tailnet can use their MagicDNS names in `ssh://` entries if the 
 
 ### Add Docker worker servers
 
-List the Docker engines served by one manager in `.env`. Each worker needs rootful Docker on Linux with cgroup v2, the image named by `RUNQUILL_RUNNER_IMAGE`, and an SSH account allowed to use its Docker socket. Use a dedicated SSH key and verify the worker's host key when populating `known_hosts`.
+List the Docker engines served by one manager in `.env`. Each worker needs rootful Docker on Linux with cgroup v2 and an SSH account allowed to use its Docker socket. The manager pulls the image named by `RUNQUILL_RUNNER_IMAGE` onto each worker over that connection. Use a dedicated SSH key and verify the worker's host key when populating `known_hosts`.
 
 ```dotenv
 RUNQUILL_DOCKER_HOSTS=local,ssh://builder@worker.example.com
@@ -219,7 +219,7 @@ Set `RUNQUILL_WORKER_POOLS` to a JSON object in `.env` to opt in. The keys are p
 RUNQUILL_WORKER_POOLS='{"build":{"hosts":["ssh://builder@worker.example.com"],"repositories":["you/project"],"cpus":4,"memory_mib":8192}}'
 ```
 
-The `repositories` list controls which repositories can use the pool. Omit it for access by any eligible repository. An empty list grants access to none. `cpus` and `memory_mib` set Docker limits for each new runner. Omit them for Docker’s defaults. Use the optional `image` key to select a different Runquill-compatible image for a pool. Build or pull that image on each host in the pool before restarting the manager. The global runner limit and per-host limits still apply.
+The `repositories` list controls which repositories can use the pool. Omit it for access by any eligible repository. An empty list grants access to none. `cpus` and `memory_mib` set Docker limits for each new runner. Omit them for Docker’s defaults. Use the optional `image` key to select a different Runquill-compatible image for a pool. The manager pulls it on each host in the pool. Build it on those hosts yourself if it exists in no registry. The global runner limit and per-host limits still apply.
 
 Express the pool in the suffix of the unique job label. A label without the pool prefix uses `default`. For a matrix, include `strategy.job-index` as usual.
 
@@ -231,19 +231,20 @@ Waiting jobs use slots in their requested pool, and available pools can advance 
 
 A label that names an unconfigured pool, or a repository the pool does not allow, keeps the job waiting with a retry reason such as `worker pool "build" is not configured`. Fix the pool in the panel's **Settings** and the job starts on a later pass without a manager restart. Only the 24-hour expiry fails it.
 
-Pools accept three more optional keys.
+Pools accept four more optional keys.
 
 ```dotenv
-RUNQUILL_WORKER_POOLS='{"lint":{"hosts":["local"],"privileged":false,"cache":true,"max_per_repository":2}}'
+RUNQUILL_WORKER_POOLS='{"lint":{"hosts":["local"],"privileged":false,"cache":true,"max_per_repository":2,"images":["ubuntu22.04"]}}'
 ```
 
 - `privileged` defaults to `true`, which starts each runner with `--privileged` and its own Docker daemon. Set it to `false` to run the runner as UID 1001 with all capabilities dropped and `no-new-privileges`. Those jobs cannot use `docker`, service containers, job containers or `sudo`. A custom `image` for such a pool needs a runner user with UID 1001 that owns `/home/runner`.
-- `cache: true` mounts a named Docker volume `runquill-cache-<repository ID>` at `/home/runner/.cache`. Later jobs from the same repository on the same host reuse its contents, and concurrent jobs share it. Every job of that repository in the pool can read and change the cache, so it no longer starts with a fully fresh filesystem. Each host keeps its own volumes, and Runquill never prunes them. List them with `docker volume ls -f label=io.runquill.cache=1` and remove them with `docker volume rm` when no runner uses them. This cache is separate from [Docker build layers](#reuse-docker-build-layers-across-jobs).
+- `cache: true` mounts a named Docker volume `runquill-cache-<repository ID>` at `/home/runner/.cache`. Later jobs from the same repository on the same host reuse its contents, and concurrent jobs share it. Every job of that repository in the pool can read and change the cache, so it no longer starts with a fully fresh filesystem. The runner also points `RUNNER_TOOL_CACHE` into this volume, so toolchains that `actions/setup-*` download are kept too. Each host keeps its own volumes, and the manager removes a volume that no runner has used for 30 days ([cleanup](docs/runner-images.md#cleanup-of-unused-images-and-cache-volumes)). List them with `docker volume ls -f label=io.runquill.cache=1`. This cache is separate from [Docker build layers](#reuse-docker-build-layers-across-jobs).
 - `max_per_repository` caps how many runners one repository can hold in that pool. It overrides `RUNQUILL_MAX_PER_REPOSITORY` for the pool. Without either value, a repository can use every free slot.
+- `images` lists the [runner OS](#choose-the-runner-os) names that jobs in the pool may select with `os__NAME__`. Omit it to allow every name.
 
 [Outbound workers](docs/outbound-workers.md) in a pool with `privileged: false` or `cache: true` must run the same Runquill release as the manager. Older agents reject runner tasks that carry these settings, so upgrade the workers along with the manager.
 
-The administrator panel's pool editor has checkboxes for Docker-in-Docker and the shared cache. It keeps each pool's `max_per_repository` when saving but cannot change it. Once settings have been saved in the panel, they take precedence over `RUNQUILL_WORKER_POOLS`.
+The administrator panel's pool editor has checkboxes for Docker-in-Docker and the shared cache, and a field for the allowed runner OS names. It keeps each pool's `max_per_repository` when saving but cannot change it. Once settings have been saved in the panel, they take precedence over `RUNQUILL_WORKER_POOLS`.
 
 ### Share capacity across repositories
 
@@ -253,7 +254,7 @@ When slots free up, Runquill starts the next job from the repository with the fe
 
 ### Runner images and container engines
 
-Releases publish the runner image as `runquill-runner:<version>` on Ubuntu 24.04 and as `-ubuntu22.04` and `-debian12` variants. Runners start with `--pull never`, so pull or build the image on every host yourself. `RUNQUILL_CONTAINER_ENGINE=podman` selects the Podman CLI for the `local` and `ssh://` hosts, and runners on a rootless engine start without Docker-in-Docker. Podman and rootless engines have not yet been exercised on a real host. [Engines and images](docs/container-engines.md)
+Releases publish the runner image as `runquill-runner:<version>` on Ubuntu 24.04 and as `-ubuntu22.04`, `-ubuntu26.04`, `-debian12` and `-debian13` variants. The manager pulls missing runner images onto the `local` host and `ssh://` hosts itself (`RUNQUILL_IMAGE_PULL=missing`, the default, or `always` to refresh them). Load the image yourself on outbound `agent://` workers, for locally built images, and with `RUNQUILL_IMAGE_PULL=never`. The manager also removes images it pulled and cache volumes that no runner has used for 30 days. [Runner images](docs/runner-images.md) `RUNQUILL_CONTAINER_ENGINE=podman` selects the Podman CLI for the `local` and `ssh://` hosts, and runners on a rootless engine start without Docker-in-Docker. Podman and rootless engines have not yet been exercised on a real host. [Engines and images](docs/container-engines.md)
 
 ### Elastic runner limits
 
@@ -277,6 +278,16 @@ runs-on: ${{ format('runquill-{0}-{1}-test-{2}', github.run_id, github.run_attem
 
 Pass the expression as the job's single `runs-on` label. Start the suffix with a letter or digit, then use letters, digits, hyphens, or underscores. Keep the whole label within 100 characters. Runquill registers each ephemeral runner with its job's label so GitHub can match parallel jobs to their respective runners. [GitHub Actions contexts](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts)
 
+### Choose the runner OS
+
+Select an OS variant inside the same per-job label with `os__NAME__`, after an optional pool selector. Write the name without dots, such as `ubuntu2204`, `ubuntu2604`, `debian12` or `debian13`. A job without it runs its host's image.
+
+```yaml
+runs-on: ${{ format('runquill-{0}-{1}-os__ubuntu2204__build', github.run_id, github.run_attempt) }}
+```
+
+Names come from the runner image catalogue. Release builds include every published variant, and `RUNQUILL_RUNNER_IMAGES` adds or replaces entries. A bare `runs-on: ubuntu-22.04` is not supported, because Runquill pairs each runner with one job through its unique label. [Runner images](docs/runner-images.md)
+
 ### Reuse Docker build layers across jobs
 
 Copy the [cached build example](examples/runquill-build-cache.yml) into `.github/workflows/` in a repository with a root `Dockerfile`. It builds the committed Git revision on the default branch and keeps the resulting image available for later steps in the same job. A new runner can restore layers through the GitHub Actions cache. Choose a distinct `scope` for each image and use it in both cache settings. Cache export failures leave the build usable. [Docker GitHub Actions cache](https://docs.docker.com/build/cache/backends/gha/)
@@ -285,9 +296,9 @@ The example pins both actions to exact commits, uses read-only repository permis
 
 ### Move existing workflows
 
-Administrators can open a pull request that moves jobs from GitHub-hosted labels to Runquill labels from the panel's **Migrate** screen. It needs Contents, Pull requests and Workflows write access, which only `runquill setup --migrate` requests for a new App. Runquill previews the diff first, changes only `runs-on`, leaves jobs it cannot rewrite safely alone with a reason, and never merges. Migration has not yet been exercised against real GitHub. [Workflow migration](docs/workflow-migration.md)
+Administrators can open a pull request that moves jobs from GitHub-hosted labels to Runquill labels from the panel's **Migrate** screen. It needs Contents, Pull requests and Workflows write access, which only `runquill setup --migrate` requests for a new App. Runquill previews the diff first, changes only `runs-on`, leaves jobs it cannot rewrite safely alone with a reason, and never merges. A GitHub-hosted Ubuntu version label such as `ubuntu-22.04` becomes an `os__` selector when the manager's catalogue has that OS. Migration has not yet been exercised against real GitHub. [Workflow migration](docs/workflow-migration.md)
 
-`runquill workflow check` checks local workflow files for malformed Runquill labels, unknown pools, risky triggers on self-hosted runners, missing permissions and timeouts, and unpinned actions. It exits with status 1 for a high-severity finding, or for any finding with `--strict`, and `--json` prints the findings. [Check codes](docs/workflow-migration.md#check-workflows-offline)
+`runquill workflow check` checks local workflow files for malformed Runquill labels, unknown pools and runner OS names, risky triggers on self-hosted runners, missing permissions and timeouts, and unpinned actions. It exits with status 1 for a high-severity finding, or for any finding with `--strict`, and `--json` prints the findings. [Check codes](docs/workflow-migration.md#check-workflows-offline)
 
 ## Run on K3s
 
@@ -386,11 +397,13 @@ Use `docker compose exec manager runquill gc --dry-run` to inventory labelled ru
 
 To clean up, run `docker compose exec manager runquill gc --remove-orphans`. It removes labelled runner containers that have no queue lease and cannot be running a job, and prints every runner it skips with the reason. `--grace` (default `10m`, at least `1m`) leaves runners younger than that alone so a launch in progress is never touched. The command keeps a runner when its lease is recorded on another host, when it is running and the queue has no record of its job, when GitHub reports the job unfinished or the runner busy, or when GitHub cannot be reached. Before removing a runner whose job is in the queue, it deletes the GitHub runner registration, then removes the container by its Docker ID. It works on `local` and `ssh://` hosts only. `agent://` workers and the Kubernetes backend are reported as skipped. The command exits with status 1 if a host or a removal fails.
 
+`docker compose exec manager runquill gc --unused --dry-run` lists runner images that Runquill pulled and cache volumes once no runner has used them for `RUNQUILL_CLEANUP_AFTER` (default `30d`). Without `--dry-run`, it removes them, as the manager also does every `RUNQUILL_CLEANUP_INTERVAL`. `--older-than` sets another retention. Images you pulled or built yourself are never removed. [Cleanup](docs/runner-images.md#cleanup-of-unused-images-and-cache-volumes)
+
 - `RUNQUILL_MAX_RUNNERS` defaults to 2. Provisioning failures retry after 15 seconds and allow later jobs to use available slots. GitHub fails self-hosted jobs that remain queued for more than 24 hours. [GitHub runner routing](https://docs.github.com/en/actions/reference/runners/self-hosted-runners#routing-precedence-for-self-hosted-runners)
 - Runquill marks a job failed when it has not started within 24 hours, with the reason and the last retry error. A job cancelled in the panel is also failed. A failed job never returns to the queue. The run stays queued on GitHub until you cancel or rerun it there, and a rerun creates a new job. The reason appears in the panel's job history, and expired jobs also log `job failed`.
 - `docker compose logs -f manager` shows admissions, cleanup, and API errors. The GitHub workflow retains step output as usual. To adopt a new GitHub runner version in a source install, rerun `docker build --pull -t runquill-runner:local runner`. Running jobs finish on the image they started with. Set `RUNQUILL_LOG_FORMAT` to `text` or `json` for structured logs and `RUNQUILL_LOG_LEVEL` to `debug`, `info`, `warn` or `error`. Without a format, the manager keeps its plain log lines. An invalid value stops the command with status 2.
 - `GET /healthz` on port 8080 returns HTTP 200 when the queue database answers. `GET /readyz` also requires a successful scheduler pass within the last 2 minutes and no current GitHub App authentication failure. It returns HTTP 503 otherwise, with a JSON body whose `scheduler` is `starting`, `failing` or `stalled`, and whose `database` and `github_auth` show the other checks. Error details stay in the manager log.
-- Runners are ephemeral, repository-scoped JIT runners. In the default pool, each job gets a new container with its own Docker daemon, so `docker build`, `services:` and `container:` work. After the job, the container with its inner images, volumes and work directory is deleted. Only the per-repository cache volume of a pool with `cache` enabled remains.
+- Runners are ephemeral, repository-scoped JIT runners. In the default pool, each job gets a new container with its own Docker daemon, so `docker build`, `services:` and `container:` work. After the job, the container with its inner images, volumes and work directory is deleted. Only the per-repository cache volume of a pool with `cache` enabled remains, until it has been unused for the cleanup retention.
 - Run one manager per fleet. Preserve the Compose `queue` volume during upgrades, including upgrades from the original Python version. A manager restart continues tracking existing runners.
 - Runquill polls the GitHub API on startup and waits `RUNQUILL_POLL_INTERVAL` (default `30s`) after each scan. Each scan checks queued and in-progress runs in every eligible repository, giving recent activity priority. The poller rotates requested, waiting, and pending runs so each repository receives a full scan within four successful passes if the repository list stays stable. Webhooks and polling share one queue record per GitHub job ID. Set the interval to `0` to run with webhooks alone.
 - Job timing records the first discovery source, successful GitHub runner registration, and GitHub’s reported job start when available. The discovery delay measures GitHub job creation to Runquill discovery when GitHub provides a creation timestamp. The Runquill queue duration measures discovery to first registration, or elapsed wait for a queued job. Missing timestamps and durations are omitted in `status --json`.
@@ -406,13 +419,13 @@ sh install.sh --upgrade --dir "$HOME/runquill"
 
 The installer verifies the release checksums and replaces only the release files that changed: the `runquill` binary, `compose.yaml`, `compose.ssh.yaml`, `LICENSE`, and `compose.panel.yaml`, `compose.worker.yaml` and `runquill-k3s.yaml` when the release includes them. It moves the replaced copies into `.previous/`, which holds only the most recent upgrade. Roll back with `cp -p .previous/* .`. `.env`, the GitHub App key, other files and the queue are untouched. `--upgrade` accepts only `--version` and `--dir` and does not check Docker.
 
-The installer does not restart anything. If `.env` names published images, it prints the new `RUNQUILL_MANAGER_IMAGE` and `RUNQUILL_RUNNER_IMAGE` values for you to set, followed by the pull, `docker compose up -d --no-build` and `doctor` commands to run with your usual Compose files. Pull the new runner image on every worker host too, and upgrade the `runquill worker` binary on outbound workers. On K3s, it prints `kubectl apply -f runquill-k3s.yaml` instead.
+The installer does not restart anything. If `.env` names published images, it prints the new `RUNQUILL_MANAGER_IMAGE` and `RUNQUILL_RUNNER_IMAGE` values for you to set, followed by the pull, `docker compose up -d --no-build` and `doctor` commands to run with your usual Compose files. The manager pulls the new runner image onto the `local` host and `ssh://` hosts. On outbound workers, load the new image and upgrade the `runquill worker` binary. On K3s, it prints `kubectl apply -f runquill-k3s.yaml` instead.
 
 For a release without `--upgrade` or a manual install, set both image tags in `.env` to the new release and repeat the pull commands from [Start the manager](#start-the-manager).
 
 ### Add manager settings
 
-Compose passes only the variables listed in `compose.yaml` to the manager. For optional settings such as `RUNQUILL_MAX_PER_REPOSITORY`, `RUNQUILL_SCHEDULER_WORKERS`, `RUNQUILL_LOG_FORMAT`, `RUNQUILL_LOG_LEVEL`, the [notification](#send-notifications) variables, `RUNQUILL_ELASTIC*`, `RUNQUILL_BACKUP_*` and `RUNQUILL_METRICS_*`, keep the values in `.env` and save an overlay such as `compose.settings.yaml` beside `compose.yaml`. `--upgrade` replaces `compose.yaml` but leaves this file in place.
+Compose passes only the variables listed in `compose.yaml` to the manager. For optional settings such as `RUNQUILL_MAX_PER_REPOSITORY`, `RUNQUILL_SCHEDULER_WORKERS`, `RUNQUILL_LOG_FORMAT`, `RUNQUILL_LOG_LEVEL`, the [notification](#send-notifications) variables, `RUNQUILL_ELASTIC*`, `RUNQUILL_BACKUP_*`, `RUNQUILL_METRICS_*`, `RUNQUILL_IMAGE_PULL*`, `RUNQUILL_RUNNER_IMAGES` and `RUNQUILL_CLEANUP_*`, keep the values in `.env` and save an overlay such as `compose.settings.yaml` beside `compose.yaml`. `--upgrade` replaces `compose.yaml` but leaves this file in place.
 
 ```yaml
 services:
@@ -426,9 +439,16 @@ services:
       RUNQUILL_NOTIFY_FORMAT: ${RUNQUILL_NOTIFY_FORMAT:-}
       RUNQUILL_NOTIFY_COOLDOWN: ${RUNQUILL_NOTIFY_COOLDOWN:-}
       RUNQUILL_NOTIFY_STALL_AFTER: ${RUNQUILL_NOTIFY_STALL_AFTER:-}
+      RUNQUILL_IMAGE_PULL: ${RUNQUILL_IMAGE_PULL:-}
+      RUNQUILL_IMAGE_PULL_INTERVAL: ${RUNQUILL_IMAGE_PULL_INTERVAL:-}
+      RUNQUILL_RUNNER_IMAGES: ${RUNQUILL_RUNNER_IMAGES:-}
+      RUNQUILL_CLEANUP_AFTER: ${RUNQUILL_CLEANUP_AFTER:-}
+      RUNQUILL_CLEANUP_IMAGES_AFTER: ${RUNQUILL_CLEANUP_IMAGES_AFTER:-}
+      RUNQUILL_CLEANUP_CACHE_AFTER: ${RUNQUILL_CLEANUP_CACHE_AFTER:-}
+      RUNQUILL_CLEANUP_INTERVAL: ${RUNQUILL_CLEANUP_INTERVAL:-}
 ```
 
-Apply it with `docker compose -f compose.yaml -f compose.settings.yaml up -d`, adding your other overlays and `--no-build` for published images. Scheduled backups also need a mounted directory and a passphrase file, so use the overlay in the [backup guide](docs/backups.md#compose). The [elastic limits guide](docs/elastic-limits.md#compose) lists its variables. `RUNQUILL_CONTAINER_ENGINE=podman` cannot be used under Compose because the manager image contains only the Docker CLI. On K3s, the manager reads every variable in the `runquill-config` Secret, so add them to `.env`, recreate the Secret, and restart the Deployment.
+Apply it with `docker compose -f compose.yaml -f compose.settings.yaml up -d`, adding your other overlays and `--no-build` for published images. Scheduled backups also need a mounted directory and a passphrase file, so use the overlay in the [backup guide](docs/backups.md#compose). The [elastic limits guide](docs/elastic-limits.md#compose) lists its variables. Pulls from a private registry also need a Docker login mounted into the manager with `DOCKER_CONFIG`, as shown in [private registries](docs/runner-images.md#private-registries). `RUNQUILL_CONTAINER_ENGINE=podman` cannot be used under Compose because the manager image contains only the Docker CLI. On K3s, the manager reads every variable in the `runquill-config` Secret, so add them to `.env`, recreate the Secret, and restart the Deployment.
 
 ### Send notifications
 
@@ -488,13 +508,13 @@ Cordon the hosts and let running jobs finish first. [Back up the queue](#back-up
 docker compose -f compose.yaml -f compose.panel.yaml down -v --rmi all
 ```
 
-Compose does not manage runner containers, cache volumes or the runner image. Check each Docker host, including SSH and outbound workers, and remove what remains. Use the image named by `RUNQUILL_RUNNER_IMAGE` and any pool `image`.
+Compose does not manage runner containers, cache volumes or the runner image. Check each Docker host, including SSH and outbound workers, and remove what remains. Use the image named by `RUNQUILL_RUNNER_IMAGE`, any pool `image`, and the catalogue images that jobs selected.
 
 ```sh
 docker ps -a --filter label=io.runquill.runner=1
 docker rm -f $(docker ps -aq --filter label=io.runquill.runner=1)
 docker volume rm $(docker volume ls -q -f label=io.runquill.cache=1)
-docker image rm ghcr.io/yakisoba0728/runquill-runner:v0.3.0
+docker image rm ghcr.io/yakisoba0728/runquill-runner:v0.3.1
 ```
 
 Then delete the installation directory, which holds `.env`, the GitHub App key and any token files. Turn off a Tailscale Funnel or Serve listener you created, and stop `runquill worker` on outbound workers.
@@ -514,6 +534,12 @@ The Go tests cover the features in this README, and CI runs real containers in t
 - scheduler parallelism (`RUNQUILL_SCHEDULER_WORKERS`) on K3s, SSH and outbound workers
 - elastic limits on a real Docker host under load (they apply to the `local` host only)
 - runner log streaming from a real fleet
+- the tool cache with a real `actions/setup-*` job
+- on-demand runner image pulls on `ssh://` hosts
+- runner image pulls from private registries
+- runner OS selection (`os__NAME__`) with outbound `agent://` workers
+
+Automatic runner image pulls and the cleanup against real Docker, all five OS variants started as runners, and the tool cache directory persisting per repository have been exercised on a developer machine, but not yet on a production fleet.
 
 Report problems with these features as issues.
 
@@ -527,7 +553,7 @@ go vet ./...
 CGO_ENABLED=0 go build -o runquill .
 ```
 
-The runner Dockerfile pins the upstream GitHub Actions runner image by digest. Use `--build-arg RUNQUILL_RUNNER_BASE=IMAGE` to extend a compatible image with your own toolchain. Pass `--build-arg RUNQUILL_RUNNER_OS=ubuntu22.04` or `debian12` to build another base. Keep the runner files in `/home/runner` and its user at UID 1001 for Kubernetes plain mode and pools with `privileged: false`.
+The runner Dockerfile pins the upstream GitHub Actions runner image by digest. Use `--build-arg RUNQUILL_RUNNER_BASE=IMAGE` to extend a compatible image with your own toolchain. Pass `--build-arg RUNQUILL_RUNNER_OS=` with `ubuntu22.04`, `ubuntu26.04`, `debian12` or `debian13` to build another base. Keep the runner files in `/home/runner` and its user at UID 1001 for Kubernetes plain mode and pools with `privileged: false`.
 
 Run the nested Docker smoke test with `RUNQUILL_TEST_DOCKER_IMAGE=runquill-runner:local go test -run '^TestDockerRunner$' -v` after building the runner image. It checks Docker build, PostgreSQL, bind mounts, and removal with a local stand-in for the GitHub listener.
 

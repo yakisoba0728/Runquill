@@ -17,10 +17,11 @@ const notes = {
 
 export function sample(name) {
   const at = (seconds) => new Date(Date.now() - seconds * 1000).toISOString();
-  const host = (name, limit, occupied, reserved = 0) => ({
+  const host = (name, limit, occupied, reserved = 0, extra = {}) => ({
     name, pool: name === "local" ? "default" : "build", status: reserved ? "OFFLINE" : "UP", slot_limit: limit,
-    occupied_slots: occupied, reserved_slots: reserved,
+    occupied_slots: occupied, reserved_slots: reserved, image_status: reserved ? undefined : "ready", ...extra,
   });
+  const runnerImage = "ghcr.io/yakisoba0728/runquill-runner:v0.3.1";
   const job = (id, repository, status, runner_host, extra = {}) => ({
     id, repository: "garden-lab/" + repository, status, runner_host,
     pool: runner_host === "builder-west" ? "build" : "default",
@@ -37,14 +38,22 @@ export function sample(name) {
     provision_to_start_seconds: started === undefined ? null : provisioned - started,
   });
 
-  let hosts = [host("local", 2, 1), host("builder-west", 2, 1)];
+  // builder-east is still pulling its pool's runner image (RUNQUILL_IMAGE_PULL=missing).
+  let hosts = [host("local", 2, 1), host("builder-west", 2, 1),
+    host("builder-east", 2, 0, 0, { status: "UNAVAILABLE", image_status: "pulling",
+      error: "pulling runner image ghcr.io/garden-lab/runner-build:2026.11" })];
   let jobs = [
-    job(4826, "papertrail", "RUNNING", "local", { timing: timing("webhook", 120, 119, 114, 110) }),
-    job(4824, "pattern-kit", "RUNNING", "builder-west", { timing: timing("webhook", 221, 220, 217, 213) }),
-    job(4827, "forecast", "WAITING", "", { queue_position: 1, runner_label: "runquill-18062-1-forecast",
+    job(4826, "papertrail", "RUNNING", "local", { runner_image: runnerImage, timing: timing("webhook", 120, 119, 114, 110) }),
+    job(4824, "pattern-kit", "RUNNING", "builder-west", { runner_label: "runquill-18061-1-os__ubuntu2204__lint",
+      runner_os: "ubuntu2204", runner_image: runnerImage + "-ubuntu22.04", timing: timing("webhook", 221, 220, 217, 213) }),
+    job(4827, "forecast", "WAITING", "", { queue_position: 1, runner_label: "runquill-18062-1-os__debian13__forecast",
+      runner_os: "debian13", runner_image: runnerImage + "-debian13",
+      retry_reason: "waiting for runner image " + runnerImage + "-debian13 on local",
       diagnostic: { code: "waiting_scheduler", message: "Waiting for Runquill to assign an available runner." },
       timing: timing("webhook", 10, 9) }),
-    job(4828, "pattern-kit", "RETRY", "", { pool: "build", retry_at: at(-12), retry_reason: "Waiting to retry runner provisioning.",
+    job(4828, "pattern-kit", "RETRY", "", { pool: "build", retry_at: at(-12), runner_label: "runquill-18062-1-os__ubuntu2004__check",
+      runner_os: "ubuntu2004",
+      retry_reason: 'select runner image: runner image "ubuntu2004" is not in the runner image catalogue; add it to RUNQUILL_RUNNER_IMAGES',
       timing: timing("poll", 73, 58) }),
   ];
   let match = at(8);
@@ -86,6 +95,7 @@ export function sample(name) {
       runner_inventory: jobs.filter((job) => job.runner).map((job) => ({
         name: job.runner, job_id: job.id, host: job.runner_host, pool: job.pool,
         runtime_state: job.status === "RUNNING" ? "running" : undefined,
+        runner_os: job.runner_os, runner_image: job.runner_image,
       })),
       fleet: {
         slot_limit: 4, repository_scope: "selected", hosts, jobs,

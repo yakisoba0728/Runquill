@@ -231,6 +231,9 @@ components:
           type: string
         pool:
           type: string
+        runner_os:
+          type: string
+          description: OS NAME the runner label selects with os__NAME__ (for example ubuntu2204), when it selects one.
         host:
           type: string
         outcome:
@@ -371,6 +374,10 @@ components:
           type: integer
         error:
           type: string
+        image_status:
+          type: string
+          enum: [ready, pulling, missing, failed]
+          description: Runner image readiness on a local or SSH host while RUNQUILL_IMAGE_PULL is missing or always.
     StatusJob:
       type: object
       required: [id, repository, status]
@@ -402,6 +409,12 @@ components:
           type: string
         pool_error:
           type: string
+        runner_os:
+          type: string
+          description: OS NAME the runner label selects with os__NAME__ (for example ubuntu2204), when it selects one.
+        runner_image:
+          type: string
+          description: Runner image the job's runner starts from, resolved from the current settings.
         url:
           type: string
         timing:
@@ -455,6 +468,10 @@ components:
         job_id:
           type: integer
           format: int64
+        runner_os:
+          type: string
+        runner_image:
+          type: string
     CompletedJob:
       type: object
       required: [id, repository, cleaned_at]
@@ -513,6 +530,25 @@ components:
           type: boolean
         policy:
           $ref: '#/components/schemas/OperationPolicy'
+        runner_images:
+          type: array
+          description: Read-only runner image catalogue (built-in release variants and RUNQUILL_RUNNER_IMAGES) that workflows select with os__LABEL__.
+          items:
+            $ref: '#/components/schemas/RunnerImage'
+    RunnerImage:
+      type: object
+      required: [name, label, image, source]
+      properties:
+        name:
+          type: string
+        label:
+          type: string
+          description: The NAME to write in os__NAME__ runner label selectors.
+        image:
+          type: string
+        source:
+          type: string
+          enum: [release, default, configured]
     OperationPolicy:
       type: object
       additionalProperties: false
@@ -567,6 +603,11 @@ components:
           type: boolean
         max_per_repository:
           type: integer
+        images:
+          type: [array, 'null']
+          description: Runner image catalogue names jobs in this pool may select with os__NAME__; absent allows every name.
+          items:
+            type: string
     ElasticReport:
       type: object
       description: State of the elastic runner limits loop. With RUNQUILL_ELASTIC unset or off, mode is off and the lists are empty.

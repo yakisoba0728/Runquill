@@ -47,6 +47,12 @@ func doctor(ctx context.Context, out io.Writer, repo string) error {
 			runners.runtime.(*kubeRunners).check(ctx, report)
 		}
 	}
+	if policy, policyErr := loadAssetPolicy(os.Getenv); policyErr != nil {
+		report("runner image and cache volume cleanup", policyErr)
+	} else {
+		report("runner image and cache volume cleanup: "+policy.String(), nil)
+	}
+	checkRunnerImageCatalogue(ctx, saved, cfg.runnerImage, report)
 	if err == nil {
 		api, err := cfg.github()
 		report("GitHub App private key", err)
@@ -144,15 +150,16 @@ func checkConfiguredDockerFleet(ctx context.Context, fleet *dockerFleet, report 
 		if target.agentName() != "" {
 			targetReport("worker connection and runner image", fleet.workers.snapshot(ctx, target).Err)
 		} else {
-			checkDocker(ctx, target, targetReport)
+			checkDocker(ctx, target, fleet.images, targetReport)
 		}
 	}
 	if len(fleet.hosts) > 1 {
 		report("distinct Docker hosts with runner images", fleet.prepare(ctx))
 	}
+	reportRunnerAssets(ctx, fleet, report)
 }
 
-func checkDocker(ctx context.Context, target docker, report func(string, error)) {
+func checkDocker(ctx context.Context, target docker, images *imageReadiness, report func(string, error)) {
 	host, err := target.probe(ctx)
 	if err != nil {
 		report("container engine", err)
@@ -176,6 +183,14 @@ func checkDocker(ctx context.Context, target docker, report func(string, error))
 	imagePlatform, err := target.command(ctx, nil, "image", "inspect", target.image, "--format", "{{.Os}}/{{.Architecture}}")
 	if err == nil && strings.TrimSpace(imagePlatform) != host.OS+"/"+host.Arch {
 		err = fmt.Errorf("image platform %s differs from %s platform %s/%s", strings.TrimSpace(imagePlatform), host.Engine, host.OS, host.Arch)
+	}
+	if err != nil && images.enabled() && imageMissing(err) {
+		report(fmt.Sprintf("runner image %s is not on this host yet; the manager pulls it (RUNQUILL_IMAGE_PULL=%s)", target.image, images.policy), nil)
+		return
+	}
+	if err == nil && images.enabled() {
+		report(fmt.Sprintf("runner image %s (RUNQUILL_IMAGE_PULL=%s)", target.image, images.policy), nil)
+		return
 	}
 	report("runner image "+target.image, err)
 }

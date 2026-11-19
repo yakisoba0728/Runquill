@@ -6,9 +6,12 @@ function history(query) {
     url: "https://github.com/garden-lab/" + repository + "/actions/runs/18062/job/" + id, ...extra,
   });
   const rows = [
-    row(4828, "pattern-kit", "waiting", { pool: "build", queued_at: at(58), wait_seconds: 58,
-      retry_at: at(-12), retry_reason: "Waiting to retry runner provisioning." }),
+    row(4828, "pattern-kit", "waiting", { pool: "build", runner_os: "ubuntu2004", queued_at: at(58), wait_seconds: 58,
+      runner_label: "runquill-18062-1-os__ubuntu2004__check", retry_at: at(-12),
+      retry_reason: 'select runner image: runner image "ubuntu2004" is not in the runner image catalogue; add it to RUNQUILL_RUNNER_IMAGES' }),
     row(4826, "papertrail", "running", { pool: "default", host: "local", queued_at: at(119), started_at: at(110), wait_seconds: 5 }),
+    row(4824, "pattern-kit", "running", { pool: "build", runner_os: "ubuntu2204", host: "builder-west",
+      runner_label: "runquill-18061-1-os__ubuntu2204__lint", queued_at: at(221), started_at: at(213), wait_seconds: 4 }),
     row(4821, "forecast", "failed", { pool: "default", queued_at: at(90000), finished_at: at(3600), wait_seconds: 86400,
       failure: "not started within 24 hours" }),
     row(4819, "pattern-kit", "failed", { pool: "build", queued_at: at(5400), finished_at: at(5100), wait_seconds: 300,

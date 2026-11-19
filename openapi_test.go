@@ -199,6 +199,7 @@ func TestOpenAPISchemasMatchGoStructs(t *testing.T) {
 		"StatusReport": statusReport{}, "StatusRunners": statusRunners{}, "StatusHost": statusHost{}, "StatusJob": statusJob{},
 		"JobTiming": statusJobTiming{}, "JobDiagnostic": jobDiagnostic{}, "Runner": panelRunner{}, "CompletedJob": panelCompleted{},
 		"OperationSettings": operationSettingsResponse{}, "OperationPolicy": operationPolicy{}, "WorkerPool": workerPool{},
+		"RunnerImage": runnerImage{},
 	} {
 		schema := schemas.get(name)
 		if schema == nil {

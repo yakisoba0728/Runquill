@@ -27,6 +27,8 @@ type workerPool struct {
 	Cache        bool     `json:"cache,omitempty"`
 	// MaxPerRepository caps one repository's runners in this pool; 0 uses RUNQUILL_MAX_PER_REPOSITORY.
 	MaxPerRepository int `json:"max_per_repository,omitempty"`
+	// Images limits the runner image catalogue names jobs in this pool may select; nil allows all.
+	Images []string `json:"images,omitempty"`
 }
 
 type workerPools map[string]workerPool
@@ -64,6 +66,9 @@ func (f *dockerFleet) configurePools(raw string) (workerPools, error) {
 		}
 		if strings.HasPrefix(pool.Image, "-") || strings.ContainsAny(pool.Image, " \t\r\n") {
 			return nil, fmt.Errorf("worker pool %q: image must be a Docker image reference", name)
+		}
+		if err := checkPoolImageNames(pool.Images); err != nil {
+			return nil, fmt.Errorf("worker pool %q: %w", name, err)
 		}
 		for i, nameInConfig := range pool.Repositories {
 			owner, _, _ := strings.Cut(nameInConfig, "/")

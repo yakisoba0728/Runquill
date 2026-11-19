@@ -60,13 +60,13 @@ func TestContainerEngineCreateArgs(t *testing.T) {
 			common + dockerLogs + "--privileged img", "", "run/runquill-jit", nil},
 		{"docker plain cached", "docker", "runquill-cache-7", true, docker{image: "img", cpus: 1.5, memoryMiB: 512, worker: "w1"},
 			common + dockerLogs + "--label io.runquill.worker=w1 " + plain +
-				" --cpus 1.5 --memory 512m --memory-swap 512m --mount type=volume,src=runquill-cache-7,dst=/home/runner/.cache,volume-label=io.runquill.cache=1 img",
-			"", "run/runquill/jit", []string{"run/runquill/", "home/runner/.cache/"}},
+				" --cpus 1.5 --memory 512m --memory-swap 512m --mount type=volume,src=runquill-cache-7,dst=/home/runner/.cache,volume-label=io.runquill.cache=1 --env RUNNER_TOOL_CACHE=/home/runner/.cache/tools img",
+			"", "run/runquill/jit", []string{"run/runquill/", "home/runner/.cache/", "home/runner/.cache/tools/"}},
 		{"podman dind", "podman", "", false, docker{image: "img"},
 			common + podmanLogs + "--privileged img", "", "run/runquill-jit", nil},
 		{"podman plain cached", "podman", "runquill-cache-7", true, docker{image: "img"},
-			common + podmanLogs + plain + " --mount type=volume,src=runquill-cache-7,dst=/home/runner/.cache img",
-			"volume create --ignore --label io.runquill.cache=1 runquill-cache-7", "run/runquill/jit", []string{"run/runquill/", "home/runner/.cache/"}},
+			common + podmanLogs + plain + " --mount type=volume,src=runquill-cache-7,dst=/home/runner/.cache --env RUNNER_TOOL_CACHE=/home/runner/.cache/tools img",
+			"volume create --ignore --label io.runquill.cache=1 runquill-cache-7", "run/runquill/jit", []string{"run/runquill/", "home/runner/.cache/", "home/runner/.cache/tools/"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			plan := test.target.createPlan(containerEngines[test.engine], "r1", test.volume, test.unprivileged)

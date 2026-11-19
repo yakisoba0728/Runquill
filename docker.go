@@ -15,6 +15,7 @@ import (
 const (
 	runnerLabel     = "io.runquill.runner=1"
 	runnerCachePath = "/home/runner/.cache"
+	runnerToolCache = runnerCachePath + "/tools"
 	runnerUID       = 1001
 )
 
@@ -84,7 +85,11 @@ func dockerCommand(ctx context.Context, input []byte, args ...string) (string, e
 }
 
 func engineCommand(ctx context.Context, binary string, input []byte, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	return engineCommandTimeout(ctx, 30*time.Second, binary, input, args...)
+}
+
+func engineCommandTimeout(ctx context.Context, timeout time.Duration, binary string, input []byte, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.WaitDelay = time.Second
@@ -165,8 +170,10 @@ func (d docker) createPlan(engine *containerEngine, name, cacheVolume string, un
 		} else {
 			plan.volume = []string{"volume", "create", "--ignore", "--label", "io.runquill.cache=1", cacheVolume}
 		}
-		args = append(args, "--mount", mount)
-		plan.dirs = append(plan.dirs, runnerCachePath[1:]+"/") // a new volume's root is owned by root
+		// The runner reads RUNNER_TOOL_CACHE for its tool directory, so setup-* toolchains stay in this repository's volume.
+		args = append(args, "--mount", mount, "--env", "RUNNER_TOOL_CACHE="+runnerToolCache)
+		// A new volume's root is owned by root; both directories are created for UID 1001.
+		plan.dirs = append(plan.dirs, runnerCachePath[1:]+"/", runnerToolCache[1:]+"/")
 	}
 	plan.create = append(args, d.image)
 	return plan
@@ -193,6 +200,7 @@ func (d docker) start(ctx context.Context, name, jit string) error {
 			return err
 		}
 	}
+	noteRunnerAssets(d.label(), plan.create, volume)
 	if _, err := d.command(ctx, nil, plan.create...); err != nil {
 		return err
 	}
