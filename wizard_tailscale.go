@@ -82,24 +82,54 @@ func (network *wizardNetwork) configure(ctx context.Context, opts *setupOptions)
 	return nil
 }
 
+// wizardTailnet is what the options step knows about Tailscale on this host.
+type wizardTailnet struct {
+	Name   string // MagicDNS name; "" when Tailscale is missing, signed out or without MagicDNS
+	Funnel bool   // the tailnet policy grants this node HTTPS certificates and Funnel
+}
+
+// probeWizardTailnet never fails: a host without Tailscale simply discovers jobs by polling.
+func probeWizardTailnet(ctx context.Context) wizardTailnet {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	tailnet, _ := readTailnet(ctx)
+	return tailnet
+}
+
 func readTailscaleName(ctx context.Context) (string, error) {
+	tailnet, err := readTailnet(ctx)
+	return tailnet.Name, err
+}
+
+func readTailnet(ctx context.Context) (wizardTailnet, error) {
 	raw, err := wizardTailscale(ctx, "status", "--json")
 	if err != nil {
-		return "", err
+		return wizardTailnet{}, err
 	}
 	var status struct {
-		BackendState   string
-		Self           struct{ DNSName string }
+		BackendState string
+		Self         struct {
+			DNSName      string
+			CapMap       map[string]json.RawMessage
+			Capabilities []string
+		}
 		CurrentTailnet struct{ MagicDNSEnabled bool }
 	}
 	if err := json.Unmarshal(raw, &status); err != nil {
-		return "", fmt.Errorf("read Tailscale connection: %w", err)
+		return wizardTailnet{}, fmt.Errorf("read Tailscale connection: %w", err)
 	}
 	dns := strings.TrimSuffix(strings.ToLower(status.Self.DNSName), ".")
 	if status.BackendState != "Running" || !status.CurrentTailnet.MagicDNSEnabled || !wizardTailDNS.MatchString(dns) {
-		return "", errors.New("connect Tailscale on this host and enable MagicDNS before starting the wizard")
+		return wizardTailnet{}, errors.New("connect Tailscale on this host and enable MagicDNS before starting the wizard")
 	}
-	return dns, nil
+	// Tailscale grants these as node attributes; older clients list them as capability URLs.
+	granted := func(name string) bool {
+		if _, ok := status.Self.CapMap[name]; ok {
+			return true
+		}
+		return slices.Contains(status.Self.Capabilities, name) || slices.Contains(status.Self.Capabilities, "https://tailscale.com/cap/"+name)
+	}
+	return wizardTailnet{Name: dns, Funnel: granted("https") && granted("funnel")}, nil
 }
 
 func (network wizardNetwork) routes() []wizardRoute {

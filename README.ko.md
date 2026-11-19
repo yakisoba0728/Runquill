@@ -86,7 +86,7 @@ sudo usermod -aG docker "$USER"
 
 ### 브라우저로 설치
 
-`sh install.sh --dir "$HOME/runquill" --wizard`를 실행하면 브라우저에서 GitHub App 연결, 패널 OAuth 등록, 매니저 배포와 첫 작업 확인을 이어갈 수 있습니다. 마법사와 패널은 한국어·영어를 지원합니다. Docker Compose에서는 Tailscale Serve로 패널을 tailnet에 연결하고 Funnel로 웹훅 경로를 공개할 수 있습니다. [브라우저 설치 가이드](docs/browser-setup.md)
+`sh install.sh --dir "$HOME/runquill" --wizard`를 실행하면 브라우저에서 GitHub App 연결, 패널 OAuth 등록, 매니저 배포와 첫 작업 확인을 이어갈 수 있습니다. 마법사와 패널은 한국어·영어를 지원합니다. Tailscale에 연결된 Docker Compose 서버에서는 기본으로 Funnel을 통해 웹훅을 받고 폴링을 보조로 켜 두며, Serve로 패널을 tailnet에 연결할 수도 있습니다. [브라우저 설치 가이드](docs/browser-setup.md)
 
 마법사는 `127.0.0.1`에서만 접속을 받습니다. SSH로 접속한 경우 설치 스크립트가 포트를 정하고, 내 컴퓨터에서 실행할 명령을 출력합니다.
 
@@ -109,7 +109,7 @@ sh install.sh --dir "$HOME/runquill"
 2. 설치 프로그램이 Compose를 시작하고 `Preflight passed.`를 출력할 때까지 기다립니다.
 3. 내 비공개 저장소에서 [첫 작업을 실행합니다](#첫-작업-확인).
 
-설치 스크립트는 다운로드 체크섬을 확인하고 같은 버전의 매니저와 러너 이미지를 받습니다. 위 명령은 `$HOME/runquill`에 설치합니다. `--version v0.3.2`로 버전을 지정하거나 `--download-only`로 바이너리와 배포 파일을 먼저 받을 수 있습니다.
+설치 스크립트는 다운로드 체크섬을 확인하고 같은 버전의 매니저와 러너 이미지를 받습니다. 위 명령은 `$HOME/runquill`에 설치합니다. `--version v0.3.3`로 버전을 지정하거나 `--download-only`로 바이너리와 배포 파일을 먼저 받을 수 있습니다.
 
 ### GitHub App 연결
 
@@ -580,7 +580,7 @@ docker compose -f compose.yaml -f compose.panel.yaml down -v --rmi all
 docker ps -a --filter label=io.runquill.runner=1
 docker rm -f $(docker ps -aq --filter label=io.runquill.runner=1)
 docker volume rm $(docker volume ls -q -f label=io.runquill.cache=1)
-docker image rm ghcr.io/yakisoba0728/runquill-runner:v0.3.2
+docker image rm ghcr.io/yakisoba0728/runquill-runner:v0.3.3
 ```
 
 그다음 `.env`, GitHub App 키, 토큰 파일이 들어 있는 설치 디렉터리를 삭제합니다. 직접 만든 Tailscale Funnel이나 Serve 리스너를 끄고, 아웃바운드 워커의 `runquill worker`도 중지합니다.

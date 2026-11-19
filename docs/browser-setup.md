@@ -24,6 +24,10 @@ When you add the panel to an older runner-only installation, the wizard can conf
 
 Sign into the Compose host's Tailscale client and enable MagicDNS and HTTPS. Give the host account running Runquill permission to configure the local Tailscale client.
 
+On a Compose host that is connected to a tailnet whose policy grants the node HTTPS certificates and the `funnel` attribute, the first step turns **Receive webhooks through Tailscale Funnel** on by default. GitHub then announces jobs at once, and polling every 30 seconds stays on to catch any delivery that does not arrive. Clear the box to rely on polling alone. Without a connected Tailscale, or without Funnel permission, the box starts cleared and the page says what is missing.
+
+The installer reports the Tailscale state in its checklist and, with your consent, runs `sudo tailscale set --operator=USER` so the account running the wizard may change Serve and Funnel.
+
 | Option | Access | Listener | Target |
 | --- | --- | --- | --- |
 | Serve panel | Authorized tailnet peers | HTTPS 9443 | `127.0.0.1:8081` |

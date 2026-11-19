@@ -340,7 +340,7 @@ plan_cmd() { add_line plan "    $(as_root_text "$@")"; }
 preflight() {
     plan='' blockers='' manual='' notes='' docker_plan=''
     fix_tools='' fix_docker=false fix_compose=false fix_start=false fix_enable=false
-    fix_group=false activate_group=false docker_root=''
+    fix_group=false activate_group=false docker_root='' fix_operator=false
     mode_docker=true
     if [ "$no_docker" = true ]; then mode_docker=false; fi
     docker_soft=false
@@ -487,7 +487,34 @@ preflight() {
         fi
     fi
 
+    preflight_tailscale
     host_size
+}
+
+# Tailscale is optional. When this host is on a tailnet the wizard receives GitHub
+# webhooks through Funnel, and changing Funnel needs root or the node's operator.
+preflight_tailscale() {
+    if ! has tailscale; then
+        item info Tailscale 'not installed: jobs are found by polling (Funnel adds webhooks)'
+        return 0
+    fi
+    ts_status=$(tailscale status --json 2>/dev/null) || ts_status=
+    ts_name=$(printf '%s\n' "$ts_status" | sed -n 's/^[[:space:]]*"DNSName":[[:space:]]*"\([^"]*[^".]\)\.\{0,1\}",\{0,1\}$/\1/p' | sed -n 1p)
+    if [ -z "$ts_name" ] || ! printf '%s\n' "$ts_status" | grep -q '"BackendState":[[:space:]]*"Running"'; then
+        item info Tailscale 'installed but not connected: jobs are found by polling'
+        return 0
+    fi
+    ts_operator=$(tailscale debug prefs 2>/dev/null | sed -n 's/^[[:space:]]*"OperatorUser":[[:space:]]*"\([^"]*\)",\{0,1\}$/\1/p' | sed -n 1p) || ts_operator=
+    if [ "$(id -u)" = 0 ] || [ "$ts_operator" = "$user" ]; then
+        item ok Tailscale "$ts_name; $user can manage Funnel"
+    elif [ "$can_root" = false ]; then
+        item warn Tailscale "$ts_name; $user cannot manage Funnel"
+        add_line notes "To receive webhooks through Funnel, run as root: tailscale set --operator=$user"
+    else
+        fix_operator=true
+        item fix Tailscale "$ts_name; let $user manage Serve and Funnel"
+        add_line plan "  Let $user change Tailscale Serve and Funnel without sudo, so the wizard can$newline  publish the webhook path:$newline    $(as_root_text "tailscale set --operator=$user")"
+    fi
 }
 
 preflight_docker_report() {
@@ -845,6 +872,11 @@ apply_plan() {
         note_done "added $user to the docker group"
         RUNQUILL_INSTALL_GROUP_ADDED=1
         export RUNQUILL_INSTALL_GROUP_ADDED
+    fi
+    if [ "$fix_operator" = true ]; then
+        apply_step="make $user the Tailscale operator"
+        run_root tailscale set "--operator=$user"
+        note_done "let $user manage Tailscale Serve and Funnel"
     fi
     apply_step=
 }

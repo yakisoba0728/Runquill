@@ -26,11 +26,11 @@ Releases publish the runner image in five variants for amd64 and arm64.
 
 | Tag | Base |
 | --- | --- |
-| `ghcr.io/yakisoba0728/runquill-runner:v0.3.2` | Ubuntu 24.04, the upstream GitHub Actions runner image |
-| `ghcr.io/yakisoba0728/runquill-runner:v0.3.2-ubuntu22.04` | Ubuntu 22.04 |
-| `ghcr.io/yakisoba0728/runquill-runner:v0.3.2-ubuntu26.04` | Ubuntu 26.04 |
-| `ghcr.io/yakisoba0728/runquill-runner:v0.3.2-debian12` | Debian 12 |
-| `ghcr.io/yakisoba0728/runquill-runner:v0.3.2-debian13` | Debian 13 |
+| `ghcr.io/yakisoba0728/runquill-runner:v0.3.3` | Ubuntu 24.04, the upstream GitHub Actions runner image |
+| `ghcr.io/yakisoba0728/runquill-runner:v0.3.3-ubuntu22.04` | Ubuntu 22.04 |
+| `ghcr.io/yakisoba0728/runquill-runner:v0.3.3-ubuntu26.04` | Ubuntu 26.04 |
+| `ghcr.io/yakisoba0728/runquill-runner:v0.3.3-debian12` | Debian 12 |
+| `ghcr.io/yakisoba0728/runquill-runner:v0.3.3-debian13` | Debian 13 |
 
 All variants carry the same pinned Actions runner and Docker binaries and a `runner` user with UID 1001. To build one from source, pass `--build-arg RUNQUILL_RUNNER_OS=ubuntu22.04`, `ubuntu26.04`, `debian12` or `debian13` to `docker build runner`. Use a variant as the fleet-wide `RUNQUILL_RUNNER_IMAGE`, as a pool's `image`, or let jobs select it with an `os__NAME__` label. [Runner images](runner-images.md)
 

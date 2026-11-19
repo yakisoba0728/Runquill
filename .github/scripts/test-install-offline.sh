@@ -92,6 +92,11 @@ stub docker 'case "$*" in
         esac ;;
 esac'
 stub k3s ':'
+stub tailscale 'case "$1 $2" in
+    "status --json") printf "{\n  \"BackendState\": \"Running\",\n  \"Self\": {\n    \"DNSName\": \"box.example.ts.net.\",\n    \"Online\": true\n  },\n  \"Peer\": {\n    \"k\": {\n      \"DNSName\": \"peer.example.ts.net.\"\n    }\n  }\n}\n" ;;
+    "debug prefs") if [ -e "$STUB_STATE/ts-operator" ]; then printf "{\n  \"OperatorUser\": \"alice\"\n}\n"; else printf "{\n  \"WantRunning\": true\n}\n"; fi ;;
+    set\ --operator=*) touch "$STUB_STATE/ts-operator" ;;
+esac'
 # Package managers: installing a package puts the matching stubs on PATH.
 pm_body='for p in "$@"; do
     case $p in
@@ -127,6 +132,8 @@ host() {
             compose) touch "$case_dir/state/compose" ;;
             systemd) mkdir -p "$case_dir/root/run/systemd/system" ;;
             k3s) cp "$work/templates/k3s" "$case_dir/bin/" ;;
+            tailscale) cp "$work/templates/tailscale" "$case_dir/bin/" ;;
+            tsoperator) touch "$case_dir/state/ts-operator" ;;
             nocurl) rm "$case_dir/bin/curl" ;;
             nogpg) rm "$case_dir/bin/gpg" ;;
             nosudo) rm "$case_dir/bin/sudo" ;;
@@ -207,6 +214,22 @@ check 'healthy host: no plan' lacks_out 'will run'
 check 'healthy host: nothing changed' changed_nothing
 check 'healthy host: checklist' has_out 'ok    Docker access  alice can use the daemon'
 check 'healthy host: sizing (24 CPUs, 47 GB)' has_out 'suggest 8 concurrent runners, 2.7 CPUs and 5504 MiB each'
+
+check 'healthy host: Tailscale is optional' has_out 'info  Tailscale      not installed'
+
+host $healthy tailscale tsoperator
+run -- --prepare-only
+check 'Tailscale operator: ready' has_out 'ok    Tailscale      box.example.ts.net; alice can manage Funnel'
+check 'Tailscale operator: no plan' lacks_out 'will run'
+
+host $healthy tailscale
+run -- --prepare-only
+check 'Tailscale: operator is planned' has_out 'sudo tailscale set --operator=alice'
+check 'Tailscale: nothing changed without consent' lacks_log 'tailscale set'
+run -- --prepare-only --yes
+check 'Tailscale --yes: operator set' has_log 'tailscale set --operator=alice'
+run -- --prepare-only
+check 'Tailscale: second run changes nothing' lacks_out 'will run'
 
 host systemd
 run -- --prepare-only --dir "/srv/run quill/it's"

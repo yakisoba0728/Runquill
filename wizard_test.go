@@ -671,3 +671,45 @@ func TestStandaloneSetupPagesLoadTheWizardStylesheet(t *testing.T) {
 		t.Fatalf("the forward command should name this server:\n%s", printed.String())
 	}
 }
+
+func TestWizardTurnsFunnelOnByDefaultOnlyWhereTheTailnetAllowsIt(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	reply := func(ctx context.Context, name string, args ...string) ([]byte, error) { return []byte("29.0.0\n"), nil }
+	checked := regexp.MustCompile(`name="funnel"[^>]* checked`)
+	for _, test := range []struct {
+		self   string
+		funnel bool
+		hint   string
+	}{
+		{`"DNSName":"runquill.example.ts.net.","CapMap":{"https":null,"funnel":null}`, true, "Publishes only the"},
+		{`"DNSName":"runquill.example.ts.net.","Capabilities":["https://tailscale.com/cap/https","https://tailscale.com/cap/funnel"]`, true, "Publishes only the"},
+		{`"DNSName":"runquill.example.ts.net.","CapMap":{"https":null}`, false, "may not use Funnel yet"},
+		{`"DNSName":""`, false, "No connected Tailscale"},
+	} {
+		script := "#!/bin/sh\nprintf '%s\\n' '{\"BackendState\":\"Running\",\"Self\":{" + test.self + "},\"CurrentTailnet\":{\"MagicDNSEnabled\":true}}'\n"
+		if err := os.WriteFile(filepath.Join(dir, "tailscale"), []byte(script), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if tailnet := probeWizardTailnet(t.Context()); tailnet.Funnel != test.funnel {
+			t.Fatalf("%s: Funnel allowed = %t", test.self, tailnet.Funnel)
+		}
+		web := &setupWizard{dir: t.TempDir(), log: io.Discard, ctx: t.Context(), language: "en", phase: "options", command: reply}
+		rec := httptest.NewRecorder()
+		web.render(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+		body := rec.Body.String()
+		if checked.MatchString(body) != test.funnel || !strings.Contains(body, test.hint) {
+			t.Fatalf("%s: the first step did not offer Funnel as expected", test.self)
+		}
+		if strings.Contains(body, `<details class="advanced" open>`) {
+			t.Fatal("the default must not open the advanced options")
+		}
+		// An answer the user gave wins over the default: a returned form keeps Funnel off.
+		web.configure(url.Values{"backend": {"docker"}, "group": {"abc"}})
+		rec = httptest.NewRecorder()
+		web.render(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+		if checked.MatchString(rec.Body.String()) {
+			t.Fatal("a form returned without Funnel must not turn it back on")
+		}
+	}
+}

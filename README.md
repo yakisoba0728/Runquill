@@ -86,7 +86,7 @@ Log out and back in. Then `sh install.sh --prepare-only --no-install` checks the
 
 ### Set up in a browser
 
-Run `sh install.sh --dir "$HOME/runquill" --wizard` to connect GitHub, configure panel sign-in, deploy the manager, and download the first workflow in one browser session. The wizard supports English and Korean, plus optional Tailscale Serve and Funnel on a Docker Compose host. [Browser setup](docs/browser-setup.md)
+Run `sh install.sh --dir "$HOME/runquill" --wizard` to connect GitHub, configure panel sign-in, deploy the manager, and download the first workflow in one browser session. The wizard supports English and Korean. On a Docker Compose host connected to Tailscale it receives webhooks through Funnel by default, with polling kept on as a backup, and can serve the panel on the tailnet. [Browser setup](docs/browser-setup.md)
 
 The wizard listens only on `127.0.0.1`. Over SSH, the installer chooses the port and prints a command to run on your own computer, for example:
 
@@ -109,7 +109,7 @@ sh install.sh --dir "$HOME/runquill"
 2. Wait for the installer to start Compose and report `Preflight passed.`
 3. [Run your first job](#verify-your-first-job) from a private repository you own.
 
-The installer verifies release checksums and pulls matching manager and runner images. The command above installs into `$HOME/runquill`. Use `--version v0.3.2` to pin a release, or `--download-only` to fetch the binary and deployment files before setup.
+The installer verifies release checksums and pulls matching manager and runner images. The command above installs into `$HOME/runquill`. Use `--version v0.3.3` to pin a release, or `--download-only` to fetch the binary and deployment files before setup.
 
 ### Create and install the GitHub App
 
@@ -580,7 +580,7 @@ Compose does not manage runner containers, cache volumes or the runner image. Ch
 docker ps -a --filter label=io.runquill.runner=1
 docker rm -f $(docker ps -aq --filter label=io.runquill.runner=1)
 docker volume rm $(docker volume ls -q -f label=io.runquill.cache=1)
-docker image rm ghcr.io/yakisoba0728/runquill-runner:v0.3.2
+docker image rm ghcr.io/yakisoba0728/runquill-runner:v0.3.3
 ```
 
 Then delete the installation directory, which holds `.env`, the GitHub App key and any token files. Turn off a Tailscale Funnel or Serve listener you created, and stop `runquill worker` on outbound workers.

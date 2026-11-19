@@ -76,7 +76,7 @@ type wizardForm struct {
 	Serve, Funnel                                                             bool
 }
 
-var wizardAdvancedFields = []string{"organization", "group", "panel_url", "webhook_url", "serve", "funnel"}
+var wizardAdvancedFields = []string{"organization", "group", "panel_url", "webhook_url", "serve"}
 
 func wizardFormValues(form url.Values) wizardForm {
 	return wizardForm{
@@ -98,7 +98,7 @@ func wizardVisibleURL(raw string) string {
 }
 
 func (form wizardForm) advanced() bool {
-	return form.Organization != "" || form.Group != "" || form.PanelURL != "" || form.WebhookURL != "" || form.Serve || form.Funnel
+	return form.Organization != "" || form.Group != "" || form.PanelURL != "" || form.WebhookURL != "" || form.Serve
 }
 
 //go:embed panelweb/wizard.css
@@ -455,6 +455,22 @@ var wizardHome = template.Must(template.Must(template.New("wizard").Parse(wizard
           <p class="hint" id="help-repositories">{{if .KO}}GitHub에서 앱을 설치할 때도 같은 범위를 선택하세요.{{else}}Choose the same access when you install the App on GitHub.{{end}}</p>
         </div>
       </section>
+      <section class="group" aria-labelledby="group-delivery">
+        <h2 id="group-delivery">{{if .KO}}작업 수신{{else}}Job delivery{{end}}</h2>
+        <p class="host">{{if .KO}}GitHub 웹훅이 작업을 바로 알리고, 30초마다 도는 폴링이 놓친 작업을 보완합니다.{{else}}GitHub webhooks announce jobs at once, and polling every 30 seconds catches any that were missed.{{end}}</p>
+        <div data-docker{{if eq .Form.Backend "k3s"}} hidden{{end}}>
+          <label class="check"><input type="checkbox" name="funnel" data-funnel{{if .Form.Funnel}} checked{{end}}{{if eq .Form.Backend "k3s"}} disabled{{end}}{{if eq .Field "funnel"}} aria-invalid="true" aria-describedby="wizard-error help-funnel" autofocus{{else}} aria-describedby="help-funnel"{{end}}>{{if .KO}}Tailscale Funnel로 웹훅 받기{{else}}Receive webhooks through Tailscale Funnel{{end}}</label>
+          {{- if eq .Field "funnel"}}{{template "field-error" .}}{{end}}
+          {{- if .Tailnet.Funnel}}
+          <p class="hint" id="help-funnel">{{if .KO}}<code>{{.Tailnet.Name}}</code>의 8443 포트에서 <code>/webhook</code> 경로만 인터넷에 공개합니다. 패널은 공개되지 않습니다.{{else}}Publishes only the <code>/webhook</code> path on port 8443 of <code>{{.Tailnet.Name}}</code>. The panel stays private.{{end}}</p>
+          {{- else if .Tailnet.Name}}
+          <p class="hint" id="help-funnel">{{if .KO}}이 노드는 아직 Funnel을 쓸 수 없습니다. tailnet에서 HTTPS 인증서를 켜고 접근 제어 정책에 <code>funnel</code> 노드 속성을 허용한 뒤 새로고침하세요. 꺼 두면 폴링만으로 동작합니다.{{else}}This node may not use Funnel yet. Enable HTTPS certificates for the tailnet and grant the <code>funnel</code> node attribute in the access controls, then reload. Left off, polling alone finds jobs.{{end}}</p>
+          {{- else}}
+          <p class="hint" id="help-funnel">{{if .KO}}이 서버에서 연결된 Tailscale을 찾지 못했습니다. 꺼 두면 폴링만으로 동작합니다. Tailscale을 연결하고 MagicDNS를 켠 뒤 새로고침하면 기본으로 켜집니다.{{else}}No connected Tailscale was found on this server. Left off, polling alone finds jobs. Connect Tailscale with MagicDNS and reload to have this on by default.{{end}}</p>
+          {{- end}}
+        </div>
+        <p class="hint" data-k3s{{if ne .Form.Backend "k3s"}} hidden{{end}}>{{if .KO}}K3s에서는 고급 옵션의 공개 웹훅 URL로 직접 연결하세요. 비워 두면 폴링만으로 동작합니다.{{else}}For K3s, supply your own public webhook URL under the advanced options. Left empty, polling alone finds jobs.{{end}}</p>
+      </section>
       <details class="advanced"{{if .Advanced}} open{{end}}>
         <summary>{{if .KO}}조직 및 네트워크{{else}}Organization and network{{end}}</summary>
         <div class="advanced-body">
@@ -482,13 +498,12 @@ var wizardHome = template.Must(template.Must(template.New("wizard").Parse(wizard
             <label for="wizard-webhook-url">{{if .KO}}공개 웹훅 URL (선택){{else}}Public webhook URL (optional){{end}}</label>
             <input id="wizard-webhook-url" name="webhook_url" type="url" spellcheck="false" placeholder="https://example.com/webhook" value="{{.Form.WebhookURL}}"{{if eq .Field "webhook_url"}} aria-invalid="true" aria-describedby="wizard-error help-webhook-url" autofocus{{else}} aria-describedby="help-webhook-url"{{end}}>
             {{- if eq .Field "webhook_url"}}{{template "field-error" .}}{{end}}
-            <p class="hint" id="help-webhook-url">{{if .KO}}비워 두면 Runquill이 GitHub를 폴링해 작업을 찾습니다.{{else}}Leave empty to discover jobs by polling GitHub.{{end}}</p>
+            <p class="hint" id="help-webhook-url">{{if .KO}}Funnel 대신 직접 운영하는 공개 주소가 있을 때만 입력하세요.{{else}}Only when you run your own public address instead of Funnel.{{end}}</p>
           </div>
           <fieldset aria-describedby="help-tailscale">
             <legend>Tailscale</legend>
             <label class="check"><input type="checkbox" name="serve"{{if .Form.Serve}} checked{{end}}{{if eq .Field "serve"}} aria-invalid="true" aria-describedby="wizard-error" autofocus{{end}}>{{if .KO}}Serve로 패널을 tailnet에만 공개{{else}}Serve the panel privately on the tailnet{{end}}</label>
-            <label class="check"><input type="checkbox" name="funnel"{{if .Form.Funnel}} checked{{end}}{{if eq .Field "funnel"}} aria-invalid="true" aria-describedby="wizard-error" autofocus{{end}}>{{if .KO}}Funnel로 웹훅 경로를 인터넷에 공개{{else}}Expose the webhook path through Funnel{{end}}</label>
-            {{- if or (eq .Field "serve") (eq .Field "funnel")}}{{template "field-error" .}}{{end}}
+            {{- if eq .Field "serve"}}{{template "field-error" .}}{{end}}
             <p class="hint" id="help-tailscale">{{if .KO}}Docker Compose 설치에서만 쓸 수 있습니다. 이 호스트가 Tailscale에 연결되어 있고 MagicDNS가 켜져 있어야 합니다.{{else}}Docker Compose only. This host must be connected to Tailscale with MagicDNS enabled.{{end}}</p>
           </fieldset>
         </div>
@@ -518,7 +533,7 @@ var wizardHome = template.Must(template.Must(template.New("wizard").Parse(wizard
       {{- end}}
     </dl>
     {{- if .Funnel}}
-    <p class="notice" data-state="waiting">{{if .KO}}배포하면 웹훅 경로가 인터넷에 공개됩니다.{{else}}Deploying publishes the webhook path to the internet.{{end}}</p>
+    <p class="notice" data-state="waiting">{{if .KO}}배포하면 웹훅 경로가 인터넷에 공개됩니다. 웹훅이 닿지 않는 동안에도 30초마다 폴링이 작업을 찾습니다.{{else}}Deploying publishes the webhook path to the internet. Polling every 30 seconds still finds jobs whenever a webhook does not arrive.{{end}}</p>
     {{- end}}
     {{template "stages" .}}
     <form method="post" action="/deploy"><div class="actions"><button class="button primary">{{if .CheckCompose}}{{if .KO}}사전 점검 다시 실행{{else}}Run preflight again{{end}}{{else}}{{if .KO}}배포 및 사전 점검{{else}}Deploy and check installation{{end}}{{end}}</button></div></form>
@@ -727,8 +742,12 @@ func (web *setupWizard) render(w http.ResponseWriter, r *http.Request) {
 	options, run := web.phase == "options", web.command
 	web.mu.Unlock()
 	var docker wizardDocker
+	var tailnet wizardTailnet
 	if options {
 		docker = probeWizardDocker(r.Context(), run)
+		if run != nil {
+			tailnet = probeWizardTailnet(r.Context())
+		}
 	}
 	web.mu.Lock()
 	language := web.language
@@ -750,11 +769,12 @@ func (web *setupWizard) render(w http.ResponseWriter, r *http.Request) {
 		Chrome                                                                                 *wizardChrome
 		Host                                                                                   wizardHost
 		Docker                                                                                 wizardDocker
+		Tailnet                                                                                wizardTailnet
 	}{Language: language, Phase: web.phase, Step: web.step, Install: web.installURL, Target: web.kubeContext,
 		PanelURL: web.panelLink(language), Stage: stage, Log: log, KO: language == "ko", K3s: web.options.kubernetes,
 		Serve: web.network.serve, Funnel: web.network.funnel, NetworkEnabled: web.networkEnabled,
 		CheckCompose: web.checkCompose, Error: web.failed, Toggling: web.toggling,
-		Host: web.host, HostMemory: strconv.FormatFloat(float64(web.host.MemoryMiB)/1024, 'f', 1, 64), Docker: docker}
+		Host: web.host, HostMemory: strconv.FormatFloat(float64(web.host.MemoryMiB)/1024, 'f', 1, 64), Docker: docker, Tailnet: tailnet}
 	view.Steps = wizardSteps(view.KO, view.Phase, view.Step, view.Install != "", view.Error)
 	view.Chrome = newWizardChrome(view.KO, view.Steps)
 	view.PanelOrigin, _, _ = strings.Cut(view.PanelURL, "/?")
@@ -781,6 +801,10 @@ func (web *setupWizard) render(w http.ResponseWriter, r *http.Request) {
 			suggested := recommendCapacity(web.host)
 			view.Form.MaxRunners = strconv.Itoa(suggested.Runners)
 			view.Form.RunnerCPUs, view.Form.RunnerMemory = wizardCPUText(suggested.CPUs), wizardGiB(suggested.MemoryMiB)
+		}
+		if web.form == (wizardForm{}) && !web.failed {
+			// Webhooks through Funnel are the default wherever this host can offer them.
+			view.Form.Funnel = view.Tailnet.Funnel
 		}
 		if view.Docker.Blocked() {
 			view.User = wizardUser()

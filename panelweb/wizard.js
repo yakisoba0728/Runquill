@@ -62,8 +62,11 @@ document.addEventListener("DOMContentLoaded", () => {
     const contextInput = document.querySelector("[name=context]");
     const blocked = document.querySelector("[data-docker-blocked]");
     const start = document.querySelector("[data-start]");
+    const funnel = document.querySelector("[data-funnel]");
     const updateBackend = () => {
       const k3s = backend.value === "k3s";
+      // A disabled box is not submitted: Funnel is managed for Docker Compose only.
+      if (funnel) funnel.disabled = k3s;
       for (const element of k3sOnly) element.hidden = !k3s;
       for (const element of dockerOnly) element.hidden = k3s;
       contextInput.required = k3s;
