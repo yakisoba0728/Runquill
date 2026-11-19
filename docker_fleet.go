@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/url"
 	"os"
@@ -44,6 +45,10 @@ func newDockerFleet(image, hosts string) (*dockerFleet, error) {
 }
 
 func parseDockerFleet(image, hosts string) (*dockerFleet, error) {
+	engine, err := configuredContainerEngine()
+	if err != nil {
+		return nil, err
+	}
 	fleet := &dockerFleet{}
 	seen := make(map[string]bool)
 	for _, host := range strings.Split(hosts, ",") {
@@ -66,7 +71,10 @@ func parseDockerFleet(image, hosts string) (*dockerFleet, error) {
 		endpoint, err := url.Parse(host)
 		if err != nil || endpoint.Scheme != "ssh" ||
 			(!sshName.MatchString(endpoint.Hostname()) && net.ParseIP(endpoint.Hostname()) == nil) ||
-			endpoint.Path != "" || strings.ContainsAny(host, "?#") {
+			!engine.validSSHPath(endpoint.Path) || strings.ContainsAny(host, "?#") {
+			if engine.sshSocket != "" {
+				return nil, errors.New("RUNQUILL_DOCKER_HOSTS must be a comma-separated list of local, ssh://[user@]host[:port][/socket/path] or agent://name")
+			}
 			return nil, errors.New("RUNQUILL_DOCKER_HOSTS must be a comma-separated list of local, ssh://[user@]host[:port] or agent://name")
 		}
 		if endpoint.User != nil {
@@ -75,6 +83,9 @@ func parseDockerFleet(image, hosts string) (*dockerFleet, error) {
 			}
 		}
 		fleet.hosts = append(fleet.hosts, docker{image: image, host: host})
+	}
+	for i := range fleet.hosts {
+		fleet.hosts[i].engine, fleet.hosts[i].security = engine, &engineSecurity{}
 	}
 	return fleet, nil
 }
@@ -103,6 +114,16 @@ func (f *dockerFleet) prepare(ctx context.Context) error {
 		}
 		if err := host.checkRunnerImage(ctx); err != nil {
 			return err
+		}
+		info, err := host.probe(ctx)
+		if err != nil {
+			return err
+		}
+		if info.Rootless && !host.unprivileged {
+			if host.requirePrivileged {
+				return host.rootlessPrivilegedError(info.Engine)
+			}
+			slog.Info("rootless container engine: runners start unprivileged without Docker-in-Docker", "host", host.label(), "engine", info.Engine)
 		}
 	}
 	return nil
@@ -155,6 +176,9 @@ func (f *dockerFleet) snapshot(ctx context.Context) ([]dockerHostSnapshot, error
 			result.Containers, result.Err = host.containers(ctx)
 			if result.Err == nil && host.image != "" {
 				result.Err = host.checkRunnerImage(ctx)
+			}
+			if result.Err == nil {
+				result.Err = host.privilegeConflict(ctx)
 			}
 		})
 	}
@@ -220,7 +244,11 @@ func (f *dockerFleet) removeOn(ctx context.Context, target, name string) error {
 }
 
 func (d docker) engineID(ctx context.Context) (string, error) {
-	output, err := d.command(ctx, nil, "info", "--format", "{{.ID}}")
+	engine, err := d.containerEngine()
+	if err != nil {
+		return "", err
+	}
+	output, err := d.command(ctx, nil, "info", "--format", engine.idFormat)
 	if err != nil {
 		return "", err
 	}

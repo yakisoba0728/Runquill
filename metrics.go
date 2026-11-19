@@ -23,6 +23,7 @@ type fleetMetrics struct {
 	releases     atomic.Uint64
 	tickErrors   atomic.Uint64
 	notify       *notifier
+	elastic      *elasticState
 }
 
 type fleetMetricSample struct {
@@ -76,6 +77,7 @@ func (m *fleetMetrics) writePrometheus(w io.Writer) {
 		counter("notifications_failed_total", "Notifications not delivered after all attempts.", m.notify.Failed())
 		counter("notifications_dropped_total", "Notifications discarded because the queue was full or closed.", m.notify.Dropped())
 	}
+	m.elastic.writePrometheus(w)
 
 	s := m.sample.Load()
 	if s == nil {

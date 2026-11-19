@@ -6,9 +6,64 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestDoctorReportsContainerEngine(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+	for _, binary := range []string{"docker", "podman"} {
+		if err := os.WriteFile(filepath.Join(dir, binary), []byte(`#!/bin/sh
+case "$1" in
+  info) printf '%s\n' "$DOCTOR_TEST_INFO" ;;
+  image) printf '%s\n' "$DOCTOR_TEST_PLATFORM" ;;
+esac
+`), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, test := range []struct {
+		name, engine, info, platform string
+		target                       docker
+		want                         []string
+	}{
+		{"docker rootful", "docker", dockerRootfulInfo, "linux/amd64", docker{image: "img"},
+			[]string{"OK   container engine docker 29.0.0 (linux/amd64, cgroup v2, rootful)\n", "OK   runner image img"}},
+		{"docker rootless default", "docker", dockerRootlessInfo, "linux/arm64", docker{image: "img"},
+			[]string{"OK   container engine docker 28.5.1 (linux/arm64, cgroup v2, rootless); runners start unprivileged without Docker-in-Docker", "OK   runner image img"}},
+		{"docker rootless privileged", "docker", dockerRootlessInfo, "linux/arm64", docker{image: "img", pool: "build", requirePrivileged: true},
+			[]string{`FAIL container engine docker 28.5.1 (linux/arm64, cgroup v2, rootless): worker pool "build" sets "privileged": true, but docker host "local" is rootless`}},
+		{"podman rootless plain", "podman", podmanRootlessInfo, "linux/arm64", docker{image: "img", unprivileged: true},
+			[]string{"OK   container engine podman 5.4.2 (linux/amd64, cgroup v2, rootless)\n",
+				"FAIL runner image img: image platform linux/arm64 differs from podman platform linux/amd64"}},
+		{"podman cgroup v1", "podman", podmanRootfulInfo, "linux/arm64", docker{image: "img"},
+			[]string{"FAIL container engine podman 4.9.3 (linux/arm64, cgroup v1, rootful): requires Linux podman on amd64 or arm64 with cgroup v2"}},
+		{"unreadable", "docker", "not json", "", docker{image: "img"},
+			[]string{`FAIL container engine: container engine on "local": read docker info`}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("RUNQUILL_CONTAINER_ENGINE", test.engine)
+			t.Setenv("DOCTOR_TEST_INFO", test.info)
+			t.Setenv("DOCTOR_TEST_PLATFORM", test.platform)
+			var out strings.Builder
+			checkDocker(t.Context(), test.target, func(name string, err error) {
+				if err != nil {
+					fmt.Fprintf(&out, "FAIL %s: %s\n", name, err)
+				} else {
+					fmt.Fprintf(&out, "OK   %s\n", name)
+				}
+			})
+			for _, want := range test.want {
+				if !strings.Contains(out.String(), want) {
+					t.Errorf("missing %q in doctor output:\n%s", want, out.String())
+				}
+			}
+		})
+	}
+}
 
 func TestDoctorChecksPersonalInstallation(t *testing.T) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)

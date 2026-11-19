@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS panel_tokens (
     digest BLOB NOT NULL UNIQUE,
     user_id INTEGER NOT NULL,
     name TEXT NOT NULL,
-    scope TEXT NOT NULL CHECK (scope IN ('fleet:read','hosts:write')),
+    scope TEXT NOT NULL CHECK (scope IN ('fleet:read','hosts:write','jobs:write')),
     expires_at INTEGER NOT NULL,
     created_at INTEGER NOT NULL
 );
@@ -88,6 +88,42 @@ CREATE TABLE IF NOT EXISTS panel_audit (
     occurred_at INTEGER NOT NULL
 );
 `
+
+// widenPanelTokenScopes rebuilds a panel_tokens table created before the
+// jobs:write scope, because SQLite cannot alter a CHECK constraint in place.
+func widenPanelTokenScopes(ctx context.Context, db *sql.DB) error {
+	var definition string
+	err := db.QueryRowContext(ctx, "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'panel_tokens'").Scan(&definition)
+	if errors.Is(err, sql.ErrNoRows) || err == nil && strings.Contains(definition, "'jobs:write'") {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `
+ALTER TABLE panel_tokens RENAME TO panel_tokens_old;
+CREATE TABLE panel_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    digest BLOB NOT NULL UNIQUE,
+    user_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    scope TEXT NOT NULL CHECK (scope IN ('fleet:read','hosts:write','jobs:write')),
+    expires_at INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
+);
+INSERT INTO panel_tokens (id, digest, user_id, name, scope, expires_at, created_at)
+    SELECT id, digest, user_id, name, scope, expires_at, created_at FROM panel_tokens_old;
+DROP TABLE panel_tokens_old;
+CREATE INDEX IF NOT EXISTS panel_tokens_user ON panel_tokens(user_id);`); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
 
 func loadPanelOAuthConfig() (panelOAuthConfig, error) {
 	return parsePanelOAuthConfig(
@@ -149,6 +185,9 @@ func isPanelLoopback(host string) bool {
 }
 
 func newPanelAccess(ctx context.Context, db *sql.DB, cfg panelOAuthConfig) (*panelAccess, error) {
+	if err := widenPanelTokenScopes(ctx, db); err != nil {
+		return nil, err
+	}
 	if _, err := db.ExecContext(ctx, panelAccessSchema); err != nil {
 		return nil, err
 	}

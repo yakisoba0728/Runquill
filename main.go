@@ -22,7 +22,7 @@ var version = "dev"
 func main() {
 	showVersion := flag.Bool("version", false, "print the Runquill version")
 	flag.Usage = func() {
-		fmt.Fprintln(flag.CommandLine.Output(), "Usage: runquill [--version] | runquill setup | runquill wizard | runquill workflow init | runquill doctor | runquill diagnose OWNER/REPO | runquill status [--json] | runquill gc (--dry-run | --remove-orphans [--grace DURATION]) | runquill host {cordon|uncordon} HOST | runquill panel --demo | runquill worker | runquill backup --output FILE | runquill restore (--from FILE | --activate)")
+		fmt.Fprintln(flag.CommandLine.Output(), "Usage: runquill [--version] | runquill setup | runquill wizard | runquill workflow {init|check [--json] [--strict] [PATH...]} | runquill doctor | runquill diagnose OWNER/REPO | runquill status [--json] | runquill gc (--dry-run | --remove-orphans [--grace DURATION]) | runquill host {cordon|uncordon} HOST | runquill panel --demo | runquill worker | runquill backup (--output FILE [--seal] | --upload) [--passphrase-file FILE] | runquill restore (--from FILE | --from-s3 KEY | --activate) [--passphrase-file FILE] | runquill {jobs|runners|pools|hosts|audit} ... --help")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -39,6 +39,9 @@ func main() {
 		slog.SetDefault(slog.New(handler))
 	} else {
 		slog.SetLogLoggerLevel(level)
+	}
+	if handled, code := remoteCommand(flag.Args(), os.Stdout, os.Stderr); handled {
+		os.Exit(code)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -65,16 +68,7 @@ func main() {
 		return
 	}
 	if flag.Arg(0) == "workflow" {
-		if flag.NArg() != 2 || flag.Arg(1) != "init" {
-			fmt.Fprintln(os.Stderr, "Usage: runquill workflow init")
-			os.Exit(2)
-		}
-		if err := initWorkflow("."); err != nil {
-			slog.Error("runquill workflow init", "error", err)
-			os.Exit(1)
-		}
-		fmt.Printf("Created %s. Commit it to your private repository's default branch, then run Runquill first job from the GitHub Actions tab.\n", firstWorkflowPath)
-		return
+		os.Exit(workflowCommand(flag.Args()[1:], os.Stdout, os.Stderr))
 	}
 	if flag.Arg(0) == "wizard" {
 		if err := wizardCommand(ctx, flag.Args()[1:]); err != nil && !errors.Is(err, flag.ErrHelp) {
@@ -94,8 +88,9 @@ func main() {
 		flags.StringVar(&options.repositoryScope, "repository-scope", "", "GitHub App repository access: all (default for new setups) or selected")
 		flags.StringVar(&options.organization, "organization", "", "register the GitHub App in this organization")
 		flags.Int64Var(&options.runnerGroupID, "runner-group-id", 0, "register organization runners in this GitHub runner group (defaults to repository runners)")
+		migrate := flags.Bool("migrate", false, "also request Contents, Pull requests and Workflows write for workflow migration")
 		flags.Usage = func() {
-			fmt.Fprintln(flags.Output(), "Usage: runquill setup [--webhook-url URL] [--listen-port PORT] [--k3s] [--repository-scope all|selected] [--organization ORG [--runner-group-id ID]] [--panel [--panel-url URL]]")
+			fmt.Fprintln(flags.Output(), "Usage: runquill setup [--migrate] [--webhook-url URL] [--listen-port PORT] [--k3s] [--repository-scope all|selected] [--organization ORG [--runner-group-id ID]] [--panel [--panel-url URL]]")
 			fmt.Fprintln(flags.Output(), "Connect a GitHub App and create .env and github-app.pem in the current directory.")
 			flags.PrintDefaults()
 		}
@@ -104,7 +99,7 @@ func main() {
 			flags.Usage()
 			os.Exit(2)
 		}
-		if err := setup(ctx, os.Stdout, ".", &http.Client{Timeout: 10 * time.Second}, githubAPIBase, options); err != nil {
+		if err := setup(withSetupMigrate(ctx, *migrate), os.Stdout, ".", &http.Client{Timeout: 10 * time.Second}, githubAPIBase, options); err != nil {
 			slog.Error("runquill setup", "error", err)
 			os.Exit(1)
 		}
@@ -287,6 +282,10 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	backups, err := loadBackupScheduleConfig(os.Getenv)
+	if err != nil {
+		return err
+	}
 	api, err := cfg.github()
 	if err != nil {
 		return err
@@ -313,10 +312,19 @@ func run(ctx context.Context) error {
 		return err
 	}
 	defer q.close()
+	if err := migrateUsage(ctx, q.DB); err != nil {
+		return fmt.Errorf("migrate usage statistics: %w", err)
+	}
 	ops, err := loadOperations(ctx, q.DB, cfg, runners)
 	if err != nil {
 		return err
 	}
+	elasticConfig, err := loadElasticConfig(os.Getenv)
+	if err != nil {
+		return err
+	}
+	elastic := newElasticState(elasticConfig)
+	go runElastic(ctx, elasticDeps{Config: elasticConfig, State: elastic, Hosts: elasticHostsFrom(ops)})
 	state := ops.current.Load()
 	runners = state.runners
 	if fleet, ok := runners.runtime.(*dockerFleet); ok && len(fleet.hosts) == 1 && state.policy.Revision == 0 {
@@ -347,6 +355,7 @@ func run(ctx context.Context) error {
 			return fmt.Errorf("initialize panel access: %w", err)
 		}
 		panel = newPanel(cfg)
+		panel.elastic = elastic
 		panel.backend, panel.operations = runners.kind, ops
 		panel.snapshot.Polling = state.interval > 0
 		panelServer = panelHTTPServer(panel, access)
@@ -366,6 +375,7 @@ func run(ctx context.Context) error {
 		defer metrics.listener.Close()
 		s.metrics = &metrics.fleetMetrics
 		s.metrics.notify = notify
+		s.metrics.elastic = elastic
 	}
 	server := &http.Server{
 		Addr:              net.JoinHostPort(env("RUNQUILL_BIND", "127.0.0.1"), env("RUNQUILL_PORT", "8080")),
@@ -394,6 +404,11 @@ func run(ctx context.Context) error {
 	}
 	workerCtx, stopWorker := context.WithCancel(ctx)
 	defer stopWorker()
+	backupExit := make(chan struct{})
+	go func() {
+		defer close(backupExit)
+		runBackupSchedule(workerCtx, backupScheduleDeps{config: backups, database: env("RUNQUILL_DB", "runquill.sqlite3")})
+	}()
 	pollExit := make(chan struct{})
 	p := &poller{github: api, queue: q, cache: make(map[string]pollPage), panel: panel}
 	go func() {
@@ -445,6 +460,7 @@ func run(ctx context.Context) error {
 	}
 	<-workerExit
 	<-pollExit
+	<-backupExit
 	return serveErr
 }
 

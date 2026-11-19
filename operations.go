@@ -181,6 +181,7 @@ func (ops *operations) resolve(policy operationPolicy) (*operationState, error) 
 		if err != nil {
 			return nil, err
 		}
+		fleet.recordPrivilegeRequests(pools)
 		policy.Hosts = make([]string, len(fleet.hosts))
 		for i, host := range fleet.hosts {
 			policy.Hosts[i] = host.label()

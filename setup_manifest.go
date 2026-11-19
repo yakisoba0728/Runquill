@@ -9,9 +9,11 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -41,6 +43,7 @@ var appManifestPage = template.Must(template.New("manifest").Parse(`<!doctype ht
 {{if .Korean}}<p>GitHub에서 Runquill의 비공개 앱 등록을 승인하세요. 승인 후 이 마법사로 돌아옵니다.</p>{{else}}
 <p>Create a private GitHub App with Actions read and {{.RunnerPermission}} write permissions.
 {{if .Webhook}}GitHub will send workflow job events to your HTTPS webhook.{{else}}Runquill will discover jobs by polling GitHub.{{end}}</p>{{end}}
+{{if .Migrate}}<p>{{if .Korean}}워크플로 이전 PR을 열 수 있도록 Contents, Pull requests, Workflows 쓰기 권한도 요청합니다.{{else}}It also requests Contents, Pull requests and Workflows write access so Runquill can open workflow migration pull requests.{{end}}</p>{{end}}
 {{if .Panel}}<p>{{if .Korean}}이 앱으로 러너를 등록하고 운영 패널에 로그인합니다.{{else}}Runquill uses this app for runner registration and panel sign-in.{{end}}</p>{{end}}
 <form method="post" action="{{.Action}}?state={{.State}}">
   <input type="hidden" name="manifest" value="{{.Manifest}}">
@@ -49,6 +52,57 @@ var appManifestPage = template.Must(template.New("manifest").Parse(`<!doctype ht
 {{if .InWizard}}</div>{{end}}
 </main></body>
 </html>`))
+
+// migrationPermissions are what opening a workflow migration pull request needs.
+// They are requested only with setup --migrate, so existing installs keep their narrower grant.
+var migrationPermissions = map[string]string{"contents": "write", "pull_requests": "write", "workflows": "write"}
+
+type setupMigrateKey struct{}
+
+// withSetupMigrate opts the App manifest into migrationPermissions. It travels in the
+// context so setupOptions and the wizard, which other files own, stay unchanged.
+func withSetupMigrate(ctx context.Context, migrate bool) context.Context {
+	return context.WithValue(ctx, setupMigrateKey{}, migrate)
+}
+
+func setupMigrate(ctx context.Context) bool {
+	migrate, _ := ctx.Value(setupMigrateKey{}).(bool)
+	return migrate
+}
+
+func manifestPermissions(runnerPermission string, migrate bool) map[string]string {
+	permissions := map[string]string{"actions": "read", runnerPermission: "write"}
+	if migrate {
+		for name, level := range migrationPermissions {
+			permissions[name] = level
+		}
+	}
+	return permissions
+}
+
+// missingMigrationPermissions lists the migration permissions an installation lacks.
+func missingMigrationPermissions(inst githubInstallation) []string {
+	var missing []string
+	for _, name := range slices.Sorted(maps.Keys(migrationPermissions)) {
+		if inst.Permissions[name] != "write" {
+			missing = append(missing, name)
+		}
+	}
+	return missing
+}
+
+// migrationPermissionStatus reports which migration permissions the configured installation lacks.
+func (g *github) migrationPermissionStatus(ctx context.Context) ([]string, error) {
+	jwt, err := g.jwt(time.Now())
+	if err != nil {
+		return nil, err
+	}
+	inst, err := g.installation(ctx, jwt)
+	if err != nil {
+		return nil, err
+	}
+	return missingMigrationPermissions(inst), nil
+}
 
 func registerManifestApp(ctx context.Context, out io.Writer, client *http.Client, apiBase string, opts setupOptions) (manifestApp, error) {
 	ctx, cancel := context.WithTimeout(ctx, time.Hour)
@@ -79,10 +133,8 @@ func registerManifestApp(ctx context.Context, out io.Writer, client *http.Client
 		"redirect_url":    localURL + "/callback",
 		"public":          false,
 		"hook_attributes": map[string]any{"url": "https://example.com/webhook", "active": false},
-		"default_permissions": map[string]string{
-			"actions": "read", runnerPermission: "write",
-		},
 	}
+	fields["default_permissions"] = manifestPermissions(runnerPermission, setupMigrate(ctx))
 	if opts.webhookURL != "" {
 		fields["hook_attributes"] = map[string]any{"url": opts.webhookURL, "active": true}
 		fields["default_events"] = []string{"workflow_job"}
@@ -110,8 +162,8 @@ func registerManifestApp(ctx context.Context, out io.Writer, client *http.Client
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		page := struct {
 			Action, State, Manifest, RunnerPermission string
-			Webhook, Korean, InWizard, Panel          bool
-		}{action, state, string(manifest), permissionLabel, opts.webhookURL != "", wizardKorean(ctx), currentWizard(ctx) != nil, opts.panel}
+			Webhook, Korean, InWizard, Panel, Migrate bool
+		}{action, state, string(manifest), permissionLabel, opts.webhookURL != "", wizardKorean(ctx), currentWizard(ctx) != nil, opts.panel, setupMigrate(ctx)}
 		_ = appManifestPage.Execute(w, page)
 	})
 	mux.HandleFunc("GET /callback", func(w http.ResponseWriter, r *http.Request) {

@@ -32,13 +32,33 @@ func TestRegisterManifestApp(t *testing.T) {
 		{"organization", "team", "Organization", "/organizations/team/settings/apps/new", "administration", setupOptions{organization: "team"}},
 		{"organization group", "team", "Organization", "/organizations/team/settings/apps/new", organizationRunnerPermission, setupOptions{organization: "team", runnerGroupID: 12}},
 	} {
-		t.Run(test.name, func(t *testing.T) {
-			testRegisterManifestApp(t, test.opts, test.owner, test.accountType, test.action, test.permission)
-		})
+		for _, migrate := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s migrate=%t", test.name, migrate), func(t *testing.T) {
+				testRegisterManifestApp(t, test.opts, migrate, test.owner, test.accountType, test.action, test.permission)
+			})
+		}
 	}
 }
 
-func testRegisterManifestApp(t *testing.T, opts setupOptions, owner, accountType, action, permission string) {
+func TestMigrationPermissions(t *testing.T) {
+	if got := manifestPermissions("administration", false); !reflect.DeepEqual(got, map[string]string{"actions": "read", "administration": "write"}) {
+		t.Fatalf("default manifest permissions: %v", got)
+	}
+	if setupMigrate(t.Context()) || !setupMigrate(withSetupMigrate(t.Context(), true)) {
+		t.Fatal("the migrate opt-in must default to off and follow the context")
+	}
+	var inst githubInstallation
+	inst.Permissions = map[string]string{"contents": "read", "workflows": "write", "administration": "write"}
+	if got := missingMigrationPermissions(inst); !reflect.DeepEqual(got, []string{"contents", "pull_requests"}) {
+		t.Fatalf("missing permissions: %v", got)
+	}
+	inst.Permissions["contents"], inst.Permissions["pull_requests"] = "write", "write"
+	if got := missingMigrationPermissions(inst); len(got) != 0 {
+		t.Fatalf("missing permissions: %v", got)
+	}
+}
+
+func testRegisterManifestApp(t *testing.T, opts setupOptions, migrate bool, owner, accountType, action, permission string) {
 	converting := make(chan struct{}, 1)
 	finish := make(chan struct{})
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -59,7 +79,7 @@ func testRegisterManifestApp(t *testing.T, opts setupOptions, owner, accountType
 		fmt.Fprintf(w, `{"id":123,"slug":"runquill-test","pem":"fixture-key","owner":{"login":%q,"type":%q}}`, owner, accountType)
 	}))
 	defer api.Close()
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(withSetupMigrate(t.Context(), migrate), 5*time.Second)
 	defer cancel()
 	output := make(manifestTestOutput, 2)
 	apps := make(chan manifestApp, 1)
@@ -121,9 +141,13 @@ func testRegisterManifestApp(t *testing.T, opts setupOptions, owner, accountType
 	if err := json.Unmarshal([]byte(html.UnescapeString(field[1])), &manifest); err != nil {
 		t.Fatal(err)
 	}
+	permissions := map[string]string{"actions": "read", permission: "write"}
+	if migrate {
+		permissions["contents"], permissions["pull_requests"], permissions["workflows"] = "write", "write", "write"
+	}
 	if manifest.Public == nil || *manifest.Public || manifest.HookAttributes.Active == nil || *manifest.HookAttributes.Active ||
-		manifest.RedirectURL != browserURL+"callback" ||
-		!reflect.DeepEqual(manifest.Permissions, map[string]string{"actions": "read", permission: "write"}) {
+		manifest.RedirectURL != browserURL+"callback" || strings.Contains(page, "migration pull requests") != migrate ||
+		!reflect.DeepEqual(manifest.Permissions, permissions) {
 		t.Fatalf("unexpected App configuration: %+v", manifest)
 	}
 	callback := manifest.RedirectURL + "?" + url.Values{"code": {"test-code"}, "state": {form[1]}}.Encode()

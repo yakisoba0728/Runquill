@@ -41,6 +41,31 @@ func TestInitWorkflowWritesTemplateOnce(t *testing.T) {
 	}
 }
 
+func TestWorkflowCommand(t *testing.T) {
+	checkout := t.TempDir()
+	if err := os.Mkdir(filepath.Join(checkout, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(checkout)
+	var out, errs bytes.Buffer
+	for _, args := range [][]string{nil, {"init", "extra"}, {"unknown"}} {
+		if code := workflowCommand(args, &out, &errs); code != 2 {
+			t.Fatalf("%v: exit %d", args, code)
+		}
+	}
+	if code := workflowCommand([]string{"init"}, &out, &errs); code != 0 || !bytes.Contains(out.Bytes(), []byte(firstWorkflowPath)) {
+		t.Fatalf("init: exit %d, %s %s", code, out.String(), errs.String())
+	}
+	if code := workflowCommand([]string{"init"}, &out, &errs); code != 1 {
+		t.Fatalf("second init: exit %d", code)
+	}
+	out.Reset()
+	// The generated first job must pass its own check.
+	if code := workflowCommand([]string{"check"}, &out, &errs); code != 0 || !bytes.Contains(out.Bytes(), []byte("Checked 1 workflow files: 0 findings")) {
+		t.Fatalf("check: exit %d, %s %s", code, out.String(), errs.String())
+	}
+}
+
 func TestInitWorkflowRejectsLinkOutsideCheckout(t *testing.T) {
 	checkout, external := t.TempDir(), t.TempDir()
 	if err := os.WriteFile(filepath.Join(checkout, ".git"), []byte("gitdir: linked-worktree\n"), 0644); err != nil {

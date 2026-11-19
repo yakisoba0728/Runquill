@@ -24,7 +24,7 @@ jobs:
           - arch: arm64
             os: ubuntu-24.04-arm
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -42,10 +42,16 @@ jobs:
             --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
             --label "org.opencontainers.image.revision=$GITHUB_SHA" \
             --build-arg "VERSION=$GITHUB_REF_NAME" -t "$image:$tag" .
-          docker buildx build --platform "linux/$ARCH" --push \
-            --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
-            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
-            -t "$image-runner:$tag" runner
+          # The default runner tag is the Ubuntu 24.04 variant; other bases get a suffixed tag.
+          for os in ubuntu24.04 ubuntu22.04 debian12; do
+            suffix="-$os"
+            if [[ "$os" == ubuntu24.04 ]]; then suffix=; fi
+            docker buildx build --platform "linux/$ARCH" --push \
+              --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+              --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+              --build-arg "RUNQUILL_RUNNER_OS=$os" \
+              -t "$image-runner:$GITHUB_REF_NAME$suffix-$ARCH" runner
+          done
 
   publish:
     needs: build
@@ -61,9 +67,9 @@ jobs:
         run: |
           image="ghcr.io/${GITHUB_REPOSITORY,,}"
           printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          for target in "$image" "$image-runner"; do
-            docker buildx imagetools create -t "$target:$GITHUB_REF_NAME" \
-              "$target:$GITHUB_REF_NAME-amd64" "$target:$GITHUB_REF_NAME-arm64"
+          for tag in "$image:$GITHUB_REF_NAME" "$image-runner:$GITHUB_REF_NAME" \
+            "$image-runner:$GITHUB_REF_NAME-ubuntu22.04" "$image-runner:$GITHUB_REF_NAME-debian12"; do
+            docker buildx imagetools create -t "$tag" "$tag-amd64" "$tag-arm64"
           done
 
   release:

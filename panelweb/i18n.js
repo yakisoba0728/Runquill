@@ -171,6 +171,7 @@ const words = {
   "Scope": "권한 범위",
   "Read fleet status": "러너 상태 읽기",
   "Manage host maintenance": "워커 유지보수",
+  "Cancel and retry jobs": "작업 취소·재시도",
   "Valid for days": "유효 기간(일)",
   "Create token": "토큰 발급",
   "Copy your token now. Its value is shown once.": "토큰을 지금 복사하세요. 이 화면에서 한 번만 표시됩니다.",

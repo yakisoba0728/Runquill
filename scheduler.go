@@ -149,6 +149,10 @@ func (s *scheduler) tickFleet(ctx context.Context, now time.Time, state *operati
 			return err
 		}
 	}
+	// Usage statistics must fold finished jobs in before they are deleted.
+	if err := rollupUsage(ctx, s.queue, s.pools, now); err != nil && ctx.Err() == nil {
+		slog.Warn("roll up usage statistics", "error", err)
+	}
 	_, err = s.queue.ExecContext(ctx, "DELETE FROM jobs WHERE runner_name IS NULL AND changed_at < ?",
 		now.Add(-7*24*time.Hour).Unix())
 	if err != nil {

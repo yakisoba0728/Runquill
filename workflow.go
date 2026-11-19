@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 )
@@ -13,6 +14,23 @@ const firstWorkflowPath = ".github/workflows/runquill-first-job.yml"
 
 //go:embed examples/runquill-first-job.yml
 var firstWorkflow []byte
+
+// workflowCommand runs the workflow subcommands and returns the process exit status.
+func workflowCommand(args []string, stdout, stderr io.Writer) int {
+	switch {
+	case len(args) == 1 && args[0] == "init":
+		if err := initWorkflow("."); err != nil {
+			fmt.Fprintln(stderr, "runquill workflow init:", err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "Created %s. Commit it to your private repository's default branch, then run Runquill first job from the GitHub Actions tab.\n", firstWorkflowPath)
+		return 0
+	case len(args) > 0 && args[0] == "check":
+		return workflowCheckCommand(args[1:], ".", stdout, stderr, os.Getenv)
+	}
+	fmt.Fprintln(stderr, "Usage: runquill workflow init | runquill workflow check [--json] [--strict] [PATH...]")
+	return 2
+}
 
 func initWorkflow(dir string) error {
 	root, err := os.OpenRoot(dir)

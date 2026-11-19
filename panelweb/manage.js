@@ -325,6 +325,7 @@ export async function initializeManagement() {
   byID("mode").textContent = tr(user.role);
   byID("current-user").textContent = tr("Signed in as @{name} · {role}", { name: user.login, role: tr(user.role) });
   byID("maint-scope").disabled = user.role === "viewer";
+  byID("jobs-scope").disabled = user.role === "viewer";
   byID("signout").addEventListener("click", () => void report("host-action", async () => {
     await panelRequest("./api/logout", "POST");
     window.location.assign("./");

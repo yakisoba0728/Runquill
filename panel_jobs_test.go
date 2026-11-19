@@ -163,6 +163,14 @@ func TestPanelJobActionsAreGuardedAndAudited(t *testing.T) {
 	f.expect(f.call("POST", "/api/jobs/7/retry", "", "viewer", true), 403)
 	f.expect(f.call("POST", "/api/jobs/7/retry", "", "operator", false), 403)
 	f.expect(f.call("POST", "/api/jobs/7/cancel", "", token, false), 403)
+	// A jobs:write token may change jobs, but only for an operator or admin owner.
+	f.expect(f.call("POST", "/api/tokens", `{"name":"jobs","scope":"jobs:write","days":1}`, "viewer", true), 403)
+	rec := f.call("POST", "/api/tokens", `{"name":"jobs","scope":"jobs:write","days":1}`, "operator", true)
+	f.expect(rec, 201)
+	var jobsToken struct{ Secret string }
+	json.Unmarshal(rec.Body.Bytes(), &jobsToken)
+	f.expect(f.call("POST", "/api/hosts/cordon", `{"host":"local","cordoned":true}`, jobsToken.Secret, false), 403)
+	f.expect(f.call("POST", "/api/jobs/404/retry", "", jobsToken.Secret, false), 409)
 	f.expect(f.call("POST", "/api/jobs/7/retry", "", "operator", true), 204)
 	var retryAt int64
 	if err := f.q.QueryRow("SELECT retry_at FROM jobs WHERE job_id = 7").Scan(&retryAt); err != nil || retryAt != 0 {

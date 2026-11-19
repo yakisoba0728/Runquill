@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -130,8 +129,9 @@ func checkDockerFleet(ctx context.Context, image string, report func(string, err
 	}
 	_, limitErr := fleet.limits(os.Getenv("RUNQUILL_DOCKER_HOST_LIMITS"))
 	report("Docker host runner limits", limitErr)
-	_, poolErr := fleet.configurePools(os.Getenv("RUNQUILL_WORKER_POOLS"))
+	pools, poolErr := fleet.configurePools(os.Getenv("RUNQUILL_WORKER_POOLS"))
 	report("Docker worker pools", poolErr)
+	fleet.recordPrivilegeRequests(pools)
 	checkConfiguredDockerFleet(ctx, fleet, report)
 }
 
@@ -153,40 +153,29 @@ func checkConfiguredDockerFleet(ctx context.Context, fleet *dockerFleet, report 
 }
 
 func checkDocker(ctx context.Context, target docker, report func(string, error)) {
-	raw, err := target.command(ctx, nil, "info", "--format",
-		`{"OS":{{json .OSType}},"Arch":{{json .Architecture}},"Cgroup":{{json .CgroupVersion}},"Security":{{json .SecurityOptions}}}`)
+	host, err := target.probe(ctx)
 	if err != nil {
-		report("Docker Engine", err)
+		report("container engine", err)
 		return
 	}
-	var host struct {
-		OS, Arch, Cgroup string
-		Security         []string
+	mode := "rootful"
+	if host.Rootless {
+		mode = "rootless"
 	}
-	if err := json.Unmarshal([]byte(raw), &host); err != nil {
-		report("Docker Engine", fmt.Errorf("read Docker host properties: %w", err))
-		return
-	}
-	arch := host.Arch
-	switch arch {
-	case "x86_64":
-		arch = "amd64"
-	case "aarch64":
-		arch = "arm64"
-	}
-	rootless := slices.ContainsFunc(host.Security, func(option string) bool {
-		name, _, _ := strings.Cut(option, ",")
-		return name == "name=rootless"
-	})
-	if host.OS != "linux" || host.Cgroup != "2" || rootless || (arch != "amd64" && arch != "arm64") {
-		report("Docker Engine", fmt.Errorf("requires rootful Linux Docker on amd64 or arm64 with cgroup v2; found %s/%s, cgroup %s, rootless=%t",
-			host.OS, arch, host.Cgroup, rootless))
-	} else {
-		report("Docker Engine ("+host.OS+"/"+arch+", cgroup v2)", nil)
+	summary := fmt.Sprintf("%s %s (%s/%s, cgroup v%s, %s)", host.Engine, host.Version, host.OS, host.Arch, host.Cgroup, mode)
+	switch {
+	case host.OS != "linux" || host.Cgroup != "2" || (host.Arch != "amd64" && host.Arch != "arm64"):
+		report("container engine "+summary, fmt.Errorf("requires Linux %s on amd64 or arm64 with cgroup v2", host.Engine))
+	case host.Rootless && target.requirePrivileged && !target.unprivileged:
+		report("container engine "+summary, target.rootlessPrivilegedError(host.Engine))
+	case host.Rootless && !target.unprivileged:
+		report("container engine "+summary+"; runners start unprivileged without Docker-in-Docker", nil)
+	default:
+		report("container engine "+summary, nil)
 	}
 	imagePlatform, err := target.command(ctx, nil, "image", "inspect", target.image, "--format", "{{.Os}}/{{.Architecture}}")
-	if err == nil && strings.TrimSpace(imagePlatform) != host.OS+"/"+arch {
-		err = fmt.Errorf("image platform %s differs from Docker platform %s/%s", strings.TrimSpace(imagePlatform), host.OS, arch)
+	if err == nil && strings.TrimSpace(imagePlatform) != host.OS+"/"+host.Arch {
+		err = fmt.Errorf("image platform %s differs from %s platform %s/%s", strings.TrimSpace(imagePlatform), host.Engine, host.OS, host.Arch)
 	}
 	report("runner image "+target.image, err)
 }

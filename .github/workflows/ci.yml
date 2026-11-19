@@ -36,6 +36,14 @@ jobs:
           docker build -t runquill-manager:ci .
           docker run --rm runquill-manager:ci --version
           docker build -t runquill-runner:ci runner
+      - name: Build the other runner base variants
+        if: matrix.os == 'ubuntu-24.04'
+        run: |
+          for os in ubuntu22.04 debian12; do
+            docker build --build-arg "RUNQUILL_RUNNER_OS=$os" -t "runquill-runner:ci-$os" runner
+            docker run --rm --entrypoint bash "runquill-runner:ci-$os" -ec \
+              'test "$(id -u runner):$(id -g runner)" = 1001:1001; runuser -u runner -- ./bin/Runner.Listener --version; dockerd --version'
+          done
       - name: Exercise nested Docker
         env:
           RUNQUILL_TEST_DOCKER_IMAGE: runquill-runner:ci

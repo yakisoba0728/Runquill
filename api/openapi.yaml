@@ -1,0 +1,1321 @@
+# Hand-written description of every route the Runquill panel serves.
+# openapi_test.go checks it against the registered routes, their permissions
+# and the Go structs the handlers encode. Keep values single-line and quote any
+# value that contains ": " or starts with a YAML indicator character.
+openapi: 3.1.0
+info:
+  title: Runquill panel API
+  version: '1'
+  description: 'JSON API of the Runquill web panel. Errors are plain text (text/plain; charset=utf-8): the body is one English sentence followed by a newline. Every response carries Cache-Control no-store. A request whose Host header differs from the configured RUNQUILL_PANEL_URL host is refused with 403 before routing.'
+servers:
+  - url: '{origin}'
+    variables:
+      origin:
+        default: http://127.0.0.1:8081
+        description: The RUNQUILL_PANEL_URL origin (HTTPS, or HTTP on loopback).
+tags:
+  - name: assets
+  - name: auth
+  - name: fleet
+  - name: jobs
+  - name: hosts
+  - name: team
+  - name: tokens
+  - name: operations
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: __Host-rq_session
+      description: 'Browser session from GitHub sign-in, 12 hours. Named rq_session when the panel URL is plain HTTP on loopback. Requests other than GET and HEAD must carry an Origin header equal to the panel origin.'
+    bearerToken:
+      type: http
+      scheme: bearer
+      bearerFormat: rqk_ followed by 43 base64url characters
+      description: 'API token from POST /api/tokens. A token has exactly one scope and may call only operations whose x-runquill-permission equals that scope; the owner must still hold a role that grants it. Tokens are exempt from the Origin check.'
+  responses:
+    Unauthorized:
+      description: 'No valid session or token. Body "Sign in to Runquill."'
+      content:
+        text/plain:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: 'The role or token scope does not grant this operation ("You do not have access to this operation."), a session request lacked the panel Origin ("The request must come from the panel origin."), or the Host header is not the panel host ("Use the configured panel address.").'
+      content:
+        text/plain:
+          schema:
+            $ref: '#/components/schemas/Error'
+    AccessUnavailable:
+      description: 'The queue database could not be read ("Could not check panel access.") or the operation failed with a handler-specific message.'
+      content:
+        text/plain:
+          schema:
+            $ref: '#/components/schemas/Error'
+    BadJSON:
+      description: 'The body is not one JSON object with only the documented fields ("Invalid JSON request."), or a field value is invalid.'
+      content:
+        text/plain:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotJSON:
+      description: 'The Content-Type is not application/json. Body "Send application/json."'
+      content:
+        text/plain:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Busy:
+      description: 'Another backup or diagnosis is running. Body "Another operation is running. Try again shortly."'
+      content:
+        text/plain:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Not found. Path IDs that are not positive integers answer with the router's "404 page not found".
+      content:
+        text/plain:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: The change conflicts with the current state; the body says why.
+      content:
+        text/plain:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Asset:
+      description: Embedded panel asset.
+      content:
+        text/plain:
+          schema:
+            type: string
+  schemas:
+    Error:
+      type: string
+      description: One English sentence followed by a newline.
+      examples:
+        - "Sign in to Runquill.\n"
+    Identity:
+      type: object
+      required: [github_id, login, role]
+      properties:
+        github_id:
+          type: integer
+          format: int64
+        login:
+          type: string
+        role:
+          type: string
+          enum: [viewer, operator, admin]
+    TeamMember:
+      type: object
+      required: [github_id, login, role, disabled]
+      properties:
+        github_id:
+          type: integer
+          format: int64
+        login:
+          type: string
+          description: Empty until the member signs in or is added by login.
+        role:
+          type: string
+          enum: [viewer, operator, admin]
+        disabled:
+          type: boolean
+    TeamMemberCreate:
+      type: object
+      additionalProperties: false
+      required: [login, role]
+      properties:
+        login:
+          type: string
+          description: GitHub login, optionally prefixed with @. Organizations and bots are refused.
+        role:
+          type: string
+          enum: [viewer, operator, admin]
+    TeamMemberUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        role:
+          type: string
+          enum: [viewer, operator, admin]
+        disabled:
+          type: boolean
+          description: Disabling also deletes the member's sessions and API tokens.
+    Token:
+      type: object
+      required: [id, user_id, name, scope, expires_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        user_id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        scope:
+          $ref: '#/components/schemas/TokenScope'
+        expires_at:
+          type: integer
+          format: int64
+          description: Unix seconds.
+    TokenScope:
+      type: string
+      enum: [fleet:read, hosts:write, jobs:write]
+      description: 'fleet:read can call GET /snapshot and GET /api/jobs; hosts:write can call POST /api/hosts/cordon; jobs:write can call POST /api/jobs/{id}/cancel and POST /api/jobs/{id}/retry. hosts:write and jobs:write need an operator or admin owner.'
+    TokenCreate:
+      type: object
+      additionalProperties: false
+      required: [name, scope, days]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 80
+        scope:
+          $ref: '#/components/schemas/TokenScope'
+        days:
+          type: integer
+          minimum: 1
+          maximum: 90
+    TokenCreated:
+      description: The new token. The secret is shown only in this response.
+      allOf:
+        - $ref: '#/components/schemas/Token'
+        - type: object
+          required: [secret]
+          properties:
+            secret:
+              type: string
+              description: 'Send as "Authorization: Bearer <secret>".'
+    AuditEvent:
+      type: object
+      required: [id, actor, action, target, occurred_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        actor:
+          type: integer
+          format: int64
+          description: GitHub ID of the acting user.
+        actor_login:
+          type: string
+        action:
+          type: string
+          examples: [job.cancel, host.cordon, token.create, settings.update]
+        target:
+          type: string
+        occurred_at:
+          type: integer
+          format: int64
+          description: Unix seconds.
+    HistoryJob:
+      type: object
+      required: [id, repository, runner_label, outcome]
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: GitHub Actions job ID.
+        repository:
+          type: string
+        runner_label:
+          type: string
+        pool:
+          type: string
+        host:
+          type: string
+        outcome:
+          type: string
+          enum: [waiting, running, finished, failed]
+        failure:
+          type: string
+        retry_reason:
+          type: string
+        retry_at:
+          type: string
+          format: date-time
+        queued_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+        cleaned_at:
+          type: string
+          format: date-time
+        wait_seconds:
+          type: integer
+          format: int64
+        url:
+          type: string
+    JobHistoryPage:
+      type: object
+      required: [jobs]
+      properties:
+        jobs:
+          type: array
+          items:
+            $ref: '#/components/schemas/HistoryJob'
+        next:
+          type: integer
+          format: int64
+          description: Pass as before to read the next older page; absent on the last page.
+    Snapshot:
+      type: object
+      required: [fleet, runner_inventory, recent, poll_failed, polling, webhook, first_job_seen]
+      properties:
+        fleet:
+          description: Null until the scheduler takes its first sample.
+          oneOf:
+            - $ref: '#/components/schemas/StatusReport'
+            - type: 'null'
+        runner_inventory:
+          type: [array, 'null']
+          items:
+            $ref: '#/components/schemas/Runner'
+        recent:
+          type: [array, 'null']
+          description: Up to eight most recently cleaned jobs.
+          items:
+            $ref: '#/components/schemas/CompletedJob'
+        sampled_at:
+          type: string
+          format: date-time
+        last_webhook:
+          type: string
+          format: date-time
+        last_poll:
+          type: string
+          format: date-time
+        poll_failed:
+          type: boolean
+        polling:
+          type: boolean
+        webhook:
+          type: boolean
+        first_job_seen:
+          type: boolean
+        first_job_clean:
+          $ref: '#/components/schemas/CompletedJob'
+    StatusReport:
+      type: object
+      required: [schema_version, slot_limit, runners, hosts, jobs]
+      properties:
+        backend:
+          type: string
+        repository_scope:
+          type: string
+        schema_version:
+          type: integer
+        slot_limit:
+          type: integer
+        runners:
+          description: Null when no runner host is known.
+          oneOf:
+            - $ref: '#/components/schemas/StatusRunners'
+            - type: 'null'
+        hosts:
+          type: array
+          items:
+            $ref: '#/components/schemas/StatusHost'
+        jobs:
+          type: array
+          items:
+            $ref: '#/components/schemas/StatusJob'
+        docker_error:
+          type: string
+    StatusRunners:
+      type: object
+      required: [known_running, occupied_slots, reserved_slots, unassigned_reserved_slots, offline_hosts]
+      properties:
+        known_running:
+          type: integer
+        occupied_slots:
+          type: integer
+        reserved_slots:
+          type: integer
+        unassigned_reserved_slots:
+          type: integer
+        offline_hosts:
+          type: integer
+    StatusHost:
+      type: object
+      required: [name, status, cordoned, slot_limit, occupied_slots, reserved_slots]
+      properties:
+        name:
+          type: string
+        pool:
+          type: string
+        status:
+          type: string
+          enum: [UP, UNAVAILABLE, OFFLINE]
+        cordoned:
+          type: boolean
+        slot_limit:
+          type: integer
+        occupied_slots:
+          type: integer
+        reserved_slots:
+          type: integer
+        error:
+          type: string
+    StatusJob:
+      type: object
+      required: [id, repository, status]
+      properties:
+        id:
+          type: integer
+          format: int64
+        repository:
+          type: string
+        status:
+          type: string
+          examples: [WAITING, RETRY, STARTING, RUNNING, PAUSED, CLEANUP, OFFLINE, UNKNOWN]
+        queue_position:
+          type: integer
+        retry_at:
+          type: string
+          format: date-time
+        retry_reason:
+          type: string
+        runner:
+          type: string
+        runner_label:
+          type: string
+        diagnostic:
+          $ref: '#/components/schemas/JobDiagnostic'
+        runner_host:
+          type: string
+        pool:
+          type: string
+        pool_error:
+          type: string
+        url:
+          type: string
+        timing:
+          $ref: '#/components/schemas/JobTiming'
+    JobTiming:
+      type: object
+      properties:
+        github_created_at:
+          type: string
+          format: date-time
+        discovered_at:
+          type: string
+          format: date-time
+        discovery_source:
+          type: string
+        provisioned_at:
+          type: string
+          format: date-time
+        github_started_at:
+          type: string
+          format: date-time
+        creation_to_discovery_seconds:
+          type: integer
+          format: int64
+        runquill_queue_seconds:
+          type: integer
+          format: int64
+        provision_to_start_seconds:
+          type: integer
+          format: int64
+    JobDiagnostic:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+    Runner:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        host:
+          type: string
+        pool:
+          type: string
+        runtime_state:
+          type: string
+        job_id:
+          type: integer
+          format: int64
+    CompletedJob:
+      type: object
+      required: [id, repository, cleaned_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        repository:
+          type: string
+        runner_host:
+          type: string
+        pool:
+          type: string
+        url:
+          type: string
+        timing:
+          $ref: '#/components/schemas/JobTiming'
+        finished_at:
+          type: string
+          format: date-time
+        cleaned_at:
+          type: [string, 'null']
+          format: date-time
+    CordonRequest:
+      type: object
+      additionalProperties: false
+      required: [host, cordoned]
+      properties:
+        host:
+          type: string
+          description: A host name from GET /snapshot fleet.hosts.
+        cordoned:
+          type: boolean
+    DiagnoseRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        repository:
+          type: string
+          description: Optional owner/name to include in the report.
+    DiagnoseReport:
+      type: object
+      required: [ok, report]
+      properties:
+        ok:
+          type: boolean
+        report:
+          type: string
+    OperationSettings:
+      type: object
+      required: [backend, webhook_enabled, policy]
+      properties:
+        backend:
+          type: string
+        webhook_enabled:
+          type: boolean
+        policy:
+          $ref: '#/components/schemas/OperationPolicy'
+    OperationPolicy:
+      type: object
+      additionalProperties: false
+      required: [revision, slot_limit, poll_interval, runner_image, docker_hosts, host_limits, worker_pools]
+      properties:
+        revision:
+          type: integer
+          format: int64
+          description: Send the revision you read; a stale revision answers 409.
+        slot_limit:
+          type: integer
+        poll_interval:
+          type: string
+          description: Go duration such as 30s.
+        runner_image:
+          type: string
+        docker_hosts:
+          type: [array, 'null']
+          items:
+            type: string
+        host_limits:
+          type: [object, 'null']
+          additionalProperties:
+            type: integer
+        worker_pools:
+          type: [object, 'null']
+          additionalProperties:
+            $ref: '#/components/schemas/WorkerPool'
+    WorkerPool:
+      type: object
+      additionalProperties: false
+      required: [hosts, repositories, cpus, memory_mib, image]
+      properties:
+        hosts:
+          type: [array, 'null']
+          items:
+            type: string
+        repositories:
+          type: [array, 'null']
+          items:
+            type: string
+        cpus:
+          type: number
+        memory_mib:
+          type: integer
+          format: int64
+        image:
+          type: string
+        privileged:
+          type: boolean
+        cache:
+          type: boolean
+        max_per_repository:
+          type: integer
+paths:
+  /:
+    get:
+      operationId: getPanelPage
+      tags: [assets]
+      summary: Panel HTML page.
+      x-runquill-permission: public
+      security: []
+      responses:
+        '200':
+          description: The panel page.
+          content:
+            text/html:
+              schema:
+                type: string
+  /panel.css:
+    get:
+      operationId: getPanelCSS
+      tags: [assets]
+      x-runquill-permission: public
+      security: []
+      responses:
+        '200':
+          $ref: '#/components/responses/Asset'
+  /panel.js:
+    get:
+      operationId: getPanelJS
+      tags: [assets]
+      x-runquill-permission: public
+      security: []
+      responses:
+        '200':
+          $ref: '#/components/responses/Asset'
+  /i18n.js:
+    get:
+      operationId: getI18nJS
+      tags: [assets]
+      x-runquill-permission: public
+      security: []
+      responses:
+        '200':
+          $ref: '#/components/responses/Asset'
+  /manage.js:
+    get:
+      operationId: getManageJS
+      tags: [assets]
+      summary: Management script, served only by a live panel.
+      x-runquill-permission: public
+      security: []
+      responses:
+        '200':
+          $ref: '#/components/responses/Asset'
+  /demo.js:
+    get:
+      operationId: getDemoJS
+      tags: [assets]
+      summary: Example data script, served only by runquill panel --demo.
+      x-runquill-permission: public
+      security: []
+      responses:
+        '200':
+          $ref: '#/components/responses/Asset'
+  /auth/github:
+    get:
+      operationId: startGitHubSignIn
+      tags: [auth]
+      summary: Starts GitHub OAuth with PKCE and sets the short-lived rq_oauth state cookie.
+      x-runquill-permission: public
+      security: []
+      responses:
+        '302':
+          description: Redirect to github.com/login/oauth/authorize.
+        '429':
+          description: 'Body "Too many sign-in attempts. Try again later."'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /auth/github/callback:
+    get:
+      operationId: finishGitHubSignIn
+      tags: [auth]
+      summary: GitHub OAuth callback; on success sets the session cookie.
+      x-runquill-permission: public
+      security: []
+      parameters:
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: code
+          in: query
+          required: true
+          schema:
+            type: string
+            maxLength: 512
+      responses:
+        '303':
+          description: Signed in; redirect to /.
+        '400':
+          description: 'State missing or expired ("Sign-in expired. Return to the panel and try again." or "Sign-in expired or cancelled. Return to the panel and try again.").'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 'Body "Your GitHub account is not enrolled in this Runquill panel."'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: 'Body "Could not verify the GitHub login. Try again."'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 'Body "Could not start a panel session."'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/me:
+    get:
+      operationId: getMe
+      tags: [auth]
+      summary: The signed-in user.
+      x-runquill-permission: browser
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: Current identity.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Identity'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/AccessUnavailable'
+  /api/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: Ends the session and clears its cookie. Audited as session.logout.
+      x-runquill-permission: browser
+      security:
+        - sessionCookie: []
+      responses:
+        '204':
+          description: Signed out.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          description: 'Body "Could not end the session." or "Could not check panel access."'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/team:
+    get:
+      operationId: listTeam
+      tags: [team]
+      x-runquill-permission: admin
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: All enrolled members ordered by GitHub ID.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TeamMember'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/AccessUnavailable'
+    post:
+      operationId: addTeamMember
+      tags: [team]
+      summary: Enrolls or re-enables a member by GitHub login. Audited as user.set.ROLE.
+      x-runquill-permission: admin
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TeamMemberCreate'
+      responses:
+        '200':
+          description: The member as stored.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeamMember'
+        '400':
+          $ref: '#/components/responses/BadJSON'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: 'Body "No GitHub user has this login."'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/NotJSON'
+        '502':
+          description: 'Body "Could not look up the GitHub account. Try again or enter the numeric ID."'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          $ref: '#/components/responses/AccessUnavailable'
+  /api/team/{id}:
+    put:
+      operationId: setTeamMember
+      tags: [team]
+      summary: Sets a member's role and disabled flag, creating the row if needed. Audited as user.set.ROLE or user.disable.
+      x-runquill-permission: admin
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: GitHub account ID.
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TeamMemberUpdate'
+      responses:
+        '204':
+          description: Updated.
+        '400':
+          $ref: '#/components/responses/BadJSON'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: 'Body "At least one active administrator is required."'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '415':
+          $ref: '#/components/responses/NotJSON'
+        '503':
+          $ref: '#/components/responses/AccessUnavailable'
+  /api/tokens:
+    get:
+      operationId: listTokens
+      tags: [tokens]
+      summary: Unexpired tokens, newest first, at most 100. Administrators see every member's tokens.
+      x-runquill-permission: browser
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: Tokens without secrets.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Token'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/AccessUnavailable'
+    post:
+      operationId: createToken
+      tags: [tokens]
+      summary: Creates an API token for the signed-in user. Audited as token.create.
+      x-runquill-permission: browser
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenCreate'
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenCreated'
+        '400':
+          description: 'Body "Invalid JSON request." or "Use a token name and an expiry between 1 and 90 days."'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: 'Body "Choose a token scope that your role permits.", "Your panel permissions changed. Reload and try again.", or a generic Forbidden message.'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '415':
+          $ref: '#/components/responses/NotJSON'
+        '503':
+          $ref: '#/components/responses/AccessUnavailable'
+  /api/tokens/{id}:
+    delete:
+      operationId: revokeToken
+      tags: [tokens]
+      summary: Revokes one of your tokens (administrators may revoke any). Audited as token.revoke.
+      x-runquill-permission: browser
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        '204':
+          description: Revoked.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/AccessUnavailable'
+  /api/audit:
+    get:
+      operationId: listAudit
+      tags: [operations]
+      summary: Audit log, newest first.
+      x-runquill-permission: admin
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: action
+          in: query
+          description: Exact action, or a prefix when it ends with a dot (user.). At most 64 bytes.
+          schema:
+            type: string
+            maxLength: 64
+        - name: actor
+          in: query
+          description: Numeric GitHub ID or login, optionally prefixed with @.
+          schema:
+            type: string
+            maxLength: 100
+        - name: limit
+          in: query
+          description: Page size; values above 200 are reduced to 200.
+          schema:
+            type: integer
+            minimum: 1
+            default: 50
+        - name: before
+          in: query
+          description: Return entries with an id below this one.
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        '200':
+          description: Audit entries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AuditEvent'
+        '400':
+          description: 'Body "Use a valid audit filter and page."'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/AccessUnavailable'
+  /api/backup:
+    post:
+      operationId: downloadBackup
+      tags: [operations]
+      summary: Streams a consistent SQLite copy of the queue database. Audited as queue.backup. Range requests are honoured.
+      x-runquill-permission: admin
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: The backup file runquill-queue-backup.sqlite3.
+          content:
+            application/vnd.sqlite3:
+              schema:
+                type: string
+                contentMediaType: application/vnd.sqlite3
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: 'Generic Forbidden, or "Could not authorize the backup download." when the role changed during the copy.'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/Busy'
+        '503':
+          description: 'Body "Could not prepare the queue backup.", "Could not create the queue backup.", "Could not open the backup." or "Could not check panel access."'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/diagnose:
+    post:
+      operationId: diagnose
+      tags: [operations]
+      summary: Runs the same checks as runquill diagnose, limited to 8 seconds.
+      x-runquill-permission: admin
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DiagnoseRequest'
+      responses:
+        '200':
+          description: The report; ok is false when a check failed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiagnoseReport'
+        '400':
+          $ref: '#/components/responses/BadJSON'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '415':
+          $ref: '#/components/responses/NotJSON'
+        '429':
+          $ref: '#/components/responses/Busy'
+        '503':
+          $ref: '#/components/responses/AccessUnavailable'
+  /api/settings:
+    get:
+      operationId: getSettings
+      tags: [operations]
+      summary: Effective operation settings. Registered only when the manager runs with editable operations.
+      x-runquill-permission: admin
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: Settings.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationSettings'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/AccessUnavailable'
+    put:
+      operationId: saveSettings
+      tags: [operations]
+      summary: Replaces the operation policy (body at most 64 KiB). Audited as settings.update with a change summary.
+      x-runquill-permission: admin
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperationPolicy'
+      responses:
+        '200':
+          description: The saved settings with the new revision.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationSettings'
+        '400':
+          description: Invalid JSON or a policy validation message.
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: 'Stale revision ("Settings were changed in another session. Reload them and try again."), a concurrent update, or a worker that is still in use.'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '415':
+          $ref: '#/components/responses/NotJSON'
+        '503':
+          description: 'Body "Could not save operation settings." or "Could not check panel access."'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/jobs:
+    get:
+      operationId: listJobs
+      tags: [jobs]
+      summary: Job history, newest first. Finished rows are kept for seven days.
+      x-runquill-permission: fleet:read
+      security:
+        - sessionCookie: []
+        - bearerToken: []
+      parameters:
+        - name: repository
+          in: query
+          description: owner/name, matched case-insensitively.
+          schema:
+            type: string
+        - name: outcome
+          in: query
+          schema:
+            type: string
+            enum: [waiting, running, finished, failed]
+        - name: since
+          in: query
+          description: Unix seconds; only jobs queued at or after this time.
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+        - name: until
+          in: query
+          description: Unix seconds; only jobs queued before this time.
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+        - name: before
+          in: query
+          description: Cursor from next.
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+        - name: limit
+          in: query
+          description: Page size; values above 100 are reduced to 100.
+          schema:
+            type: integer
+            minimum: 1
+            default: 50
+      responses:
+        '200':
+          description: One page.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobHistoryPage'
+        '400':
+          description: 'Body "Use a valid repository, outcome, time range, and page."'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/AccessUnavailable'
+  /api/jobs/{id}/cancel:
+    post:
+      operationId: cancelJob
+      tags: [jobs]
+      summary: Fails a job that is still waiting for a runner. Audited as job.cancel.
+      x-runquill-permission: jobs:write
+      security:
+        - bearerToken: []
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: GitHub Actions job ID.
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        '204':
+          description: Cancelled.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: 'Body "This job is no longer waiting for a runner."'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 'Body "Could not update the job." or "Could not check panel access."'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/jobs/{id}/retry:
+    post:
+      operationId: retryJob
+      tags: [jobs]
+      summary: Clears a waiting job's retry delay. Audited as job.retry.
+      x-runquill-permission: jobs:write
+      security:
+        - bearerToken: []
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: GitHub Actions job ID.
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        '204':
+          description: The next scheduler pass may start the job.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: 'Body "This job is no longer waiting for a runner." or "This job has no retry delay to clear."'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 'Body "Could not update the job." or "Could not check panel access."'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/hosts/cordon:
+    post:
+      operationId: setHostCordon
+      tags: [hosts]
+      summary: Pauses or resumes new assignments to a host. Audited as host.cordon or host.uncordon.
+      x-runquill-permission: hosts:write
+      security:
+        - sessionCookie: []
+        - bearerToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CordonRequest'
+      responses:
+        '204':
+          description: Updated.
+        '400':
+          description: 'Body "Invalid JSON request." or "Choose a host and maintenance state."'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: 'Body "This host has no current observation."'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '415':
+          $ref: '#/components/responses/NotJSON'
+        '503':
+          description: 'Body "Could not update the host." or "Could not check panel access."'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /snapshot:
+    get:
+      operationId: getSnapshot
+      tags: [fleet]
+      summary: Latest fleet sample taken by the scheduler.
+      x-runquill-permission: fleet:read
+      security:
+        - sessionCookie: []
+        - bearerToken: []
+      responses:
+        '200':
+          description: Snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Snapshot'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/AccessUnavailable'

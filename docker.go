@@ -58,13 +58,21 @@ type docker struct {
 	// unprivileged runs plain runners as UID 1001 without Docker-in-Docker; the zero value keeps --privileged.
 	unprivileged bool
 	cache        bool
+	// requirePrivileged records an explicit "privileged": true, which a rootless engine rejects.
+	requirePrivileged bool
+	engine            *containerEngine // nil uses RUNQUILL_CONTAINER_ENGINE
+	security          *engineSecurity
 }
 
 func (d docker) command(ctx context.Context, input []byte, args ...string) (string, error) {
-	if d.host == "" {
-		return dockerCommand(ctx, input, args...)
+	engine, err := d.containerEngine()
+	if err != nil {
+		return "", err
 	}
-	output, err := dockerCommand(ctx, input, append([]string{"--host", d.host}, args...)...)
+	if d.host == "" {
+		return engineCommand(ctx, engine.name, input, args...)
+	}
+	output, err := engineCommand(ctx, engine.name, input, append(engine.remoteArgs(d.host), args...)...)
 	if err != nil {
 		return "", fmt.Errorf("%s on %s: %w", args[0], d.host, err)
 	}
@@ -72,9 +80,13 @@ func (d docker) command(ctx context.Context, input []byte, args ...string) (stri
 }
 
 func dockerCommand(ctx context.Context, input []byte, args ...string) (string, error) {
+	return engineCommand(ctx, "docker", input, args...)
+}
+
+func engineCommand(ctx context.Context, binary string, input []byte, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.WaitDelay = time.Second
 	if input != nil {
 		cmd.Stdin = bytes.NewReader(input)
@@ -86,7 +98,7 @@ func dockerCommand(ctx context.Context, input []byte, args ...string) (string, e
 		return "", ctx.Err()
 	}
 	if err != nil {
-		return "", fmt.Errorf("docker %s: %w: %s", args[0], err, strings.TrimSpace(stderr.String()))
+		return "", fmt.Errorf("%s %s: %w: %s", binary, args[0], err, strings.TrimSpace(stderr.String()))
 	}
 	return string(result), nil
 }
@@ -114,18 +126,27 @@ func (d docker) containers(ctx context.Context) (map[string]string, error) {
 	return states, nil
 }
 
-func (d docker) start(ctx context.Context, name, jit string) error {
-	args := []string{"create", "--name", name, "--label", runnerLabel,
-		"--pull", "never", "--init", "--cgroupns", "private", "--log-driver", "json-file",
-		"--log-opt", "max-size=10m", "--log-opt", "max-file=2"}
+// runnerCreate is the engine argv and credential layout for one runner, built without side effects.
+type runnerCreate struct {
+	volume   []string // run first when the engine cannot label a volume from --mount
+	create   []string
+	jitPath  string
+	jitOwner int
+	dirs     []string
+}
+
+func (d docker) createPlan(engine *containerEngine, name, cacheVolume string, unprivileged bool) runnerCreate {
+	plan := runnerCreate{jitPath: "run/runquill-jit"}
+	args := []string{"create", "--name", name, "--label", runnerLabel, "--pull", "never", "--init", "--cgroupns", "private"}
+	args = append(args, engine.logArgs...)
 	if d.worker != "" {
 		args = append(args, "--label", workerLabel+"="+d.worker)
 	}
-	jitPath, jitOwner := "run/runquill-jit", 0
-	if d.unprivileged {
-		jitPath, jitOwner = "run/runquill/jit", runnerUID
+	if unprivileged {
+		plan.jitPath, plan.jitOwner = "run/runquill/jit", runnerUID
 		args = append(args, "--user", "1001:1001", "--security-opt", "no-new-privileges", "--cap-drop", "ALL",
-			"--env", "RUNQUILL_RUNNER_MODE=plain", "--env", "RUNQUILL_JIT_FILE=/"+jitPath)
+			"--env", "RUNQUILL_RUNNER_MODE=plain", "--env", "RUNQUILL_JIT_FILE=/"+plan.jitPath)
+		plan.dirs = append(plan.dirs, "run/runquill/")
 	} else {
 		args = append(args, "--privileged")
 	}
@@ -136,32 +157,54 @@ func (d docker) start(ctx context.Context, name, jit string) error {
 		memory := strconv.FormatInt(d.memoryMiB, 10) + "m"
 		args = append(args, "--memory", memory, "--memory-swap", memory)
 	}
-	var dirs []string
-	if d.unprivileged {
-		dirs = append(dirs, "run/runquill/")
-	}
-	if d.cache {
-		volume, err := runnerCacheVolume(ctx)
-		if err != nil {
-			return err
-		}
+	if cacheVolume != "" {
 		// Named volumes survive "rm -v", so the cache outlives each ephemeral runner.
-		args = append(args, "--mount", "type=volume,src="+volume+",dst="+runnerCachePath+",volume-label=io.runquill.cache=1")
-		dirs = append(dirs, runnerCachePath[1:]+"/") // a new volume's root is owned by root
+		mount := "type=volume,src=" + cacheVolume + ",dst=" + runnerCachePath
+		if engine.mountLabelsVolume {
+			mount += ",volume-label=io.runquill.cache=1"
+		} else {
+			plan.volume = []string{"volume", "create", "--ignore", "--label", "io.runquill.cache=1", cacheVolume}
+		}
+		args = append(args, "--mount", mount)
+		plan.dirs = append(plan.dirs, runnerCachePath[1:]+"/") // a new volume's root is owned by root
 	}
-	_, err := d.command(ctx, nil, append(args, d.image)...)
+	plan.create = append(args, d.image)
+	return plan
+}
+
+func (d docker) start(ctx context.Context, name, jit string) error {
+	engine, err := d.containerEngine()
 	if err != nil {
 		return err
 	}
-	// Copy the JIT credential without exposing it in Docker's command or environment metadata.
+	unprivileged, err := d.runnerMode(ctx)
+	if err != nil {
+		return err
+	}
+	var volume string
+	if d.cache {
+		if volume, err = runnerCacheVolume(ctx); err != nil {
+			return err
+		}
+	}
+	plan := d.createPlan(engine, name, volume, unprivileged)
+	if plan.volume != nil {
+		if _, err := d.command(ctx, nil, plan.volume...); err != nil {
+			return err
+		}
+	}
+	if _, err := d.command(ctx, nil, plan.create...); err != nil {
+		return err
+	}
+	// Copy the JIT credential without exposing it in the engine's command or environment metadata.
 	var archive bytes.Buffer
 	tw := tar.NewWriter(&archive)
-	for _, dir := range dirs {
+	for _, dir := range plan.dirs {
 		if err := tw.WriteHeader(&tar.Header{Name: dir, Typeflag: tar.TypeDir, Mode: 0700, Uid: runnerUID, Gid: runnerUID}); err != nil {
 			return err
 		}
 	}
-	if err := tw.WriteHeader(&tar.Header{Name: jitPath, Mode: 0600, Size: int64(len(jit)), Uid: jitOwner, Gid: jitOwner}); err != nil {
+	if err := tw.WriteHeader(&tar.Header{Name: plan.jitPath, Mode: 0600, Size: int64(len(jit)), Uid: plan.jitOwner, Gid: plan.jitOwner}); err != nil {
 		return err
 	}
 	if _, err := tw.Write([]byte(jit)); err != nil {

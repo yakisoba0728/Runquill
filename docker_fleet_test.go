@@ -25,7 +25,12 @@ state=
 if [ "$host" != local ]; then state=$FLEET_TEST_WORKER_STATE; fi
 if [ "$state" = offline ]; then exit 1; fi
 case "$1" in
-  info) if [ "$state" = duplicate-engine ]; then echo local; else printf '%s\n' "$host"; fi ;;
+  info)
+    if [ "$3" = '{{json .}}' ]; then
+      security='"name=seccomp,profile=builtin"'
+      if [ "${FLEET_TEST_ROOTLESS:-}" = "$host" ]; then security="$security,\"name=rootless\""; fi
+      printf '{"ServerVersion":"29.0.0","OSType":"linux","Architecture":"x86_64","CgroupVersion":"2","SecurityOptions":[%s]}\n' "$security"
+    elif [ "$state" = duplicate-engine ]; then echo local; else printf '%s\n' "$host"; fi ;;
   ps)
     if [ "$host" = local ] || [ "$state" = duplicate-runner ]; then
       printf 'existing\trunning\n'

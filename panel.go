@@ -49,6 +49,7 @@ type panelState struct {
 	backend         string
 	repositoryScope string
 	operations      *operations
+	elastic         *elasticState
 }
 
 func newPanel(cfg config) *panelState {
@@ -194,6 +195,7 @@ func panelHandler(panel *panelState, access *panelAccess) http.Handler {
 	} else if access != nil {
 		mux.Handle("GET /manage.js", files)
 		access.register(mux, panel)
+		registerElasticRoutes(mux, access, panel.elastic)
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host, _, err := net.SplitHostPort(r.Host)

@@ -39,25 +39,60 @@ var queueBackupTables = []struct {
 func runQueueBackup(ctx context.Context, out io.Writer, command string, args []string) error {
 	flags := flag.NewFlagSet("runquill "+command, flag.ExitOnError)
 	path := env("RUNQUILL_DB", "runquill.sqlite3")
+	passphraseFile := flags.String("passphrase-file", "", "read the backup passphrase from this file instead of RUNQUILL_BACKUP_PASSPHRASE")
 	if command == "backup" {
 		destination := flags.String("output", "", "write a new private SQLite queue backup")
+		seal := flags.Bool("seal", false, "encrypt the backup with the backup passphrase")
+		upload := flags.Bool("upload", false, "upload the backup to the configured S3-compatible bucket")
 		flags.Parse(args)
-		if *destination == "" || flags.NArg() != 0 {
-			return errors.New("usage: runquill backup --output FILE")
+		if (*destination == "" && !*upload) || flags.NArg() != 0 || (*passphraseFile != "" && !*seal) {
+			return errors.New("usage: runquill backup --output FILE [--seal [--passphrase-file FILE]] or runquill backup --upload [--output FILE] [--seal [--passphrase-file FILE]]")
 		}
-		return backupQueue(ctx, out, path, *destination)
+		if *upload {
+			return uploadBackupCommand(ctx, out, path, *destination, *seal, *passphraseFile)
+		}
+		if !*seal {
+			return backupQueue(ctx, out, path, *destination)
+		}
+		return sealedBackupCommand(ctx, out, path, *destination, *passphraseFile)
 	}
 
 	source := flags.String("from", "", "prepare a recovery queue from this backup")
+	remote := flags.String("from-s3", "", "prepare a recovery queue from this backup in the configured S3-compatible bucket")
 	activate := flags.Bool("activate", false, "lift the recovery fence after stopping the previous fleet and checking its runners")
 	flags.Parse(args)
-	if flags.NArg() != 0 || *activate == (*source != "") {
-		return errors.New("usage: runquill restore --from FILE or runquill restore --activate")
+	chosen := 0
+	for _, set := range []bool{*source != "", *remote != "", *activate} {
+		if set {
+			chosen++
+		}
+	}
+	if flags.NArg() != 0 || chosen != 1 || (*activate && *passphraseFile != "") {
+		return errors.New("usage: runquill restore --from FILE [--passphrase-file FILE], runquill restore --from-s3 KEY [--passphrase-file FILE] or runquill restore --activate")
 	}
 	if *activate {
 		return activateQueue(ctx, out, path)
 	}
-	return restoreQueue(ctx, out, *source, path)
+	if *remote != "" {
+		return restoreFromS3Command(ctx, out, *remote, path, *passphraseFile)
+	}
+	return restoreQueueFrom(ctx, out, *source, path, *passphraseFile)
+}
+
+func sealedBackupCommand(ctx context.Context, out io.Writer, source, destination, passphraseFile string) error {
+	identity, err := currentQueueBackupIdentity()
+	if err != nil {
+		return err
+	}
+	passphrase, err := backupPassphrase(os.Getenv, passphraseFile)
+	if err != nil {
+		return err
+	}
+	if err := sealedQueueBackup(ctx, source, destination, identity, passphrase); err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(out, "Created sealed Runquill queue backup %s.\n", destination)
+	return err
 }
 
 func backupQueue(ctx context.Context, out io.Writer, source, destination string) error {
@@ -73,6 +108,12 @@ func backupQueue(ctx context.Context, out io.Writer, source, destination string)
 }
 
 func restoreQueue(ctx context.Context, out io.Writer, source, destination string) error {
+	return restoreQueueFrom(ctx, out, source, destination, "")
+}
+
+// restoreQueueFrom accepts a plain or sealed backup. A sealed one is fully
+// authenticated into a private temporary file before the restore starts.
+func restoreQueueFrom(ctx context.Context, out io.Writer, source, destination, passphraseFile string) error {
 	identity, err := currentQueueBackupIdentity()
 	if err != nil {
 		return err
@@ -86,6 +127,32 @@ func restoreQueue(ctx context.Context, out io.Writer, source, destination string
 		return err
 	}
 	defer lock.Close()
+	sealed, err := isSealedBackup(source)
+	if err != nil {
+		return err
+	}
+	if sealed {
+		passphrase, err := backupPassphrase(os.Getenv, passphraseFile)
+		if err != nil {
+			return err
+		}
+		if len(passphrase) == 0 {
+			return errSealPassphrase
+		}
+		if err := checkNewQueuePath(path); err != nil {
+			return err
+		}
+		staging, err := os.MkdirTemp(filepath.Dir(path), ".runquill-unseal-*")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(staging)
+		plain := filepath.Join(staging, "queue.sqlite3")
+		if err := unsealFileTo(ctx, source, plain, passphrase); err != nil {
+			return err
+		}
+		source = plain
+	}
 	if err := publishQueueCopy(ctx, source, path, identity, queueFencedID); err != nil {
 		return err
 	}
@@ -192,7 +259,7 @@ func copyQueueFile(ctx context.Context, source, target string, identity queueBac
 		return err
 	}
 	if artifactID == queueFencedID {
-		if err := validateQueueArchive(ctx, tx, sourceID, identity); err != nil {
+		if err := validateQueueArchive(ctx, tx, "source", sourceID, identity); err != nil {
 			return err
 		}
 	} else if sourceID != 0 {
@@ -272,25 +339,55 @@ func copyQueueTable(ctx context.Context, tx *sql.Tx, name string, columns []stri
 	return err
 }
 
-func validateQueueArchive(ctx context.Context, tx *sql.Tx, sourceID int, identity queueBackupIdentity) error {
+// validateQueueArchive checks the archive attached as schema ("source" or "main").
+func validateQueueArchive(ctx context.Context, tx *sql.Tx, schema string, sourceID int, identity queueBackupIdentity) error {
 	if sourceID != queueArchiveID {
 		return errors.New("input is not a Runquill queue backup")
 	}
 	var format int
-	if err := tx.QueryRowContext(ctx, "PRAGMA source.user_version").Scan(&format); err != nil {
+	if err := tx.QueryRowContext(ctx, "PRAGMA "+schema+".user_version").Scan(&format); err != nil {
 		return err
 	}
 	if format != queueBackupV1 {
 		return fmt.Errorf("unsupported Runquill queue backup version %d", format)
 	}
 	var check string
-	if err := tx.QueryRowContext(ctx, "PRAGMA source.integrity_check(1)").Scan(&check); err != nil {
+	if err := tx.QueryRowContext(ctx, "PRAGMA "+schema+".integrity_check(1)").Scan(&check); err != nil {
 		return err
 	}
 	if check != "ok" {
 		return errors.New("queue backup failed the SQLite integrity check")
 	}
-	return checkQueueBackupIdentity(ctx, tx, "source", identity)
+	return checkQueueBackupIdentity(ctx, tx, schema, identity)
+}
+
+// verifyQueueBackup applies the restore checks to a finished backup file.
+func verifyQueueBackup(ctx context.Context, path string, identity queueBackupIdentity) error {
+	if err := validateQueueFile(path); err != nil {
+		return err
+	}
+	db, err := openQueueDB(path, "ro")
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	if _, err := db.ExecContext(ctx, "PRAGMA trusted_schema=OFF"); err != nil {
+		return err
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var id int
+	if err := tx.QueryRowContext(ctx, "PRAGMA main.application_id").Scan(&id); err != nil {
+		return fmt.Errorf("verify queue backup: %w", err)
+	}
+	if err := validateQueueArchive(ctx, tx, "main", id, identity); err != nil {
+		return fmt.Errorf("verify queue backup: %w", err)
+	}
+	return nil
 }
 
 func currentQueueBackupIdentity() (queueBackupIdentity, error) {

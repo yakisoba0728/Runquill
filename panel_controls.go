@@ -46,11 +46,8 @@ func panelPermission(user panelIdentity, required string) bool {
 	switch required {
 	case "fleet:read", "browser":
 		return true
-	case "hosts:write":
+	case "hosts:write", "jobs:write":
 		return user.Role == "operator" || user.Role == "admin"
-	case "jobs:write":
-		// No token scope grants job changes; they need a signed-in operator.
-		return user.Scope == "" && (user.Role == "operator" || user.Role == "admin")
 	case "admin":
 		return user.Role == "admin"
 	default:
@@ -94,6 +91,10 @@ func (a *panelAccess) register(mux *http.ServeMux, panel *panelState) {
 		panel.mu.RUnlock()
 		panelJSON(w, http.StatusOK, snapshot)
 	}))
+	registerEventRoutes(mux, a, panel)
+	registerUsageRoutes(mux, a, panel.usagePools)
+	registerMigrateRoutes(mux, a, migrateDeps{})
+	registerRunnerLogRoutes(mux, a)
 }
 
 func panelJSON(w http.ResponseWriter, status int, value any) {
@@ -282,7 +283,7 @@ func (a *panelAccess) createToken(w http.ResponseWriter, r *http.Request, user p
 		http.Error(w, "Use a token name and an expiry between 1 and 90 days.", http.StatusBadRequest)
 		return
 	}
-	if (input.Scope != "fleet:read" && input.Scope != "hosts:write") || !panelPermission(user, input.Scope) {
+	if (input.Scope != "fleet:read" && input.Scope != "hosts:write" && input.Scope != "jobs:write") || !panelPermission(user, input.Scope) {
 		http.Error(w, "Choose a token scope that your role permits.", http.StatusForbidden)
 		return
 	}
