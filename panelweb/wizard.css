@@ -205,7 +205,6 @@ main:focus { outline: none; }
 .detail-line > summary::before { width: 6px; height: 6px; }
 .detail-line > code { display: block; margin-top: 8px; padding: 8px 10px; font-size: 12.5px; line-height: 19px; }
 
-.confirm { display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--muted); }
 .tick {
   flex: none; display: inline-grid; place-items: center;
   width: 20px; height: 20px; border-radius: 50%; background: var(--ok);
@@ -300,44 +299,6 @@ details.advanced > summary:hover { color: var(--accent); }
 
 .facts { display: grid; gap: 8px; padding-left: 16px; border-left: 2px solid var(--border); color: var(--muted); }
 
-/* Numbered instructions */
-
-.howto { display: grid; gap: 14px; counter-reset: howto; }
-.howto li { position: relative; display: grid; gap: 10px; justify-items: start; padding-left: 40px; counter-increment: howto; }
-.howto li::before {
-  content: counter(howto); position: absolute; left: 0; top: 0;
-  display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%;
-  border: 1.5px solid var(--border-strong); font-size: 12px; font-weight: 600; color: var(--muted);
-}
-
-/* Deployment stages: the same node language as the step rail, one row per
-   stage. The running stage is the single moving thing on the page. */
-
-.stages { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-.stages li {
-  display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; column-gap: 14px;
-  padding: 14px 18px; color: var(--muted);
-}
-.stages li + li { border-top: 1px solid var(--border); }
-.stages .node { width: 22px; height: 22px; background: transparent; transition: background-color 200ms ease, border-color 200ms ease; }
-.stages [data-state="ok"] > .node { background: var(--ok); }
-.stages [data-state="failed"] > .node { background: var(--failed); }
-.stages [data-state="ok"] > .node::before { width: 5px; height: 10px; border-width: 0 2px 2px 0; }
-.stages [data-state="failed"] > .node::before { font-size: 13px; }
-.stages [data-state="current"] { background: var(--selected); color: var(--text); font-weight: 600; }
-.stages [data-state="current"] > .node, .spinner {
-  border: 2px solid var(--border); border-top-color: var(--text); border-right-color: var(--text); background: transparent;
-  animation: spin 900ms linear infinite;
-}
-.stages [data-state="ok"] { color: var(--text); }
-.stages [data-state="failed"] { color: var(--failed); font-weight: 600; }
-.state-text { font-size: 13px; font-weight: 400; color: var(--muted); }
-.stages [data-state="failed"] .state-text { color: var(--failed); font-weight: 600; }
-
-.spinner { flex: none; display: inline-block; width: 18px; height: 18px; border-radius: 50%; }
-
-@keyframes spin { to { transform: rotate(360deg); } }
-
 /* Deployment log */
 
 details.deploy-log > summary { padding: 4px 0; font-size: 15px; font-weight: 600; }
@@ -383,7 +344,6 @@ pre {
   .form-row, .form-row.three { grid-template-columns: minmax(0, 1fr); gap: 18px; }
   .kv > div { grid-template-columns: minmax(0, 1fr); row-gap: 2px; }
   .actions .button { width: 100%; }
-  .stages li { padding: 12px 14px; }
   .rail.standalone { display: flex; }
 }
 

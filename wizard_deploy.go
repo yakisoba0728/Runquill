@@ -45,28 +45,25 @@ func (web *setupWizard) apply(ctx context.Context, checkOnly bool) error {
 		return nil
 	}
 	if !checkOnly {
-		web.progress.mark("images")
-		up := "--build"
+		up := []string{"up", "-d", "--build"}
 		if setupImage.MatchString(values["RUNQUILL_RUNNER_IMAGE"]) && setupImage.MatchString(values["RUNQUILL_MANAGER_IMAGE"]) {
-			if err := docker("pull", values["RUNQUILL_RUNNER_IMAGE"]); err != nil {
+			up = []string{"up", "-d", "--no-build", "--pull", "missing"}
+		} else {
+			web.progress.mark("images")
+			if err := docker("build", "-t", "runquill-runner:local", "runner"); err != nil {
 				return err
 			}
-			if err := docker(append(compose, "pull", "manager")...); err != nil {
-				return err
-			}
-			up = "--no-build"
-		} else if err := docker("build", "-t", "runquill-runner:local", "runner"); err != nil {
-			return err
 		}
 		web.progress.mark("manager")
-		if err := docker(append(compose, "up", "-d", up)...); err != nil {
+		if err := docker(append(compose, up...)...); err != nil {
 			return err
 		}
-		if web.network.host != "" {
+		if web.network.serve || web.network.funnel {
 			web.progress.mark("network")
-			if err := web.network.apply(ctx, true); err != nil {
-				return err
-			}
+			serveFailed, funnelFailed := web.network.activate(ctx, &web.progress)
+			web.mu.Lock()
+			web.serveFailed, web.funnelFailed = serveFailed, funnelFailed
+			web.mu.Unlock()
 		}
 	}
 	web.progress.mark("check")

@@ -31,37 +31,13 @@ curl -fsSLO https://github.com/yakisoba0728/Runquill/releases/latest/download/in
 sh install.sh --dir "$HOME/runquill" --wizard
 ```
 
-Docker 호스트 묶음마다 매니저 하나를 실행합니다. 기본 폴링 방식은 외부 GitHub API에 접근할 수 있으면 공유기 뒤에서도 동작합니다. 웹훅을 쓰는 경우 공개 HTTPS 주소를 설정합니다.
+Docker 호스트 묶음마다 매니저 하나를 실행합니다. 폴링은 GitHub에 HTTPS로 연결할 수 있으면 공유기 뒤에서도 동작합니다.
 
 ### 호스트 준비
 
-설치 스크립트는 다운로드 전에 호스트를 점검하고 항목마다 한 줄씩 결과를 출력합니다.
+설치 스크립트는 Linux, cgroup v2, Docker Compose, Docker 접근 권한을 확인합니다. 호스트 설정이 필요하면 실행할 명령을 보여 주고 한 번 묻습니다. Ubuntu, Debian, Fedora, RHEL과 파생 배포판, Alpine에서는 빠진 Docker 패키지를 설치할 수 있습니다. systemd나 OpenRC가 없는 호스트에서는 `dockerd`를 직접 시작합니다. GitHub·GHCR 연결은 `--prepare-only`로 미리 확인할 수 있습니다.
 
-- OS와 아키텍처
-- cgroup v2
-- 스크립트가 쓰는 도구: `curl`, `sha256sum`, `awk`, `grep`, `sed`, `cmp`, `mktemp`, `df`
-- Docker Engine, Compose v2 플러그인, 데몬 실행과 부팅 시 자동 시작 여부
-- 현재 사용자의 데몬 접근 권한과 rootless Docker 여부
-- Docker 데이터 위치의 여유 공간(20GB 미만이면 경고)
-- github.com, ghcr.io로의 HTTPS 연결
-
-호스트에 맞는 러너 수와 러너별 CPU·메모리 한도도 제안합니다.
-
-빠진 항목이 있으면 실행할 명령을 모두 보여 주고 한 번만 묻습니다. `sudo`는 이 명령에만 쓰고, root로 실행하면 쓰지 않습니다.
-
-| 빠진 항목 | 설치 스크립트가 실행하는 작업 |
-| --- | --- |
-| 도구 | 배포판 패키지 관리자: `apt-get`, `dnf`, `yum`, `zypper`, `apk` |
-| Ubuntu·Debian의 Docker Engine과 Compose | Docker 공식 apt 저장소. 키는 `/etc/apt/keyrings/docker.asc`, 저장소 설정은 `/etc/apt/sources.list.d/docker.sources`에 둡니다 |
-| Fedora·RHEL·CentOS·Rocky Linux·AlmaLinux의 Docker Engine과 Compose | Docker 공식 dnf 저장소(`/etc/yum.repos.d/docker-ce.repo`) |
-| Alpine의 Docker Engine과 Compose | Alpine의 `docker`, `docker-cli-compose` 패키지. Docker 공식 저장소는 Alpine을 지원하지 않습니다 |
-| 데몬 | `systemctl enable --now docker`, OpenRC에서는 `rc-update`와 `rc-service` |
-| Docker 접근 권한 | `usermod -aG docker $USER` |
-
-- **키 확인.** Docker 서명 키는 Docker가 공개한 지문과 일치할 때만 신뢰합니다.
-- **docker 그룹.** 이 그룹의 구성원은 호스트에서 root와 같은 권한을 갖습니다. 설치 스크립트는 새 그룹을 적용한 채 같은 실행을 이어가므로 다시 로그인할 필요가 없습니다. 이미 열려 있던 셸에서 `sudo` 없이 `docker`를 쓰려면 다시 로그인합니다.
-- **바꾸지 않는 것.** 동작 중인 Docker를 교체하거나 업그레이드하지 않으며, rootless나 snap으로 설치한 Docker도 바꾸지 않습니다. 포트를 열거나 방화벽을 바꾸지 않습니다. 그 밖의 배포판에서는 Docker 설치 가이드 링크를 안내합니다.
-- **다시 실행.** 준비가 끝난 호스트에서 다시 실행하면 아무것도 바꾸지 않고 묻지도 않습니다. systemd나 OpenRC가 없는 호스트에서는 `dockerd`를 직접 시작해야 하며, 설치 스크립트는 이를 안내하고 멈춥니다.
+Docker 저장소를 추가할 때는 서명 키를 검증합니다. 사용자에게 root와 같은 권한을 주는 `docker` 그룹을 추가하면, 현재 설치가 새 그룹 권한으로 이어집니다.
 
 | 옵션 | 동작 |
 | --- | --- |
@@ -69,9 +45,8 @@ Docker 호스트 묶음마다 매니저 하나를 실행합니다. 기본 폴링
 | `--no-install` | 시스템을 바꾸지 않습니다. 빠진 항목을 출력하고 실패합니다 |
 | `--prepare-only` | 호스트만 준비하고 멈춥니다 |
 | `--no-docker` | Docker 점검을 건너뜁니다. K3s 호스트 등에 씁니다 |
+| `--no-tailscale` | 브라우저 설치에서 Tailscale 자동 설정을 건너뜁니다 |
 | `--download-only` | 호스트 점검 없이 릴리스를 받아 검증만 합니다 |
-
-터미널이 없고 `--yes`도 없으면 아무것도 바꾸지 않고, `--yes`를 붙여 다시 실행할 명령을 출력합니다.
 
 ### 직접 호스트 준비
 
@@ -86,9 +61,11 @@ sudo usermod -aG docker "$USER"
 
 ### 브라우저로 설치
 
-`sh install.sh --dir "$HOME/runquill" --wizard`를 실행하면 브라우저에서 GitHub App 연결, 패널 OAuth 등록, 매니저 배포와 첫 작업 확인을 이어갈 수 있습니다. 마법사와 패널은 한국어·영어를 지원합니다. Tailscale에 연결된 Docker Compose 서버에서는 기본으로 Funnel을 통해 웹훅을 받고 폴링을 보조로 켜 두며, Serve로 패널을 tailnet에 연결할 수도 있습니다. [브라우저 설치 가이드](docs/browser-setup.md)
+`sh install.sh --dir "$HOME/runquill" --wizard`를 실행하고 필요하면 호스트 준비를 승인합니다. 출력된 링크를 열어 GitHub를 연결하고 배포합니다. 마법사가 호스트에 맞는 러너 한도를 채웁니다. 조직, 선택한 저장소, K3s, 사용자 지정 주소를 쓰려면 **고급 설정**을 엽니다.
 
-마법사는 `127.0.0.1`에서만 접속을 받습니다. SSH로 접속한 경우 설치 스크립트가 포트를 정하고, 내 컴퓨터에서 실행할 명령을 출력합니다.
+설치 프로그램은 Tailscale을 준비하고 브라우저 로그인을 시작할 수 있습니다. Docker Compose에서 tailnet이 허용하면 마법사가 Serve로 패널을 비공개 연결하고 Funnel로 GitHub 웹훅을 받습니다. 폴링도 계속 사용할 수 있습니다. [브라우저 설치 가이드](docs/browser-setup.md)
+
+마법사는 `127.0.0.1`에서 접속을 받습니다. SSH로 접속하면 내 컴퓨터에서 실행할 포트 포워딩 명령을 출력합니다.
 
 ```text
 ssh -L 18080:127.0.0.1:18080 alice@203.0.113.10
@@ -109,7 +86,7 @@ sh install.sh --dir "$HOME/runquill"
 2. 설치 프로그램이 Compose를 시작하고 `Preflight passed.`를 출력할 때까지 기다립니다.
 3. 내 비공개 저장소에서 [첫 작업을 실행합니다](#첫-작업-확인).
 
-설치 스크립트는 다운로드 체크섬을 확인하고 같은 버전의 매니저와 러너 이미지를 받습니다. 위 명령은 `$HOME/runquill`에 설치합니다. `--version v0.3.3`로 버전을 지정하거나 `--download-only`로 바이너리와 배포 파일을 먼저 받을 수 있습니다.
+설치 스크립트는 다운로드 체크섬을 확인하고 같은 버전의 이미지를 사용합니다. `--version v0.3.2`로 공개 버전을 지정하거나 `--download-only`로 바이너리와 배포 파일을 먼저 받을 수 있습니다.
 
 ### GitHub App 연결
 
@@ -483,7 +460,7 @@ curl -fsSLO https://github.com/yakisoba0728/Runquill/releases/latest/download/in
 sh install.sh --upgrade --dir "$HOME/runquill"
 ```
 
-설치 스크립트는 릴리스 체크섬을 확인하고 바뀐 릴리스 파일만 교체합니다. 대상은 `runquill` 실행 파일, `compose.yaml`, `compose.ssh.yaml`, `LICENSE`, 그리고 릴리스에 포함된 경우 `compose.panel.yaml`, `compose.worker.yaml`, `runquill-k3s.yaml`입니다. 교체한 이전 파일은 `.previous/`로 옮기며, 이 디렉터리에는 가장 최근 업그레이드 한 번의 파일만 남습니다. 되돌리려면 `cp -p .previous/* .`를 실행합니다. `.env`, GitHub App 키, 그 밖의 파일과 대기열은 바꾸지 않습니다. `--upgrade`에는 `--version`, `--dir`, `--yes`, `--no-install`만 함께 쓸 수 있습니다. 호스트 점검도 하지만 아무것도 재시작하지 않으므로 Docker 문제는 알리기만 하고 Docker를 설치하지 않습니다.
+설치 스크립트는 체크섬을 검증하고 바뀐 릴리스 파일을 교체합니다. 이전 파일은 `.previous/`에 보관합니다. 마지막 업그레이드를 되돌리려면 `cp -p .previous/* .`를 실행합니다. `--upgrade`는 릴리스 파일만 다루며 `--version`, `--dir`, `--yes`, `--no-install`과 함께 쓸 수 있습니다.
 
 설치 스크립트는 아무것도 재시작하지 않습니다. `.env`에 릴리스 이미지가 지정되어 있으면 새로 설정할 `RUNQUILL_MANAGER_IMAGE`와 `RUNQUILL_RUNNER_IMAGE` 값과 함께, 평소 쓰는 Compose 파일로 실행할 이미지 다운로드, `docker compose up -d --no-build`, `doctor` 명령을 출력합니다. 새 러너 이미지는 매니저가 `local`과 `ssh://` 호스트에 받습니다. 아웃바운드 워커에서는 새 이미지를 받아 두고 `runquill worker` 실행 파일도 업그레이드합니다. K3s 설치에서는 대신 `kubectl apply -f runquill-k3s.yaml`을 안내합니다.
 

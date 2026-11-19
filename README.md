@@ -31,37 +31,13 @@ curl -fsSLO https://github.com/yakisoba0728/Runquill/releases/latest/download/in
 sh install.sh --dir "$HOME/runquill" --wizard
 ```
 
-Run one manager per group of Docker hosts. The default polling setup works behind NAT with outbound access to GitHub. Use an HTTPS endpoint for webhook delivery.
+Run one manager per group of Docker hosts. Outbound HTTPS to GitHub is enough for polling, even behind NAT.
 
 ### Prepare the host
 
-Before downloading, the installer checks the host and prints one line per item:
+The installer checks Linux, cgroup v2, Docker Compose, and Docker access. When the host needs changes, it shows the commands and asks once. It can install missing Docker packages on Ubuntu, Debian, Fedora, RHEL and derivatives, or Alpine. On a system without systemd or OpenRC, start `dockerd` yourself. Use `--prepare-only` to check connectivity to GitHub and GHCR in advance.
 
-- OS and architecture
-- cgroup v2
-- the tools it uses: `curl`, `sha256sum`, `awk`, `grep`, `sed`, `cmp`, `mktemp` and `df`
-- Docker Engine, the Compose v2 plugin, the daemon and whether it starts at boot
-- whether your user can reach the daemon, and whether Docker is rootless
-- free space where Docker stores data, with a warning below 20 GB
-- HTTPS to github.com and ghcr.io
-
-It also suggests a runner count and per-runner CPU and memory limits for the host.
-
-When something is missing, the installer lists every command it will run and asks once. It uses `sudo` only for those commands, and not at all when you run it as root.
-
-| Missing | What the installer runs |
-| --- | --- |
-| Tools | The distribution's package manager: `apt-get`, `dnf`, `yum`, `zypper` or `apk` |
-| Docker Engine and Compose on Ubuntu or Debian | Docker's apt repository, with its key in `/etc/apt/keyrings/docker.asc` and the source in `/etc/apt/sources.list.d/docker.sources` |
-| Docker Engine and Compose on Fedora, RHEL, CentOS, Rocky Linux or AlmaLinux | Docker's dnf repository in `/etc/yum.repos.d/docker-ce.repo` |
-| Docker Engine and Compose on Alpine | Alpine's `docker` and `docker-cli-compose` packages. Docker's repository does not cover Alpine |
-| Daemon | `systemctl enable --now docker`, or `rc-update` and `rc-service` on OpenRC |
-| Docker access | `usermod -aG docker $USER` |
-
-- **Key check.** Before trusting Docker's signing key, the installer checks that it has Docker's published fingerprint.
-- **Docker group.** Membership gives root-equivalent access to the host. The installer continues the same run with the new group active, so you do not need to log in again. Shells that were already open need a new login before `docker` works without `sudo`.
-- **What it leaves alone.** It never replaces or upgrades a working Docker, and it does not change a rootless or snap Docker. It never opens ports or changes the firewall. On other distributions it links to Docker's install guide instead.
-- **Reruns.** Running it again on a ready host changes nothing and asks nothing. A host without systemd or OpenRC must start `dockerd` itself. The installer says so and stops.
+The installer verifies Docker's signing key before adding its repository. If it adds your user to the `docker` group, which grants root-equivalent access, the current installation resumes with the new group active.
 
 | Flag | Effect |
 | --- | --- |
@@ -69,9 +45,8 @@ When something is missing, the installer lists every command it will run and ask
 | `--no-install` | Never change the system. Fail and list what is missing |
 | `--prepare-only` | Prepare the host and stop |
 | `--no-docker` | Skip the Docker checks, for example on a K3s host |
+| `--no-tailscale` | Run the browser setup without automatic Tailscale configuration |
 | `--download-only` | Skip the host checks. Download and verify the release only |
-
-Without a terminal and without `--yes`, the installer changes nothing and prints the command to rerun with `--yes`.
 
 ### Prepare the host manually
 
@@ -86,9 +61,11 @@ Log out and back in. Then `sh install.sh --prepare-only --no-install` checks the
 
 ### Set up in a browser
 
-Run `sh install.sh --dir "$HOME/runquill" --wizard` to connect GitHub, configure panel sign-in, deploy the manager, and download the first workflow in one browser session. The wizard supports English and Korean. On a Docker Compose host connected to Tailscale it receives webhooks through Funnel by default, with polling kept on as a backup, and can serve the panel on the tailnet. [Browser setup](docs/browser-setup.md)
+Run `sh install.sh --dir "$HOME/runquill" --wizard`. Accept host preparation if prompted, open the printed setup link, connect GitHub, and deploy. The wizard fills in runner limits for the host. Use **Advanced** for organizations, selected repositories, K3s, or custom addresses.
 
-The wizard listens only on `127.0.0.1`. Over SSH, the installer chooses the port and prints a command to run on your own computer, for example:
+The installer can prepare Tailscale and start its browser sign-in. On Docker Compose, the wizard uses Serve for private panel access and Funnel for GitHub webhooks when the tailnet allows them. Polling remains available. [Browser setup](docs/browser-setup.md)
+
+The wizard listens on `127.0.0.1` and prints a forwarding command when you connect over SSH:
 
 ```text
 ssh -L 18080:127.0.0.1:18080 alice@203.0.113.10
@@ -109,7 +86,7 @@ sh install.sh --dir "$HOME/runquill"
 2. Wait for the installer to start Compose and report `Preflight passed.`
 3. [Run your first job](#verify-your-first-job) from a private repository you own.
 
-The installer verifies release checksums and pulls matching manager and runner images. The command above installs into `$HOME/runquill`. Use `--version v0.3.3` to pin a release, or `--download-only` to fetch the binary and deployment files before setup.
+The installer verifies release checksums and uses images from the same release. Use `--version v0.3.2` to pin a published release, or `--download-only` to fetch the binary and deployment files before setup.
 
 ### Create and install the GitHub App
 
@@ -483,7 +460,7 @@ curl -fsSLO https://github.com/yakisoba0728/Runquill/releases/latest/download/in
 sh install.sh --upgrade --dir "$HOME/runquill"
 ```
 
-The installer verifies the release checksums and replaces only the release files that changed: the `runquill` binary, `compose.yaml`, `compose.ssh.yaml`, `LICENSE`, and `compose.panel.yaml`, `compose.worker.yaml` and `runquill-k3s.yaml` when the release includes them. It moves the replaced copies into `.previous/`, which holds only the most recent upgrade. Roll back with `cp -p .previous/* .`. `.env`, the GitHub App key, other files and the queue are untouched. `--upgrade` accepts only `--version`, `--dir`, `--yes` and `--no-install`. It runs the host checks too, but because it restarts nothing, it only reports Docker problems and never installs Docker.
+The installer verifies the checksums, updates changed release files, and moves the prior copies into `.previous/`. To roll back the latest upgrade, run `cp -p .previous/* .`. `--upgrade` accepts `--version`, `--dir`, `--yes` and `--no-install` and operates on release files only.
 
 The installer does not restart anything. If `.env` names published images, it prints the new `RUNQUILL_MANAGER_IMAGE` and `RUNQUILL_RUNNER_IMAGE` values for you to set, followed by the pull, `docker compose up -d --no-build` and `doctor` commands to run with your usual Compose files. The manager pulls the new runner image onto the `local` host and `ssh://` hosts. On outbound workers, load the new image and upgrade the `runquill worker` binary. On K3s, it prints `kubectl apply -f runquill-k3s.yaml` instead.
 
@@ -625,8 +602,8 @@ The runner Dockerfile pins the upstream GitHub Actions runner image by digest. U
 
 Run the nested Docker smoke test with `RUNQUILL_TEST_DOCKER_IMAGE=runquill-runner:local go test -run '^TestDockerRunner$' -v` after building the runner image. It checks Docker build, PostgreSQL, bind mounts, and removal with a local stand-in for the GitHub listener.
 
-[CI](.github/workflows/ci.yml) runs the Go tests and the nested Docker check on amd64 and arm64 Linux. On amd64, it also starts a disposable K3s cluster. It checks that pausing assignments leaves jobs queued, resuming starts their runners, and job completion removes the runner Pods and credential Secrets. The [two-account OAuth check](panel_live_oauth_test.go) can be run locally with a dedicated OAuth App and separate GitHub accounts for the administrator and viewer.
+[CI](.github/workflows/ci.yml) runs the Go checks in parallel with the native amd64 and arm64 image builds and nested Docker smoke tests. The amd64 runtime check also runs K3s to verify host maintenance, runner assignment, and Pod and Secret cleanup. Changes to the runner image or its build workflows trigger the four additional OS builds. The [two-account OAuth check](panel_live_oauth_test.go) can be run with a dedicated OAuth App and separate GitHub accounts for the administrator and viewer.
 
-On a version tag, the [release workflow](.github/workflows/release.yml) runs CI, publishes amd64 and arm64 images to GHCR, and attaches the matching Linux binaries and checksums to the release. After publication in this repository, it verifies the exact tag with the public installer in clean Linux containers on both architectures. After the first publish, set both packages to public if they should be anonymously pullable. The workflow publishes to the repository owner's namespace, so forks use their own image names. [GitHub Container registry access](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
+On a version tag, the [release workflow](.github/workflows/release.yml) builds each image once across native architecture and OS jobs. It publishes the tested images to GHCR and takes the standalone binaries from those same manager images. It then verifies the published release with the public installer on both architectures. Forks publish to their own GitHub owner's namespace. Set both packages to public to allow anonymous pulls. [GHCR access](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
 
 Copyright © 2026 Runquill contributors. [Apache License 2.0](LICENSE)

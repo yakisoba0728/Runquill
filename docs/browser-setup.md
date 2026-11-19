@@ -1,38 +1,27 @@
 # Browser setup
 
-On a Linux host with the release files, start the browser wizard.
+On your Linux host, run the installer and open the printed setup link.
 
 ```sh
 sh install.sh --wizard --dir ./runquill
 ```
 
-With downloaded release files, run `./runquill wizard` in the installation directory. A source-built binary can run from the source checkout using its local Docker images. For a remote host, forward the printed port over SSH. Keep the setup URL private. The wizard listens on loopback for one hour.
+1. Choose **Connect GitHub**. Approve and install the GitHub App. For a personal account, the wizard uses the installation owner as the first panel administrator.
+2. Choose **Deploy and check installation**. After the manager starts, open the panel or download the first workflow.
 
-1. Select Docker Compose or a K3s context, personal or organization ownership, and repository access.
-2. Approve registration and installation on GitHub. The wizard registers the panel sign-in callback on the same App, saves its key and login credentials locally, and detects the installation.
-3. A personal installation automatically enrolls the GitHub account that owns the installation. For an organization, enter the first Runquill administrator's numeric GitHub user ID if prompted.
-4. Review the target and deploy. For K3s, place the matching release’s `runquill-k3s.yaml` in the installation directory and select a context authorized to create the bundled namespaces, RBAC, deployment and Secrets. The wizard checks for existing Runquill namespaces before a fresh deployment.
-5. Download the sample workflow, add it on GitHub and choose **Run workflow**. Follow discovery and runner cleanup in the operations panel.
+The default setup uses local Docker Compose, a personal GitHub account, and the host's recommended runner limits. Open **Advanced** for a GitHub organization, selected repositories, a K3s context, custom addresses, or different limits. For K3s, use the matching release's `runquill-k3s.yaml` and a context authorized to create the resources in it. Use a port-forward for a local panel or supply an existing HTTPS ingress.
 
-The deployment page updates its current stage and command output about once a second. In an existing Compose installation, `./runquill wizard --check-compose` opens the wizard and reruns its read-only preflight.
-
-English and Korean are available in both screens. Administrator browser sessions can check repository access and download a queue-only backup. Restore uses an offline manager and the [recovery procedure](../README.md#back-up-and-recover-the-queue).
-
-When you add the panel to an older runner-only installation, the wizard can configure a separate OAuth App using the URLs on the setup page. Existing panel credentials can be reused.
+Run `./runquill wizard` from the installation directory if you already have the release files. For an existing Compose installation, `./runquill wizard --check-compose` runs its read-only preflight. Over SSH, use the printed forwarding command and keep the setup link private.
 
 ## Tailscale
 
-Sign into the Compose host's Tailscale client and enable MagicDNS and HTTPS. Give the host account running Runquill permission to configure the local Tailscale client.
+For the Compose wizard, host preparation can install Tailscale on supported Linux distributions, start the daemon, and configure the local operator. If prompted, open Tailscale's sign-in link to join your tailnet. MagicDNS and HTTPS must be enabled in the tailnet. Funnel also needs the node's `funnel` permission.
 
-On a Compose host that is connected to a tailnet whose policy grants the node HTTPS certificates and the `funnel` attribute, the first step turns **Receive webhooks through Tailscale Funnel** on by default. GitHub then announces jobs at once, and polling every 30 seconds stays on to catch any delivery that does not arrive. Clear the box to rely on polling alone. Without a connected Tailscale, or without Funnel permission, the box starts cleared and the page says what is missing.
-
-The installer reports the Tailscale state in its checklist and, with your consent, runs `sudo tailscale set --operator=USER` so the account running the wizard may change Serve and Funnel.
+The wizard uses these routes when available. Polling stays enabled every 30 seconds and also works without Tailscale.
 
 | Option | Access | Listener | Target |
 | --- | --- | --- | --- |
 | Serve panel | Authorized tailnet peers | HTTPS 9443 | `127.0.0.1:8081` |
 | Funnel webhook | GitHub and the internet | HTTPS 8443, `/webhook` | `127.0.0.1:8080/webhook` |
 
-Funnel also requires tailnet policy approval. The wizard fills in the GitHub URLs, activates the routes during deployment, and can pause or resume them from the completion page. A conflicting listener stops configuration. GitHub webhook signatures and panel OAuth still apply.
-
-For K3s, use a port-forward for a loopback panel or supply an existing HTTPS ingress. Managed Tailscale routes use the Compose host's published ports. [Tailscale Serve](https://tailscale.com/docs/reference/tailscale-cli/serve) · [Tailscale Funnel](https://tailscale.com/docs/features/tailscale-funnel)
+Use `install.sh --wizard --no-tailscale` to skip automatic configuration, or use **Advanced** for custom panel and webhook addresses. The wizard keeps existing listeners and uses GitHub webhook signatures and panel OAuth. [Tailscale Serve](https://tailscale.com/docs/reference/tailscale-cli/serve) · [Tailscale Funnel](https://tailscale.com/docs/features/tailscale-funnel)

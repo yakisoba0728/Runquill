@@ -5,9 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -38,67 +42,108 @@ type tailscaleMappings struct {
 	Foreground  map[string]tailscaleMappings
 }
 
-func (network *wizardNetwork) configure(ctx context.Context, opts *setupOptions) error {
-	if !network.serve && !network.funnel {
-		return nil
+func (web *setupWizard) prepareNetwork(ctx context.Context, opts *setupOptions) func() {
+	noop := func() {}
+	web.mu.Lock()
+	skip := web.skipTailscale || web.form.LocalOnly || opts.kubernetes || web.command == nil
+	web.network = wizardNetwork{}
+	web.serveFailed, web.funnelFailed = false, false
+	web.mu.Unlock()
+	if skip {
+		return noop
 	}
-	field := "serve"
-	if !network.serve {
-		field = "funnel"
-	}
-	if opts.kubernetes {
-		return newWizardIssue("backend", "Tailscale 자동 연결은 Docker Compose 설치에서만 쓸 수 있습니다.", "Managed Tailscale directions require a Docker Compose host.")
-	}
-	if network.serve && opts.panelURL != "" {
-		return newWizardIssue("panel_url", "Tailscale Serve를 쓰려면 패널 주소를 비워 두세요.", "Clear the panel origin when Tailscale Serve provides it.")
-	}
-	if network.funnel && opts.webhookURL != "" {
-		return newWizardIssue("webhook_url", "Tailscale Funnel을 쓰려면 공개 웹훅 URL을 비워 두세요.", "Clear the public webhook URL when Tailscale Funnel provides it.")
-	}
-	addr, err := readTailscaleName(ctx)
-	if err != nil {
-		return &wizardIssue{field: field, cause: err,
-			ko: "이 호스트에서 Tailscale에 연결하고 MagicDNS를 켠 뒤 다시 시도하세요.",
-			en: "Connect Tailscale on this host and enable MagicDNS, then try again."}
-	}
-	network.host = addr
-	if network.serve {
-		opts.panelURL = "https://" + net.JoinHostPort(addr, wizardServePort)
-	}
-	if network.funnel {
-		opts.webhookURL = "https://" + net.JoinHostPort(addr, wizardFunnelPort) + "/webhook"
-	}
-	mappings, err := readTailscaleMappings(ctx)
-	if err != nil {
-		return fmt.Errorf("read Tailscale listeners: %w", err)
-	}
-	for _, route := range network.routes() {
-		if exists, matches := mappings.routeState(addr, route); exists && !matches {
-			return &wizardIssue{field: route.command,
-				ko: "다른 리스너가 이미 Tailscale 포트 " + route.port + "을 사용하고 있습니다.",
-				en: "Tailscale port " + route.port + " is already used by a different listener."}
+	network := discoverWizardNetwork(ctx)
+	cleanup := noop
+	// Saved and recoverable GitHub App callbacks determine the routes on resume.
+	if !web.hasSetupConfig() {
+		network.serve = network.serve && opts.panelURL == ""
+		network.funnel = network.funnel && opts.webhookURL == ""
+		if network.serve {
+			listen := web.listen
+			if listen == nil {
+				listen = net.Listen
+			}
+			attempted, err := network.preparePanel(ctx, listen)
+			if attempted {
+				cleanup = func() {
+					if web.hasSetupConfig() {
+						return
+					}
+					rollback, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+					defer cancel()
+					if _, err := network.setRoute(rollback, network.routes()[0], false); err != nil {
+						fmt.Fprintf(web.log, "Remove temporary Tailscale Serve route: %v\n", err)
+					}
+				}
+			}
+			if err != nil {
+				fmt.Fprintf(web.log, "Tailscale Serve unavailable; using the local panel: %v\n", err)
+				cleanup()
+				cleanup = noop
+				network.serve = false
+			} else {
+				opts.panelURL = network.panelURL()
+			}
+		}
+		if network.funnel {
+			opts.webhookURL = network.webhookURL()
 		}
 	}
-	return nil
+	web.mu.Lock()
+	web.network = network
+	web.mu.Unlock()
+	return cleanup
 }
 
-// wizardTailnet is what the options step knows about Tailscale on this host.
-type wizardTailnet struct {
-	Name   string // MagicDNS name; "" when Tailscale is missing, signed out or without MagicDNS
-	Funnel bool   // the tailnet policy grants this node HTTPS certificates and Funnel
+func (web *setupWizard) hasSetupConfig() bool {
+	for _, file := range []string{setupEnvFile, setupPendingFile} {
+		if _, err := os.Lstat(filepath.Join(web.dir, file)); !errors.Is(err, os.ErrNotExist) {
+			return true
+		}
+	}
+	return false
 }
 
-// probeWizardTailnet never fails: a host without Tailscale simply discovers jobs by polling.
-func probeWizardTailnet(ctx context.Context) wizardTailnet {
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+func discoverWizardNetwork(ctx context.Context) wizardNetwork {
+	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	defer cancel()
-	tailnet, _ := readTailnet(ctx)
-	return tailnet
+	tailnet, err := readTailnet(ctx)
+	if err != nil {
+		return wizardNetwork{}
+	}
+	network := wizardNetwork{host: tailnet.Name}
+	if !tailnet.HTTPS || !wizardCanManageTailscale(ctx) {
+		return network
+	}
+	mapping, err := readTailscaleMappings(ctx)
+	if err != nil {
+		return network
+	}
+	network.serve, network.funnel = true, tailnet.Funnel
+	for _, route := range network.routes() {
+		if exists, matches := mapping.routeState(network.host, route); exists && !matches {
+			if route.command == "serve" {
+				network.serve = false
+			} else {
+				network.funnel = false
+			}
+		}
+	}
+	return network
 }
 
-func readTailscaleName(ctx context.Context) (string, error) {
-	tailnet, err := readTailnet(ctx)
-	return tailnet.Name, err
+func wizardCanManageTailscale(ctx context.Context) bool {
+	if runtime.GOOS != "linux" || os.Geteuid() == 0 {
+		return true
+	}
+	raw, err := wizardTailscale(ctx, "debug", "prefs")
+	var prefs struct{ OperatorUser string }
+	return err == nil && json.Unmarshal(raw, &prefs) == nil && prefs.OperatorUser == wizardUser()
+}
+
+type wizardTailnet struct {
+	Name          string
+	HTTPS, Funnel bool
 }
 
 func readTailnet(ctx context.Context) (wizardTailnet, error) {
@@ -124,12 +169,34 @@ func readTailnet(ctx context.Context) (wizardTailnet, error) {
 	}
 	// Tailscale grants these as node attributes; older clients list them as capability URLs.
 	granted := func(name string) bool {
-		if _, ok := status.Self.CapMap[name]; ok {
-			return true
+		for _, key := range []string{name, "https://tailscale.com/cap/" + name} {
+			if _, ok := status.Self.CapMap[key]; ok || slices.Contains(status.Self.Capabilities, key) {
+				return true
+			}
 		}
-		return slices.Contains(status.Self.Capabilities, name) || slices.Contains(status.Self.Capabilities, "https://tailscale.com/cap/"+name)
+		return false
 	}
-	return wizardTailnet{Name: dns, Funnel: granted("https") && granted("funnel")}, nil
+	https := granted("https")
+	return wizardTailnet{Name: dns, HTTPS: https, Funnel: https && granted("funnel")}, nil
+}
+
+func (network wizardNetwork) panelURL() string {
+	return "https://" + net.JoinHostPort(network.host, wizardServePort)
+}
+func (network wizardNetwork) webhookURL() string {
+	return "https://" + net.JoinHostPort(network.host, wizardFunnelPort) + "/webhook"
+}
+
+// Connect Serve before choosing the permanent GitHub App OAuth callback.
+// Reserve an unused backend port while first exposing it to the tailnet.
+func (network wizardNetwork) preparePanel(ctx context.Context, listen func(string, string) (net.Listener, error)) (bool, error) {
+	route := network.routes()[0]
+	listener, err := listen("tcp4", strings.TrimPrefix(route.target, "http://"))
+	if err != nil {
+		return false, fmt.Errorf("reserve the Runquill panel port: %w", err)
+	}
+	defer listener.Close()
+	return network.setRoute(ctx, route, true)
 }
 
 func (network wizardNetwork) routes() []wizardRoute {
@@ -143,37 +210,30 @@ func (network wizardNetwork) routes() []wizardRoute {
 	return routes
 }
 
-func (network wizardNetwork) apply(ctx context.Context, enabled bool) error {
-	if network.host == "" {
-		return nil
+func (network wizardNetwork) activate(ctx context.Context, log io.Writer) (serveFailed, funnelFailed bool) {
+	tailnet, err := readTailnet(ctx)
+	if err == nil && tailnet.Name != network.host {
+		err = errors.New("the Tailscale host changed after setup")
 	}
-	name, err := readTailscaleName(ctx)
-	if err != nil {
-		return err
-	}
-	if name != network.host {
-		return errors.New("the Tailscale host changed after setup; confirm the configuration again")
-	}
-	var changed []wizardRoute
 	for _, route := range network.routes() {
-		attempted, err := network.setRoute(ctx, route, enabled)
-		if attempted {
-			changed = append(changed, route)
+		routeErr := err
+		if routeErr == nil && (!tailnet.HTTPS || route.command == "funnel" && !tailnet.Funnel) {
+			routeErr = fmt.Errorf("tailnet no longer allows %s", route.command)
 		}
-		if err == nil {
+		if routeErr == nil {
+			_, routeErr = network.setRoute(ctx, route, true)
+		}
+		if routeErr == nil {
 			continue
 		}
-		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		defer cancel()
-		slices.Reverse(changed)
-		for _, previous := range changed {
-			if _, rollbackErr := network.setRoute(cleanup, previous, !enabled); rollbackErr != nil {
-				err = errors.Join(err, fmt.Errorf("restore Tailscale %s on port %s: %w", previous.command, previous.port, rollbackErr))
-			}
+		fmt.Fprintf(log, "Tailscale %s: %v\n", route.command, routeErr)
+		if route.command == "serve" {
+			serveFailed = true
+		} else {
+			funnelFailed = true
 		}
-		return err
 	}
-	return nil
+	return serveFailed, funnelFailed
 }
 
 func readTailscaleMappings(ctx context.Context) (tailscaleMappings, error) {
@@ -199,7 +259,7 @@ func (network wizardNetwork) setRoute(ctx context.Context, route wizardRoute, en
 	}
 	args := []string{route.command, "--https=" + route.port, "--set-path=" + route.path}
 	if enabled {
-		args = append(args, "--bg", route.target)
+		args = append(args, "--yes", "--bg", route.target)
 	} else {
 		args = append(args, "off")
 	}

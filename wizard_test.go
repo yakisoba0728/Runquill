@@ -68,7 +68,8 @@ fi
 	defer api.Close()
 	ctx, cancel := context.WithTimeout(t.Context(), 18*time.Second)
 	defer cancel()
-	web := &setupWizard{dir: dir, key: "fixture-access", client: api.Client(), apiBase: api.URL, log: io.Discard, ctx: ctx, language: "en", phase: "options"}
+	web := &setupWizard{dir: dir, key: "fixture-access", client: api.Client(), apiBase: api.URL, log: io.Discard, ctx: ctx,
+		language: "en", phase: "options", sshConnection: "203.0.113.8 51420 198.51.100.7 22"}
 	server := httptest.NewServer(web)
 	defer server.Close()
 	web.origin = server.URL
@@ -133,7 +134,7 @@ fi
 		"backend": {"docker"}, "repositories": {"selected"}, "lang": {"ko"},
 		"max_runners": {"3"}, "runner_cpus": {"2"}, "runner_memory": {"4"},
 	})
-	manifest := waitPage("/connect/", "GitHub App 등록")
+	manifest := waitPage("/", "GitHub App 등록")
 	githubState := regexp.MustCompile(`state=([A-Za-z0-9]+)`).FindStringSubmatch(manifest)
 	if len(githubState) != 2 || !strings.Contains(manifest, server.URL+"/connect/callback") {
 		t.Fatal("GitHub manifest has no state or wizard callback")
@@ -176,7 +177,10 @@ fi
 	if err := os.WriteFile(filepath.Join(dir, "docker.log.release"), nil, 0600); err != nil {
 		t.Fatal(err)
 	}
-	waitPage("/", "운영 패널 열기")
+	completed := waitPage("/", "운영 패널 열기")
+	if !strings.Contains(completed, "ssh -L 8081:127.0.0.1:8081 "+wizardUser()+"@198.51.100.7") {
+		t.Fatal("the local panel must show its SSH forward after remote setup")
+	}
 	if _, body := request(http.MethodGet, "/first-job.yml", "", nil); body != string(firstWorkflow) {
 		t.Fatal("wizard served a different first-job workflow")
 	}
@@ -184,6 +188,29 @@ fi
 	if err != nil || !strings.Contains(string(deploy), "compose -f compose.yaml -f compose.panel.yaml up -d --build") ||
 		!strings.Contains(string(deploy), "exec -T manager runquill doctor") {
 		t.Fatal("wizard did not invoke deployment followed by doctor")
+	}
+}
+
+func TestWizardStartsPublishedManagerWithoutWaitingForTheRunnerPull(t *testing.T) {
+	dir, bin := t.TempDir(), t.TempDir()
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("RUNQUILL_WIZARD_TEST_LOG", filepath.Join(dir, "docker.log"))
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$RUNQUILL_WIZARD_TEST_LOG\"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	environment := setupEnvironment("owner", 1, "ghcr.io/owner/runquill", "v0.3.2")
+	if err := os.WriteFile(filepath.Join(dir, setupEnvFile), []byte(environment), 0600); err != nil {
+		t.Fatal(err)
+	}
+	web := &setupWizard{dir: dir, log: io.Discard}
+	if err := web.apply(t.Context(), false); err != nil {
+		t.Fatal(err)
+	}
+	commands, err := os.ReadFile(os.Getenv("RUNQUILL_WIZARD_TEST_LOG"))
+	const want = "compose -f compose.yaml -f compose.panel.yaml up -d --no-build --pull missing\n" +
+		"compose -f compose.yaml -f compose.panel.yaml exec -T manager runquill doctor\n"
+	if err != nil || string(commands) != want {
+		t.Fatalf("release deployment commands: %s (%v)", commands, err)
 	}
 }
 
@@ -210,7 +237,7 @@ func TestWizardTailscaleRoutesKeepPanelPrivateAndRefuseConflicts(t *testing.T) {
 	}
 }
 
-func TestWizardRestoresOnlyRoutesChangedDuringFailedApply(t *testing.T) {
+func TestWizardKeepsPrivatePanelWhenFunnelFails(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	state := filepath.Join(dir, "serve-state")
@@ -218,7 +245,7 @@ func TestWizardRestoresOnlyRoutesChangedDuringFailedApply(t *testing.T) {
 	script := `#!/bin/sh
 case "$1:$2" in
   status:--json)
-    printf '%s\n' '{"BackendState":"Running","Self":{"DNSName":"runquill.example.ts.net."},"CurrentTailnet":{"MagicDNSEnabled":true}}' ;;
+    printf '%s\n' '{"BackendState":"Running","Self":{"DNSName":"runquill.example.ts.net.","CapMap":{"https":null,"funnel":null}},"CurrentTailnet":{"MagicDNSEnabled":true}}' ;;
   serve:status)
     if [ "$(cat "$RUNQUILL_TEST_SERVE_STATE")" = on ]; then
       printf '%s\n' '{"TCP":{"9443":{"HTTPS":true}},"Web":{"runquill.example.ts.net:9443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:8081"}}}}}'
@@ -241,11 +268,13 @@ esac
 		if err := os.WriteFile(state, []byte(initial), 0600); err != nil {
 			t.Fatal(err)
 		}
-		if err := network.apply(t.Context(), true); err == nil || !strings.Contains(err.Error(), "funnel disabled") {
-			t.Fatalf("Funnel failure was not surfaced: %v", err)
+		var log strings.Builder
+		serveFailed, funnelFailed := network.activate(t.Context(), &log)
+		if serveFailed || !funnelFailed || !strings.Contains(log.String(), "funnel disabled") {
+			t.Fatalf("Funnel failure was not surfaced independently: %s", &log)
 		}
 		result, err := os.ReadFile(state)
-		if err != nil || string(result) != initial {
+		if err != nil || string(result) != "on" {
 			t.Fatalf("initial Serve state %q changed to %q: %v", initial, result, err)
 		}
 	}
@@ -347,12 +376,6 @@ func TestWizardFirstStepErrorsStayInBrowserWithAnswers(t *testing.T) {
 	body = page(url.Values{"backend": {"docker"}, "panel_url": {"https://admin:hunter2@panel.example"}}, "en")
 	if !invalid(body, "panel_url") || strings.Contains(body, "hunter2") {
 		t.Fatal("a panel origin with credentials must be flagged without echoing them")
-	}
-
-	body = page(url.Values{"backend": {"docker"}, "panel_url": {"https://panel.example"}, "serve": {"on"}}, "en")
-	if !strings.Contains(body, "Clear the panel origin when Tailscale Serve provides it.") || !invalid(body, "panel_url") ||
-		!regexp.MustCompile(`name="serve" checked`).MatchString(body) {
-		t.Fatal("a Tailscale Serve conflict was not shown next to the panel origin")
 	}
 
 	body = page(url.Values{"backend": {"k3s"}, "context": {"fixture"}}, "ko")
@@ -546,14 +569,14 @@ func TestWizardDockerCheckBlocksBeforeGitHub(t *testing.T) {
 	web.command, web.host = reply("27.3.1\n", nil), wizardHost{CPUs: 4, MemoryMiB: 8192}
 	body = page("en")
 	if strings.Contains(body, `id="wizard-docker"`) || strings.Contains(body, `id="wizard-error"`) || strings.Contains(body, `data-state="failed"`) ||
-		!strings.Contains(body, "Docker 27.3.1 is reachable.") || !strings.Contains(body, `name="max_runners" type="number" inputmode="numeric" min="1" max="1000" step="1" value="2"`) {
+		!strings.Contains(body, "Docker Compose · Up to 2 at once") || !strings.Contains(body, `name="max_runners" type="number" inputmode="numeric" min="1" max="1000" step="1" value="2"`) {
 		t.Fatal("a fixed Docker host must clear the earlier refusal and keep the answers")
 	}
 
 	// A fresh first step suggests limits from the host's size.
 	web.form, web.host = wizardForm{}, wizardHost{CPUs: 6, MemoryMiB: 8192}
 	body = page("en")
-	if strings.Contains(body, `id="wizard-docker"`) || !strings.Contains(body, "Docker 27.3.1 is reachable.") ||
+	if strings.Contains(body, `id="wizard-docker"`) || !strings.Contains(body, "Docker Compose · Up to 2 at once") ||
 		!strings.Contains(body, `name="max_runners" type="number" inputmode="numeric" min="1" max="1000" step="1" value="2"`) ||
 		!strings.Contains(body, `name="runner_memory" type="number" inputmode="decimal" min="0.01" step="any" value="2"`) ||
 		!strings.Contains(body, "Detected 6 CPUs and 8.0 GiB") {
@@ -673,44 +696,134 @@ func TestStandaloneSetupPagesLoadTheWizardStylesheet(t *testing.T) {
 	}
 }
 
-func TestWizardTurnsFunnelOnByDefaultOnlyWhereTheTailnetAllowsIt(t *testing.T) {
+func TestWizardDiscoversUsableTailscaleRoutes(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	reply := func(ctx context.Context, name string, args ...string) ([]byte, error) { return []byte("29.0.0\n"), nil }
-	checked := regexp.MustCompile(`name="funnel"[^>]* checked`)
+	t.Setenv("RUNQUILL_TEST_TAILSCALE_USER", wizardUser())
 	for _, test := range []struct {
-		self   string
-		funnel bool
-		hint   string
+		self, mappings string
+		serve, funnel  bool
 	}{
-		{`"DNSName":"runquill.example.ts.net.","CapMap":{"https":null,"funnel":null}`, true, "Publishes only the"},
-		{`"DNSName":"runquill.example.ts.net.","Capabilities":["https://tailscale.com/cap/https","https://tailscale.com/cap/funnel"]`, true, "Publishes only the"},
-		{`"DNSName":"runquill.example.ts.net.","CapMap":{"https":null}`, false, "may not use Funnel yet"},
-		{`"DNSName":""`, false, "No connected Tailscale"},
+		{`"DNSName":"runquill.example.ts.net.","CapMap":{"https":null,"funnel":null}`, `{}`, true, true},
+		{`"DNSName":"runquill.example.ts.net.","CapMap":{"https://tailscale.com/cap/https":null,"https://tailscale.com/cap/funnel":null}`, `{"TCP":{"8443":{"TCPForward":"localhost:4000"}}}`, true, false},
+		{`"DNSName":"runquill.example.ts.net.","Capabilities":["https://tailscale.com/cap/https","https://tailscale.com/cap/funnel"]`, `{"TCP":{"9443":{"HTTPS":true}}}`, false, true},
+		{`"DNSName":"runquill.example.ts.net.","CapMap":{"https":null}`, `{}`, true, false},
+		{`"DNSName":"runquill.example.ts.net."`, `{}`, false, false},
+		{`"DNSName":""`, `{}`, false, false},
 	} {
-		script := "#!/bin/sh\nprintf '%s\\n' '{\"BackendState\":\"Running\",\"Self\":{" + test.self + "},\"CurrentTailnet\":{\"MagicDNSEnabled\":true}}'\n"
+		script := "#!/bin/sh\ncase \"$1:$2\" in\n" +
+			"status:--json) printf '%s\\n' '{\"BackendState\":\"Running\",\"Self\":{" + test.self + "},\"CurrentTailnet\":{\"MagicDNSEnabled\":true}}' ;;\n" +
+			"serve:status) printf '%s\\n' '" + test.mappings + "' ;;\n" +
+			"debug:prefs) printf '{\"OperatorUser\":\"%s\"}\\n' \"$RUNQUILL_TEST_TAILSCALE_USER\" ;;\n" +
+			"*) exit 1 ;;\nesac\n"
 		if err := os.WriteFile(filepath.Join(dir, "tailscale"), []byte(script), 0700); err != nil {
 			t.Fatal(err)
 		}
-		if tailnet := probeWizardTailnet(t.Context()); tailnet.Funnel != test.funnel {
-			t.Fatalf("%s: Funnel allowed = %t", test.self, tailnet.Funnel)
+		if network := discoverWizardNetwork(t.Context()); network.serve != test.serve || network.funnel != test.funnel {
+			t.Fatalf("%s %s: Serve = %t, Funnel = %t", test.self, test.mappings, network.serve, network.funnel)
 		}
-		web := &setupWizard{dir: t.TempDir(), log: io.Discard, ctx: t.Context(), language: "en", phase: "options", command: reply}
-		rec := httptest.NewRecorder()
-		web.render(rec, httptest.NewRequest(http.MethodGet, "/", nil))
-		body := rec.Body.String()
-		if checked.MatchString(body) != test.funnel || !strings.Contains(body, test.hint) {
-			t.Fatalf("%s: the first step did not offer Funnel as expected", test.self)
-		}
-		if strings.Contains(body, `<details class="advanced" open>`) {
-			t.Fatal("the default must not open the advanced options")
-		}
-		// An answer the user gave wins over the default: a returned form keeps Funnel off.
-		web.configure(url.Values{"backend": {"docker"}, "group": {"abc"}})
-		rec = httptest.NewRecorder()
-		web.render(rec, httptest.NewRequest(http.MethodGet, "/", nil))
-		if checked.MatchString(rec.Body.String()) {
-			t.Fatal("a form returned without Funnel must not turn it back on")
-		}
+	}
+}
+
+func TestWizardChecksServeBeforeChoosingOAuthOrigin(t *testing.T) {
+	bin := t.TempDir()
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("RUNQUILL_TEST_TAILSCALE_USER", wizardUser())
+	t.Setenv("RUNQUILL_TEST_SERVE_DENIED", "")
+	script := `#!/bin/sh
+case "$1:$2" in
+  status:--json)
+    printf '%s\n' '{"BackendState":"Running","Self":{"DNSName":"runquill.example.ts.net.","CapMap":{"https":null,"funnel":null}},"CurrentTailnet":{"MagicDNSEnabled":true}}' ;;
+  serve:status)
+    if [ -e "$RUNQUILL_TEST_SERVE_STATE" ]; then
+      printf '%s\n' '{"Web":{"runquill.example.ts.net:9443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:8081"}}}}}'
+    else
+      printf '%s\n' '{}'
+    fi ;;
+  debug:prefs) printf '{"OperatorUser":"%s"}\n' "$RUNQUILL_TEST_TAILSCALE_USER" ;;
+  serve:--https=9443)
+    printf '%s\n' "$*" >> "$RUNQUILL_TEST_SERVE_LOG"
+    if [ "$4" = off ]; then
+      rm "$RUNQUILL_TEST_SERVE_STATE"
+    elif [ "$RUNQUILL_TEST_SERVE_DENIED" = yes ]; then
+      printf '%s\n' 'permission denied' >&2
+      exit 1
+    else
+      : > "$RUNQUILL_TEST_SERVE_STATE"
+    fi ;;
+  *) exit 1 ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(bin, "tailscale"), []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name                               string
+		denied, saved, persisted, portBusy bool
+		localOnly, skipTailscale           bool
+		panelURL                           string
+		wantWrites                         int
+	}{
+		{name: "permission denied selects local OAuth callback", denied: true, wantWrites: 1},
+		{name: "working Serve supplies callback and is removed before persistence", wantWrites: 2},
+		{name: "newly saved callback keeps the route", persisted: true, wantWrites: 1},
+		{name: "saved setup does not change callbacks or create a listener", saved: true},
+		{name: "an occupied backend stays private", portBusy: true},
+		{name: "explicit URL takes precedence", panelURL: "https://private.example"},
+		{name: "opt out skips all managed routes", localOnly: true},
+		{name: "installer opt out skips all managed routes", skipTailscale: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			log := filepath.Join(dir, "tailnet.log")
+			state := filepath.Join(dir, "serve-state")
+			t.Setenv("RUNQUILL_TEST_SERVE_LOG", log)
+			t.Setenv("RUNQUILL_TEST_SERVE_STATE", state)
+			if test.denied {
+				t.Setenv("RUNQUILL_TEST_SERVE_DENIED", "yes")
+			}
+			if test.saved {
+				if err := os.WriteFile(filepath.Join(dir, setupEnvFile), []byte("RUNQUILL_PANEL_URL="+defaultSetupPanelURL+"\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			web := &setupWizard{dir: dir, log: io.Discard, command: execWizardCommand,
+				form: wizardForm{LocalOnly: test.localOnly}, skipTailscale: test.skipTailscale,
+				listen: func(network, address string) (net.Listener, error) {
+					if address != "127.0.0.1:8081" {
+						t.Errorf("unexpected panel listener address %s", address)
+					}
+					if test.portBusy {
+						return nil, errors.New("port already occupied")
+					}
+					return net.Listen(network, "127.0.0.1:0")
+				},
+			}
+			opts := setupOptions{panel: true, panelURL: test.panelURL}
+			cleanup := web.prepareNetwork(t.Context(), &opts)
+			wantPanelURL := test.panelURL
+			if test.persisted || test.wantWrites == 2 {
+				wantPanelURL = "https://runquill.example.ts.net:9443"
+			}
+			if opts.panelURL != wantPanelURL {
+				t.Errorf("panel origin %q, want %q", opts.panelURL, wantPanelURL)
+			}
+			if wantFunnel := !test.saved && !test.localOnly && !test.skipTailscale; (opts.webhookURL != "") != wantFunnel {
+				t.Error("Funnel choice must be independent of Serve and preserve saved endpoints")
+			}
+			if test.persisted {
+				if err := os.WriteFile(filepath.Join(dir, setupEnvFile), []byte("RUNQUILL_PANEL_URL="+opts.panelURL+"\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cleanup()
+			commands, _ := os.ReadFile(log)
+			if writes := strings.Count(string(commands), "\n"); writes != test.wantWrites {
+				t.Errorf("wrote %d route commands, want %d: %s", writes, test.wantWrites, commands)
+			}
+			if _, err := os.Stat(state); (err == nil) != test.persisted {
+				t.Error("the Serve route must survive only with saved OAuth configuration")
+			}
+		})
 	}
 }

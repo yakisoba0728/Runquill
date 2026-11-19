@@ -18,6 +18,7 @@ assume_yes=false
 no_install=false
 prepare_only=false
 no_docker=false
+no_tailscale=false
 
 # Docker's published signing keys (https://docs.docker.com/engine/install/).
 docker_apt_fingerprint=9DC858229FC7DD38854AE2D88D81803C0EBFCD88
@@ -28,7 +29,8 @@ sysroot=${RUNQUILL_INSTALL_SYSROOT:-}
 
 usage() {
     cat <<'EOF_USAGE'
-Usage: sh install.sh [--dir PATH] [--version vX.Y.Z] [--wizard] [--yes | --no-install] [--no-docker]
+Usage: sh install.sh [--dir PATH] [--version vX.Y.Z] [--wizard] [--yes | --no-install]
+                     [--no-docker] [--no-tailscale]
        sh install.sh [--dir PATH] [--version vX.Y.Z] [--webhook-url URL] [--listen-port PORT]
                      [--repository-scope all|selected] [--organization ORG [--runner-group-id ID]]
                      [--panel [--panel-url URL]] [--yes | --no-install]
@@ -36,19 +38,17 @@ Usage: sh install.sh [--dir PATH] [--version vX.Y.Z] [--wizard] [--yes | --no-in
        sh install.sh --prepare-only [--yes | --no-install] [--no-docker]
        sh install.sh --download-only [--version vX.Y.Z] [--dir PATH]
 
-Before downloading, the installer checks this host (OS, cgroup v2, tools, Docker
-Engine, Compose, Docker access, disk space, HTTPS to github.com and ghcr.io) and
-offers to fix what is missing. It installs Docker only from Docker's official
-repository, never replaces a working Docker, and lists every command first.
+The installer checks Linux, cgroup v2 and Docker, then offers to prepare the
+host. The browser setup can also install and connect Tailscale for webhooks.
 
   --dir PATH                 Install directory (default: ./runquill).
   --version vX.Y.Z           Release to install (default: latest release).
   --wizard                   Download, then finish setup in the browser wizard.
-  -y, --yes                  Make the listed host changes without asking
-                             (for unattended installs).
-  --no-install               Never change the system; fail and list what is missing.
+  -y, --yes                  Apply the listed host changes without asking.
+  --no-install               Skip system changes; fail if a requirement is missing.
   --no-docker                Skip the Docker checks (K3s hosts, or Docker managed
                              elsewhere).
+  --no-tailscale             Skip managed Tailscale setup in the wizard.
   --prepare-only             Check and prepare the host, then stop.
   --download-only            Download and verify the release only; no host checks,
                              setup or Compose.
@@ -64,8 +64,8 @@ repository, never replaces a working Docker, and lists every command first.
                              kept in .previous/. .env, keys and data are untouched.
   -h, --help                 Show this help.
 
-Without --yes or --no-install the installer asks once before changing anything,
-and changes nothing when there is no terminal to ask on.
+The installer asks once before changing the host. Tailscale sign-in requires
+a terminal and account approval. Polling works without Tailscale.
 EOF_USAGE
 }
 
@@ -116,6 +116,7 @@ while [ "$#" -gt 0 ]; do
         --no-install) no_install=true; shift ;;
         --prepare-only) prepare_only=true; shift ;;
         --no-docker) no_docker=true; shift ;;
+        --no-tailscale) no_tailscale=true; shift ;;
         -h|--help) usage; exit 0 ;;
         *) usage >&2; exit 2 ;;
     esac
@@ -157,27 +158,10 @@ if [ "$download_only" = true ] && [ "$upgrade" = true ]; then
     exit 2
 fi
 
-# ---------------------------------------------------------------- output
-
-if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
-    esc=$(printf '\033')
-    color_ok="${esc}[32m" color_warn="${esc}[33m" color_fail="${esc}[31m" color_off="${esc}[0m"
-else
-    color_ok='' color_warn='' color_fail='' color_off=''
-fi
-
 # item STATUS NAME DETAIL prints one aligned checklist line.
 item() {
-    case $1 in
-        ok) item_color=$color_ok item_label='ok  ' ;;
-        fix) item_color=$color_warn item_label='fix ' ;;
-        warn) item_color=$color_warn item_label='warn' ;;
-        fail) item_color=$color_fail item_label='FAIL' ;;
-        *) item_color='' item_label=$1 ;;
-    esac
-    item_off=
-    if [ -n "$item_color" ]; then item_off=$color_off; fi
-    printf '  %s%s%s  %-14s %s\n' "$item_color" "$item_label" "$item_off" "$2" "$3"
+    if [ "$1" = ok ] && [ "$prepare_only" = false ]; then return 0; fi
+    printf '  %-4s  %-14s %s\n' "$1" "$2" "$3"
 }
 
 # ---------------------------------------------------------------- host facts
@@ -301,23 +285,6 @@ tool_package() { # TOOL prints the package that provides it for $pkg_manager
     esac
 }
 
-port_listening() { # PORT
-    for port_table in "$sysroot/proc/net/tcp" "$sysroot/proc/net/tcp6"; do
-        [ -r "$port_table" ] || continue
-        if awk -v want="$1" '
-            function hex(s,   i, n) {
-                n = 0
-                for (i = 1; i <= length(s); i++) n = n * 16 + index("0123456789ABCDEF", toupper(substr(s, i, 1))) - 1
-                return n
-            }
-            NR > 1 && $4 == "0A" { n = split($2, part, ":"); if (hex(part[n]) == want) found = 1 }
-            END { exit !found }' "$port_table"; then
-            return 0
-        fi
-    done
-    return 1
-}
-
 # ---------------------------------------------------------------- preflight
 
 add_line() { # VAR TEXT appends one line to a newline-separated list
@@ -338,13 +305,11 @@ as_root_text() {
 plan_cmd() { add_line plan "    $(as_root_text "$@")"; }
 
 preflight() {
-    plan='' blockers='' manual='' notes='' docker_plan=''
+    plan='' blockers='' manual='' docker_plan=''
     fix_tools='' fix_docker=false fix_compose=false fix_start=false fix_enable=false
-    fix_group=false activate_group=false docker_root='' fix_operator=false
+    fix_group=false activate_group=false docker_root=''
     mode_docker=true
-    if [ "$no_docker" = true ]; then mode_docker=false; fi
-    docker_soft=false
-    if [ "$upgrade" = true ]; then docker_soft=true; fi
+    if [ "$no_docker" = true ] || [ "$upgrade" = true ]; then mode_docker=false; fi
 
     printf 'Checking this host\n'
 
@@ -405,19 +370,18 @@ preflight() {
     done
 
     # Docker.
-    docker_repo_state
-    docker_present=false
-    if has docker; then docker_present=true; fi
-    if [ "$mode_docker" = true ] && [ "$docker_present" = false ] && has k3s; then
-        mode_docker=false
-        item skip Docker 'not installed; K3s found, so the Docker checks are skipped (install Docker yourself to use the Docker backend)'
-    fi
-    if [ "$mode_docker" = false ]; then
-        [ "$no_docker" = false ] || item skip Docker 'skipped (--no-docker)'
-    elif [ "$docker_soft" = true ]; then
-        preflight_docker_report
-    else
-        preflight_docker
+    if [ "$mode_docker" = true ]; then
+        docker_present=false
+        if has docker; then docker_present=true; fi
+        if [ "$docker_present" = false ] && has k3s; then
+            mode_docker=false
+            item skip Docker 'K3s found, so the Docker checks are skipped'
+        else
+            docker_repo_state
+            preflight_docker
+        fi
+    elif [ "$no_docker" = true ]; then
+        item skip Docker 'skipped (--no-docker)'
     fi
     if [ "$fix_docker" = true ] && [ "$docker_repo" != apk ] && ! has gpg; then
         missing_tools="$missing_tools gpg"
@@ -456,22 +420,22 @@ preflight() {
     if [ -n "$docker_plan" ]; then add_line plan "$docker_plan"; fi
 
     # Disk space where Docker keeps images and containers.
-    disk_dir=$docker_root
-    if [ -z "$disk_dir" ]; then
-        for disk_dir in /var/lib/docker /var/lib /; do [ -d "$disk_dir" ] && break; done
-    fi
-    disk_gb=$(df -Pk "$disk_dir" 2>/dev/null | awk 'NR == 2 { print int($4 / 1048576) }') || true
-    if [ -z "$disk_gb" ]; then
-        item warn Disk "could not read free space in $disk_dir"
-    elif [ "$disk_gb" -lt 20 ]; then
-        item warn Disk "$disk_gb GB free in $disk_dir; runner images and job workspaces need about 20 GB"
-        add_line notes "Free up space in $disk_dir (or move Docker's data-root) before running many jobs."
-    else
-        item ok Disk "$disk_gb GB free in $disk_dir"
+    if [ "$mode_docker" = true ]; then
+        disk_dir=$docker_root
+        if [ -z "$disk_dir" ]; then
+            for disk_dir in /var/lib/docker /var/lib /; do [ -d "$disk_dir" ] && break; done
+        fi
+        disk_gb=$(df -Pk "$disk_dir" 2>/dev/null | awk 'NR == 2 { print int($4 / 1048576) }') || true
+        if [ -n "$disk_gb" ] && [ "$disk_gb" -lt 20 ]; then
+            item warn Disk "$disk_gb GB free in $disk_dir; runner images and job workspaces need about 20 GB"
+        fi
     fi
 
-    # Outbound HTTPS.
-    if ! has curl; then
+    # An explicit preflight checks connectivity. Installation uses the real
+    # download and image pull, which also report their failures.
+    if [ "$prepare_only" = false ]; then
+        return 0
+    elif ! has curl; then
         item wait Network 'checked after curl is installed'
     else
         unreachable=
@@ -485,49 +449,6 @@ preflight() {
             item fail Network "no HTTPS connection to$unreachable"
             add_line blockers "Allow outbound HTTPS (port 443) to$unreachable. Behind a proxy, export HTTPS_PROXY before running the installer."
         fi
-    fi
-
-    preflight_tailscale
-    host_size
-}
-
-# Tailscale is optional. When this host is on a tailnet the wizard receives GitHub
-# webhooks through Funnel, and changing Funnel needs root or the node's operator.
-preflight_tailscale() {
-    if ! has tailscale; then
-        item info Tailscale 'not installed: jobs are found by polling (Funnel adds webhooks)'
-        return 0
-    fi
-    ts_status=$(tailscale status --json 2>/dev/null) || ts_status=
-    ts_name=$(printf '%s\n' "$ts_status" | sed -n 's/^[[:space:]]*"DNSName":[[:space:]]*"\([^"]*[^".]\)\.\{0,1\}",\{0,1\}$/\1/p' | sed -n 1p)
-    if [ -z "$ts_name" ] || ! printf '%s\n' "$ts_status" | grep -q '"BackendState":[[:space:]]*"Running"'; then
-        item info Tailscale 'installed but not connected: jobs are found by polling'
-        return 0
-    fi
-    ts_operator=$(tailscale debug prefs 2>/dev/null | sed -n 's/^[[:space:]]*"OperatorUser":[[:space:]]*"\([^"]*\)",\{0,1\}$/\1/p' | sed -n 1p) || ts_operator=
-    if [ "$(id -u)" = 0 ] || [ "$ts_operator" = "$user" ]; then
-        item ok Tailscale "$ts_name; $user can manage Funnel"
-    elif [ "$can_root" = false ]; then
-        item warn Tailscale "$ts_name; $user cannot manage Funnel"
-        add_line notes "To receive webhooks through Funnel, run as root: tailscale set --operator=$user"
-    else
-        fix_operator=true
-        item fix Tailscale "$ts_name; let $user manage Serve and Funnel"
-        add_line plan "  Let $user change Tailscale Serve and Funnel without sudo, so the wizard can$newline  publish the webhook path:$newline    $(as_root_text "tailscale set --operator=$user")"
-    fi
-}
-
-preflight_docker_report() {
-    docker_plan=
-    if [ "$docker_present" = false ]; then
-        item warn Docker 'not installed; --upgrade does not need it, but Compose does'
-        return
-    fi
-    if docker info >/dev/null 2>&1; then
-        docker_root=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || true)
-        item ok Docker 'daemon reachable'
-    else
-        item warn Docker "daemon not reachable as $user; restarting Compose needs it"
     fi
 }
 
@@ -557,7 +478,7 @@ preflight_docker() {
         elif [ "$can_root" = false ]; then
             item fail 'Docker Engine' 'not installed'
             add_line blockers "Installing Docker Engine: $root_reason"
-        elif has curl && ! docker_repo_available; then
+        elif [ "$prepare_only" = true ] && has curl && ! docker_repo_available; then
             item fail 'Docker Engine' "not installed; Docker's repository has no packages for $os_name"
             add_line blockers "Docker's repository does not offer $os_name ($docker_repo_probe). Follow https://docs.docker.com/engine/install/ , then rerun."
         else
@@ -565,28 +486,17 @@ preflight_docker() {
             case $docker_repo in
                 apt)
                     item fix 'Docker Engine' "not installed; install from Docker's apt repository ($docker_repo_suite)"
-                    docker_plan="  Install Docker Engine and the Compose plugin from $docker_repo_url:"
-                    if docker_repo_configured; then
-                        docker_plan="$docker_plan$newline    (Docker's apt repository is already configured; it is reused)"
-                    else
-                        docker_plan="$docker_plan$newline    curl -fsSL $docker_repo_url/gpg   # then check the key fingerprint is $docker_apt_fingerprint"
-                        docker_plan="$docker_plan$newline    $(as_root_text install -m 0755 -d /etc/apt/keyrings)"
-                        docker_plan="$docker_plan$newline    $(as_root_text install -m 0644 KEY /etc/apt/keyrings/docker.asc)"
-                        docker_plan="$docker_plan$newline    $(as_root_text install -m 0644 SOURCES /etc/apt/sources.list.d/docker.sources)   # Suites: $docker_repo_suite, Signed-By: /etc/apt/keyrings/docker.asc"
+                    docker_plan="  Install Docker Engine and Compose from $docker_repo_url:"
+                    if ! docker_repo_configured; then
+                        docker_plan="$docker_plan$newline    Verify Docker's signing key ($docker_apt_fingerprint) and add the apt repository at /etc/apt/sources.list.d/docker.sources."
                     fi
-                    docker_plan="$docker_plan$newline    $(as_root_text env DEBIAN_FRONTEND=noninteractive apt-get update)"
                     docker_plan="$docker_plan$newline    $(as_root_text env DEBIAN_FRONTEND=noninteractive apt-get install -y "$docker_packages")"
                     ;;
                 dnf)
                     item fix 'Docker Engine' "not installed; install from Docker's $docker_repo_dist repository"
-                    docker_plan="  Install Docker Engine and the Compose plugin from $docker_repo_url:"
-                    if docker_repo_configured; then
-                        docker_plan="$docker_plan$newline    (Docker's repository is already configured; it is reused)"
-                    else
-                        docker_plan="$docker_plan$newline    curl -fsSL $docker_repo_url/gpg   # then check the key fingerprint is $docker_rpm_fingerprint"
-                        docker_plan="$docker_plan$newline    $(as_root_text rpm --import KEY)"
-                        docker_plan="$docker_plan$newline    curl -fsSL $docker_repo_url/docker-ce.repo"
-                        docker_plan="$docker_plan$newline    $(as_root_text install -m 0644 REPO /etc/yum.repos.d/docker-ce.repo)"
+                    docker_plan="  Install Docker Engine and Compose from $docker_repo_url:"
+                    if ! docker_repo_configured; then
+                        docker_plan="$docker_plan$newline    Verify Docker's signing key ($docker_rpm_fingerprint) and add the RPM repository at /etc/yum.repos.d/docker-ce.repo."
                     fi
                     docker_plan="$docker_plan$newline    $(as_root_text "$docker_dnf" install -y "$docker_packages")"
                     ;;
@@ -600,7 +510,7 @@ preflight_docker() {
     elif [ "$snap" = true ]; then
         item warn 'Docker Engine' "snap package ($docker_path)"
     else
-        item ok 'Docker Engine' "$(docker --version 2>/dev/null | sed 's/^Docker version //')"
+        item ok 'Docker Engine' 'installed'
     fi
 
     # Compose v2.
@@ -608,8 +518,8 @@ preflight_docker() {
         item fix 'Compose v2' 'installed with Docker Engine'
     elif [ "$docker_present" = false ]; then
         item fail 'Compose v2' 'needs Docker Engine'
-    elif docker compose version >/dev/null 2>&1; then
-        item ok 'Compose v2' "$(docker compose version --short 2>/dev/null || true)"
+    elif compose_version=$(docker compose version --short 2>/dev/null); then
+        item ok 'Compose v2' "$compose_version"
     elif [ "$snap" = true ]; then
         item fail 'Compose v2' 'missing from the snap Docker'
         add_line blockers 'Snap-installed Docker is not changed automatically. Remove it (sudo snap remove docker) and rerun to install Docker from its official repository, or add the Compose v2 plugin yourself.'
@@ -632,11 +542,11 @@ preflight_docker() {
 
     # Daemon and access.
     daemon=unknown
-    docker_error=
+    docker_info=
     if [ "$docker_present" = true ]; then
-        if docker_error=$(docker info 2>&1 >/dev/null); then
+        if docker_info=$(docker info --format '{{json .SecurityOptions}}' 2>&1); then
             daemon=reachable
-        elif printf '%s' "$docker_error" | grep -qi 'permission denied'; then
+        elif printf '%s' "$docker_info" | grep -qi 'permission denied'; then
             daemon=denied
         else
             daemon=down
@@ -644,7 +554,7 @@ preflight_docker() {
     fi
     if [ "$daemon" = reachable ]; then
         docker_root=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || true)
-        if docker info --format '{{json .SecurityOptions}}' 2>/dev/null | grep -q rootless || [ "$rootless_host" = true ]; then
+        if printf '%s' "$docker_info" | grep -q rootless || [ "$rootless_host" = true ]; then
             item fail 'Docker daemon' 'rootless'
             add_line blockers "This Docker daemon runs rootless, but Runquill's default runners are privileged containers that need rootful Docker. The installer does not change it. Use the system daemon instead: unset DOCKER_HOST, run 'docker context use default', and make sure the rootful docker service is installed and running (https://docs.docker.com/engine/install/). Or route jobs to a pool with privileged: false."
             return
@@ -697,7 +607,7 @@ preflight_docker() {
     elif in_group_list "$group_now" docker; then
         if [ "$daemon" = denied ]; then
             item fail 'Docker access' "$user is in the docker group but the socket refuses access"
-            add_line blockers "Check the owner and mode of /var/run/docker.sock (expected root:docker, 660): $docker_error"
+            add_line blockers "Check the owner and mode of /var/run/docker.sock (expected root:docker, 660): $docker_info"
         else
             item ok 'Docker access' "$user is in the docker group"
         fi
@@ -722,31 +632,6 @@ preflight_docker() {
     fi
 }
 
-host_size() {
-    cpus=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || printf 1)
-    mem_kb=$(awk '$1 == "MemTotal:" { print $2 }' "$sysroot/proc/meminfo" 2>/dev/null || true)
-    [ -n "$mem_kb" ] || return 0
-    size=$(awk -v c="$cpus" -v m="$mem_kb" 'BEGIN {
-        mib = int(m / 1024)
-        free_cpu = c - 2; if (free_cpu < 1) free_cpu = 1
-        free_mib = mib - 4096; if (free_mib < 1024) free_mib = int(mib / 2)
-        n = int(free_cpu / 2); if (int(free_mib / 2048) < n) n = int(free_mib / 2048)
-        if (n < 1) n = 1
-        printf "%d %.1f %d %d", n, int(free_cpu * 10 / n) / 10, int(free_mib / n), int(mib / 1024 + 0.5)
-    }')
-    # shellcheck disable=SC2086 # four numbers
-    set -- $size
-    suggest_runners=$1 suggest_cpus=$2 suggest_mib=$3
-    if [ "$1" -eq 1 ]; then size_runners='1 runner at a time'; else size_runners="$1 concurrent runners"; fi
-    item info 'Host size' "$cpus CPUs, $4 GB RAM: suggest $size_runners, $2 CPUs and $3 MiB each"
-}
-
-print_size_hint() {
-    [ -n "${suggest_runners:-}" ] || return 0
-    printf 'Suggested limits for this host: RUNQUILL_MAX_RUNNERS=%s, and about %s CPUs and %s MiB per\n' "$suggest_runners" "$suggest_cpus" "$suggest_mib"
-    printf 'runner (a pool'\''s cpus and memory_mib). Set them in .env after setup: %s#add-manager-settings\n' "$repo"
-}
-
 # ---------------------------------------------------------------- applying
 
 applied=
@@ -766,6 +651,7 @@ run_root() {
 on_exit() {
     exit_status=$?
     if [ -n "${prep_tmp:-}" ]; then rm -rf -- "$prep_tmp"; fi
+    if [ -n "${ts_tmp:-}" ]; then rm -rf -- "$ts_tmp"; fi
     if [ -n "${scratch:-}" ]; then rm -rf -- "$scratch"; fi
     if [ "$exit_status" -ne 0 ] && [ -n "$apply_step" ]; then
         printf '\nrunquill install: failed while: %s\n' "$apply_step" >&2
@@ -873,11 +759,6 @@ apply_plan() {
         RUNQUILL_INSTALL_GROUP_ADDED=1
         export RUNQUILL_INSTALL_GROUP_ADDED
     fi
-    if [ "$fix_operator" = true ]; then
-        apply_step="make $user the Tailscale operator"
-        run_root tailscale set "--operator=$user"
-        note_done "let $user manage Tailscale Serve and Funnel"
-    fi
     apply_step=
 }
 
@@ -901,7 +782,7 @@ continue_with_docker_group() {
         eval "set -- $original_args"
         exec sudo -u "$user" env RUNQUILL_INSTALL_REEXEC=1 \
             RUNQUILL_INSTALL_GROUP_ADDED="${RUNQUILL_INSTALL_GROUP_ADDED:-}" \
-            HOME="${HOME:-}" PATH="$PATH" NO_COLOR="${NO_COLOR:-}" TMPDIR="${TMPDIR:-/tmp}" \
+            HOME="${HOME:-}" PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" \
             SSH_CONNECTION="${SSH_CONNECTION:-}" DOCKER_HOST="${DOCKER_HOST:-}" \
             /bin/sh "$script_path" "$@"
     fi
@@ -913,6 +794,88 @@ relogin_note() {
     fi
 }
 
+tailscale_state() {
+    tailscale status --json 2>/dev/null |
+        sed -n 's/^[[:space:]]*"BackendState":[[:space:]]*"\([^"]*\)".*$/\1/p'
+}
+
+tailscale_operator() {
+    prefs=$(tailscale debug prefs 2>/dev/null) || return 1
+    printf '%s\n' "$prefs" | sed -n 's/^[[:space:]]*"OperatorUser":[[:space:]]*"\([^"]*\)".*$/\1/p'
+}
+
+plan_tailscale() {
+    tailscale_plan=
+    if [ "$wizard" = false ] || [ "$mode_docker" = false ] || [ "$prepare_only" = true ] ||
+        [ "$no_tailscale" = true ] || [ "$no_install" = true ] || [ "$can_root" = false ] ||
+        [ -n "${RUNQUILL_INSTALL_REEXEC:-}" ]; then
+        return 0
+    fi
+    if has tailscale; then
+        case $(tailscale_state) in
+            Running)
+                [ "$uid" -ne 0 ] || return 0
+                operator=$(tailscale_operator) || return 0
+                [ -z "$operator" ] || return 0
+                tailscale_plan='Prepare the existing Tailscale connection for Serve and Funnel.'
+                ;;
+            NeedsLogin|Stopped)
+                if have_tty; then
+                    tailscale_plan='Connect Tailscale in your browser for Serve and Funnel.'
+                fi
+                ;;
+            '')
+                if [ "$systemd" = true ] || [ "$openrc" = true ]; then
+                    tailscale_plan='Start the Tailscale service and offer browser sign-in.'
+                fi
+                ;;
+        esac
+    elif [ "$systemd" = true ] || [ "$openrc" = true ]; then
+        case $pkg_manager in apt-get|dnf|yum|apk|zypper)
+            tailscale_plan='Install Tailscale from tailscale.com, enable its service at boot, and offer browser sign-in.'
+            ;;
+        esac
+    fi
+}
+
+prepare_tailscale() {
+    if ! has tailscale; then
+        ts_tmp=$(mktemp -d "${TMPDIR:-/tmp}/runquill-tailscale.XXXXXX") || return 1
+        curl --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 30 \
+            -fsSL https://tailscale.com/install.sh -o "$ts_tmp/install.sh" || return 1
+        run_root sh "$ts_tmp/install.sh" || return 1
+    fi
+    state=$(tailscale_state)
+    if [ -z "$state" ]; then
+        if [ "$systemd" = true ]; then
+            run_root systemctl enable --now tailscaled || return 1
+        elif [ "$openrc" = true ]; then
+            run_root rc-update add tailscale default && run_root rc-service tailscale start || return 1
+        fi
+        state=$(tailscale_state)
+    fi
+    if [ "$uid" -ne 0 ]; then
+        operator=$(tailscale_operator) || return 1
+        if [ -z "$operator" ]; then
+            run_root tailscale set "--operator=$user" || return 1
+        elif [ "$operator" != "$user" ]; then
+            return 1
+        fi
+    fi
+    case $state in
+        Running) return 0 ;;
+        NeedsLogin|Stopped)
+            if have_tty; then
+                printf '%s\n' 'Open the Tailscale sign-in link when it appears. Setup continues after two minutes.'
+                tailscale up --timeout=2m
+            else
+                item info Tailscale 'sign in with tailscale up before using Funnel'
+            fi
+            ;;
+        *) return 1 ;;
+    esac
+}
+
 prepare_host() {
     preflight
     if [ -n "$blockers" ]; then
@@ -921,27 +884,43 @@ prepare_host() {
         if [ -n "$plan" ]; then printf 'Nothing on this host was changed.\n' >&2; fi
         exit 1
     fi
-    if [ -n "$plan" ]; then
-        printf '\nTo prepare this host the installer will run:\n%s\n' "$plan"
-        if [ "$no_install" = true ]; then
-            fail 'Nothing was changed (--no-install). Make the changes above yourself, or rerun without --no-install.'
-        elif [ "$assume_yes" = false ]; then
-            if [ -t 0 ]; then
-                printf 'Make these changes? [y/N] '
-                answer=
-                read -r answer || answer=
-                case $answer in
-                    y|Y|yes|YES|Yes) ;;
-                    *) fail 'Nothing was changed. Make the changes above yourself, or rerun and answer y.' ;;
-                esac
-            else
-                printf '\nNothing was changed: there is no terminal to ask for consent.\n' >&2
-                printf 'To allow these changes, rerun:\n  sh %s%s --yes\n' "$(quote "$0")" "$original_args" >&2
-                exit 1
+    plan_tailscale
+    if [ -n "$plan$tailscale_plan" ]; then
+        if [ -n "$plan" ]; then printf '\nTo prepare this host the installer will run:\n%s\n' "$plan"; fi
+        if [ -n "$tailscale_plan" ]; then
+            printf '\nOptional Tailscale setup (--no-tailscale to skip):\n  %s\n' "$tailscale_plan"
+            if [ "$uid" -ne 0 ]; then
+                printf '  If the local Tailscale operator is unassigned, authorize %s.\n' "$user"
             fi
         fi
-        printf '\n'
-        apply_plan
+        consent=false
+        if [ "$no_install" = true ]; then
+            fail 'Nothing was changed (--no-install). Make the changes above yourself, or rerun without --no-install.'
+        elif [ "$assume_yes" = true ]; then
+            consent=true
+        elif have_tty; then
+            printf 'Make these changes? [y/N] '
+            answer=
+            if [ -t 0 ]; then
+                read -r answer || answer=
+            else
+                read -r answer </dev/tty || answer=
+            fi
+            case $answer in y|Y|yes|YES|Yes) consent=true ;; esac
+            if [ "$consent" = false ] && [ -n "$plan" ]; then
+                fail 'Nothing was changed. Make the changes above yourself, or rerun and answer y.'
+            fi
+        elif [ -n "$plan" ]; then
+            printf '\nNothing was changed: there is no terminal to ask for consent.\n' >&2
+            printf 'To allow these changes, rerun:\n  sh %s%s --yes\n' "$(quote "$0")" "$original_args" >&2
+            exit 1
+        fi
+        if [ "$consent" = true ]; then
+            if [ -n "$plan" ]; then apply_plan; fi
+            if [ -n "$tailscale_plan" ] && ! prepare_tailscale; then
+                item warn Tailscale 'automatic setup did not finish. Runquill can find jobs by polling.'
+            fi
+        fi
     fi
     if [ "$activate_group" = true ]; then
         continue_with_docker_group
@@ -967,12 +946,14 @@ prepare_host() {
     if [ "$activate_group" = true ] && [ "$uid" -ne 0 ] && ! docker info >/dev/null 2>&1; then
         fail "$user still cannot use Docker in this session. Log out and back in (so the docker group applies), then rerun the installer."
     fi
-    if [ -n "$notes" ]; then printf '%s\n' "$notes"; fi
     printf 'Host is ready.\n\n'
 }
 
 # ---------------------------------------------------------------- main
 
+# Keep host changes and file writes in one complete shell command, even when
+# the installer is streamed into sh.
+main() {
 if [ "$download_only" = true ]; then
     if [ "$(uname -s)" != Linux ]; then
         printf '%s\n' 'Run the installer on the Linux server that will run Runquill.' >&2
@@ -1018,25 +999,34 @@ scratch=$(mktemp -d .runquill-install.XXXXXX)
 binary=runquill-linux-$arch
 url="$repo/releases/download/$tag"
 files='compose.yaml compose.ssh.yaml LICENSE'
-curl --proto '=https' --proto-redir '=https' -fsSL "$url/SHA256SUMS" -o "$scratch/SHA256SUMS"
+curl --proto '=https' --proto-redir '=https' --connect-timeout 10 --retry 2 \
+    -fsSL "$url/SHA256SUMS" -o "$scratch/SHA256SUMS"
 for optional in compose.panel.yaml compose.worker.yaml runquill-k3s.yaml; do
     if awk -v name="$optional" '$2 == name {found=1} END {exit !found}' "$scratch/SHA256SUMS"; then
         files="$files $optional"
     fi
 done
+set --
 for name in "$binary" $files; do
-    curl --proto '=https' --proto-redir '=https' -fsSL "$url/$name" -o "$scratch/$name"
+    set -- "$@" "$url/$name" -o "$scratch/$name"
 done
+curl --proto '=https' --proto-redir '=https' --connect-timeout 10 --retry 2 --fail-early -fsSL "$@"
 (
     cd "$scratch"
-    for name in "$binary" $files; do
-        checksum=$(awk -v name="$name" '$2 == name {print $1}' SHA256SUMS)
-        if ! printf '%s\n' "$checksum" | grep -Eq '^[0-9a-f]{64}$' || [ "${#checksum}" -ne 64 ]; then
-            printf 'Invalid or missing checksum for %s\n' "$name" >&2
-            exit 1
-        fi
-        printf '%s  %s\n' "$checksum" "$name" | sha256sum -c -
-    done
+    awk -v names="$binary $files" '
+        $2 != "" { seen[$2]++; hashes[$2] = $1 }
+        END {
+            total = split(names, wanted, " ")
+            for (i = 1; i <= total; i++) {
+                name = wanted[i]
+                if (seen[name] != 1 || length(hashes[name]) != 64 || hashes[name] !~ /^[0-9a-f]+$/) {
+                    print "Invalid or missing checksum for " name > "/dev/stderr"
+                    exit 1
+                }
+                print hashes[name] "  " name
+            }
+        }' SHA256SUMS > verify.sha256
+    sha256sum -c verify.sha256
 )
 chmod 700 "$scratch/$binary"
 if [ "$upgrade" = true ]; then
@@ -1121,36 +1111,12 @@ if [ "$wizard" = true ]; then
         printf '%s\n' 'This release does not support browser setup. Select a newer release.' >&2
         exit 1
     fi
-    # The wizard shows its own capacity recommendation for this host.
     relogin_note
     set -- wizard
-    if [ -n "${SSH_CONNECTION:-}" ]; then
-        # The wizard only accepts the exact origin http://127.0.0.1:PORT, so the
-        # forwarded local port must equal the remote one.
-        if [ -z "$listen_port" ]; then
-            for candidate in 18080 18081 18082 18083 18084 18085 18086 18087 18088 18089; do
-                if ! port_listening "$candidate"; then listen_port=$candidate; break; fi
-            done
-        fi
-        # shellcheck disable=SC2086 # SSH_CONNECTION is four space-separated fields
-        ssh_fields=$(set -- $SSH_CONNECTION; printf '%s %s' "${3:-}" "${4:-22}")
-        ssh_server=${ssh_fields% *}
-        ssh_port=${ssh_fields#* }
-        if [ -n "$listen_port" ] && [ -n "$ssh_server" ]; then
-            ssh_command="ssh -L $listen_port:127.0.0.1:$listen_port"
-            if [ "$ssh_port" != 22 ]; then ssh_command="$ssh_command -p $ssh_port"; fi
-            ssh_command="$ssh_command $user@$ssh_server"
-            printf '\nYou are connected over SSH. On your own computer, open a new terminal and run:\n\n'
-            printf '    %s\n\n' "$ssh_command"
-            printf '%s\n' "Keep it open, then open the URL below in a browser on that computer." \
-                "If you normally connect with another host name (for example through NAT or a jump host), use that instead of $ssh_server." \
-                'The key in the URL is a secret for this setup session; do not share it.' ''
-        fi
-    fi
     if [ -n "$listen_port" ]; then set -- "$@" --listen-port "$listen_port"; fi
-    # The wizard prints the same forwarding command itself unless the installer already did.
-    RUNQUILL_SSH_HINT_SHOWN=${ssh_command:+1} ./runquill "$@"
-    exit
+    if [ "$no_tailscale" = true ]; then export RUNQUILL_SKIP_TAILSCALE=1; fi
+    ./runquill "$@"
+    return
 fi
 
 set -- setup
@@ -1188,10 +1154,12 @@ if ! printf '%s\n' "$runner_image" | grep -Eq '^ghcr\.io/[a-z0-9_./-]+:[A-Za-z0-
 fi
 set --
 if [ "$panel" = true ]; then set -- -f compose.yaml -f compose.panel.yaml; fi
-docker pull "$runner_image"
-docker compose "$@" pull manager
-docker compose "$@" up -d --no-build
+# Managers from v0.3.1 fetch missing runner images in the background.
+case ${tag%%-*} in v0.[012].*|v0.3.0) docker pull "$runner_image" ;; esac
+docker compose "$@" up -d --no-build --pull missing
 docker compose "$@" exec -T manager runquill doctor
 printf 'First job guide: %s/blob/%s/README.md#verify-your-first-job\n' "$repo" "$tag"
-print_size_hint
 relogin_note
+}
+
+main

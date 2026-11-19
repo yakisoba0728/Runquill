@@ -5,9 +5,18 @@ on:
     branches: [main]
   pull_request:
   workflow_call:
+    inputs:
+      checks-only:
+        description: Run source and installer checks while release builds its images
+        type: boolean
+        default: false
 
 permissions:
   contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
 jobs:
   verify:
@@ -15,12 +24,13 @@ jobs:
       matrix:
         os: [ubuntu-24.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 40
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
       - name: Check the installer with stubbed commands
+        if: matrix.os == 'ubuntu-24.04'
         run: |
           sh -n install.sh
           dash -n install.sh
@@ -32,47 +42,26 @@ jobs:
           fi
           sh .github/scripts/test-install-offline.sh dash
           sh .github/scripts/test-install-offline.sh bash
-      - name: Prepare a fresh Ubuntu host with the installer
-        if: matrix.os == 'ubuntu-24.04'
-        timeout-minutes: 10
-        run: sh .github/scripts/test-install-host.sh ubuntu:24.04
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version: '1.26.x'
-          check-latest: true
+          go-version-file: go.mod
       - name: Check Go formatting
+        if: matrix.os == 'ubuntu-24.04'
         run: test -z "$(gofmt -l .)"
-      - run: go vet ./...
+      - if: matrix.os == 'ubuntu-24.04'
+        run: go vet ./...
       - name: Check for known Go vulnerabilities
         if: matrix.os == 'ubuntu-24.04'
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
       - run: go test -race ./...
-      - name: Build both Docker images
-        run: |
-          docker build -t runquill-manager:ci .
-          docker run --rm runquill-manager:ci --version
-          # The panel's screens live in subdirectories that .dockerignore must let through.
-          docker run --rm --entrypoint sh runquill-manager:ci -c \
-            'runquill panel --demo --port 8081 & sleep 2; wget -q -O /dev/null http://127.0.0.1:8081/views/overview.js'
-          docker build -t runquill-runner:ci runner
-      - name: Build the other runner base variants
+      - name: Prepare a fresh Ubuntu host with the installer
         if: matrix.os == 'ubuntu-24.04'
-        run: |
-          for os in ubuntu22.04 ubuntu26.04 debian12 debian13; do
-            docker build --build-arg "RUNQUILL_RUNNER_OS=$os" -t "runquill-runner:ci-$os" runner
-            docker run --rm --entrypoint bash "runquill-runner:ci-$os" -ec \
-              'test "$(id -u runner):$(id -g runner)" = 1001:1001; runuser -u runner -- ./bin/Runner.Listener --version; dockerd --version'
-          done
-      - name: Exercise nested Docker
-        env:
-          RUNQUILL_TEST_DOCKER_IMAGE: runquill-runner:ci
-        run: go test -run '^TestDockerRunner$' -v -timeout 5m
-      - name: Exercise the K3s runner lifecycle and host maintenance
-        if: matrix.os == 'ubuntu-24.04'
-        run: |
-          curl --proto '=https' --proto-redir '=https' -fsSL \
-            https://github.com/k3d-io/k3d/releases/download/v5.9.0/k3d-linux-amd64 -o "$RUNNER_TEMP/k3d"
-          printf '%s  %s\n' 06d8f25bc3a971c4eb29e0ff08429b180402db0f4dec838c9eac427e296800a0 "$RUNNER_TEMP/k3d" |
-            sha256sum --check -
-          chmod 0755 "$RUNNER_TEMP/k3d"
-          K3D="$RUNNER_TEMP/k3d" bash .github/scripts/smoke-k3s.sh
+        timeout-minutes: 10
+        run: sh .github/scripts/test-install-host.sh ubuntu:24.04
+
+  images:
+    if: ${{ !inputs.checks-only }}
+    uses: ./.github/workflows/images.yml
+    permissions:
+      actions: read
+      contents: read

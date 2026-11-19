@@ -34,22 +34,26 @@ type setupWizard struct {
 	log              io.Writer
 	ctx              context.Context
 	mu               sync.Mutex
+	setupWork        sync.WaitGroup
 	step, installURL string
 	handler          http.Handler
 	language, phase  string
 	failed           bool
 	options          setupOptions
 	network          wizardNetwork
+	serveFailed      bool
+	funnelFailed     bool
 	kubeContext      string
 	kubeAccepted     bool
-	networkEnabled   bool
 	checkCompose     bool
-	toggling         bool // a Tailscale pause or resume is running; only the page title and stage list use it
+	skipTailscale    bool
+	sshConnection    string
 	progress         wizardProgress
 	form             wizardForm
 	issue            *wizardIssue
 	host             wizardHost          // zero when unknown: the options step then suggests no limits
 	command          wizardCommandRunner // nil skips the Docker access check
+	listen           func(string, string) (net.Listener, error)
 }
 
 // wizardIssue is a first-step problem the browser can explain beside the field that caused it.
@@ -73,10 +77,10 @@ func newWizardIssue(field, ko, en string) error { return &wizardIssue{field: fie
 type wizardForm struct {
 	Backend, Repositories, Context, Organization, Group, PanelURL, WebhookURL string
 	MaxRunners, RunnerCPUs, RunnerMemory                                      string
-	Serve, Funnel                                                             bool
+	LocalOnly                                                                 bool
 }
 
-var wizardAdvancedFields = []string{"organization", "group", "panel_url", "webhook_url", "serve"}
+var wizardAdvancedFields = []string{"backend", "context", "max_runners", "runner_cpus", "runner_memory", "organization", "group", "panel_url", "webhook_url"}
 
 func wizardFormValues(form url.Values) wizardForm {
 	return wizardForm{
@@ -84,7 +88,7 @@ func wizardFormValues(form url.Values) wizardForm {
 		Organization: form.Get("organization"), Group: form.Get("group"),
 		PanelURL: wizardVisibleURL(form.Get("panel_url")), WebhookURL: wizardVisibleURL(form.Get("webhook_url")),
 		MaxRunners: form.Get("max_runners"), RunnerCPUs: form.Get("runner_cpus"), RunnerMemory: form.Get("runner_memory"),
-		Serve: form.Get("serve") == "on", Funnel: form.Get("funnel") == "on",
+		LocalOnly: form.Get("local_only") == "on",
 	}
 }
 
@@ -98,7 +102,8 @@ func wizardVisibleURL(raw string) string {
 }
 
 func (form wizardForm) advanced() bool {
-	return form.Organization != "" || form.Group != "" || form.PanelURL != "" || form.WebhookURL != "" || form.Serve
+	return form.Backend == "k3s" || form.Repositories == "selected" || form.Organization != "" || form.Group != "" ||
+		form.PanelURL != "" || form.WebhookURL != "" || form.LocalOnly
 }
 
 //go:embed panelweb/wizard.css
@@ -147,16 +152,16 @@ func (web *setupWizard) setInstallURL(installURL string) {
 	web.installURL = installURL
 }
 
-// wizardMark is one row of the step list or the deployment stage list.
+// wizardMark is one row of the setup step list.
 type wizardMark struct {
-	Key, Label, Detail, State, StateText string
-	Number                               int
+	Label, Detail, State, StateText string
+	Number                          int
 }
 
 // wizardChrome is the frame every wizard page shares: the step rail, its compact
 // phone header and the language and appearance controls.
 type wizardChrome struct {
-	KO, Status     bool // Status links back to the wizard's own page from a GitHub step
+	KO             bool
 	Steps          []wizardMark
 	Index, Count   int
 	Current        string
@@ -184,9 +189,7 @@ func wizardPageChrome(ctx context.Context, step string) *wizardChrome {
 		return nil
 	}
 	ko := wizardKorean(ctx)
-	chrome := newWizardChrome(ko, wizardSteps(ko, "working", step, false, false))
-	chrome.Status = true
-	return chrome
+	return newWizardChrome(ko, wizardSteps(ko, "working", step, false, false))
 }
 
 func wizardStateText(ko bool, state string) string {
@@ -249,14 +252,7 @@ func wizardSteps(ko bool, phase, step string, install, failed bool) []wizardMark
 	return marks
 }
 
-// wizardStageNames label the deployment stages wizard_deploy.go reports.
-var wizardStageNames = map[string][2]string{
-	"images": {"러너 이미지 준비", "Runner images"}, "resources": {"K3s 리소스 적용", "K3s resources"},
-	"manager": {"매니저 시작", "Manager start"}, "network": {"Tailscale 경로 적용", "Tailscale routes"},
-	"check": {"서버·GitHub 점검", "Server and GitHub check"},
-}
-
-// wizardActivity is the live status sentence for a stage; wizard.js keeps the same sentences.
+// wizardActivity is the live status sentence for a deployment stage.
 var wizardActivity = map[string][2]string{
 	"images": {"러너 이미지를 준비하고 있습니다.", "Preparing runner images."}, "resources": {"K3s 리소스를 적용하고 있습니다.", "Applying K3s resources."},
 	"manager": {"매니저를 시작하고 있습니다.", "Starting the manager."}, "network": {"Tailscale 경로를 적용하고 있습니다.", "Applying Tailscale routes."},
@@ -264,41 +260,15 @@ var wizardActivity = map[string][2]string{
 	"":      {"배포를 준비하고 있습니다.", "Preparing the deployment."},
 }
 
-// wizardStages lists, in order, the stages the next or running deployment goes through.
-func wizardStages(ko, k3s, checkCompose, network, toggling bool, phase, stage string, failed bool) []wizardMark {
-	keys := []string{"images", "manager", "check"}
-	switch {
-	case toggling:
-		keys = []string{"network"}
-	case checkCompose:
-		keys = []string{"check"}
-	case k3s:
-		keys = []string{"resources", "manager", "check"}
-	case network:
-		keys = []string{"images", "manager", "network", "check"}
+func wizardActivityText(ko bool, stage string) string {
+	activity, ok := wizardActivity[stage]
+	if !ok {
+		activity = wizardActivity[""]
 	}
-	at := -1
-	if phase == "deploying" || phase == "ready" && failed {
-		at = slices.Index(keys, stage)
+	if ko {
+		return activity[0]
 	}
-	marks := make([]wizardMark, len(keys))
-	for i, key := range keys {
-		mark := wizardMark{Key: key, Label: wizardStageNames[key][1], State: "pending"}
-		if ko {
-			mark.Label = wizardStageNames[key][0]
-		}
-		switch {
-		case phase == "done" || at >= 0 && i < at:
-			mark.State = "ok"
-		case i == at && phase == "deploying":
-			mark.State = "current"
-		case i == at:
-			mark.State = "failed"
-		}
-		mark.StateText = wizardStateText(ko, mark.State)
-		marks[i] = mark
-	}
-	return marks
+	return activity[1]
 }
 
 // wizardChromeTemplates are parsed into every wizard page: the wizard's own and the
@@ -317,9 +287,6 @@ const wizardChromeTemplates = `{{define "rail"}}{{if .}}
     </ol>
   </nav>
   <div class="prefs">
-    {{- if .Status}}
-    <a href="/">{{if .KO}}설치 상태{{else}}Setup status{{end}}</a>
-    {{- end}}
     <a class="lang" href="?lang={{.Other}}" lang="{{.Other}}" hreflang="{{.Other}}">{{.OtherAs}}</a>
     <label data-theme-field hidden><span class="visually-hidden">{{if .KO}}화면 테마{{else}}Appearance{{end}}</span>
       <select data-theme-control><option value="system">{{if .KO}}시스템{{else}}System{{end}}</option><option value="light">{{if .KO}}밝게{{else}}Light{{end}}</option><option value="dark">{{if .KO}}어둡게{{else}}Dark{{end}}</option></select>
@@ -343,7 +310,7 @@ var wizardHome = template.Must(template.Must(template.New("wizard").Parse(wizard
   <script src="/wizard.js"></script>
   {{if or (eq .Phase "working") (eq .Phase "deploying")}}<noscript><meta http-equiv="refresh" content="4"></noscript>{{end}}
 </head>
-<body data-phase="{{.Phase}}" data-step="{{.Step}}" data-install="{{if .Install}}true{{else}}false{{end}}" data-stage="{{.Stage}}">
+<body data-phase="{{.Phase}}" data-step="{{.Step}}" data-install="{{if .Install}}true{{else}}false{{end}}">
 <div class="frame">
   {{- template "rail" .Chrome}}
   <main class="content" id="content" tabindex="-1">
@@ -351,7 +318,7 @@ var wizardHome = template.Must(template.Must(template.New("wizard").Parse(wizard
     <div class="intro{{if eq .Phase "done"}} done{{end}}">
     {{- if eq .Phase "options"}}
       <h1>{{if .KO}}Runquill 시작하기{{else}}Set up Runquill{{end}}</h1>
-      <p class="lead">{{if .KO}}러너를 실행할 곳과 동시에 실행할 개수를 정하세요. 나머지는 기본값으로 시작하고 나중에 .env에서 바꿀 수 있습니다.{{else}}Choose where runners run and how many run at once. Everything else starts with defaults you can change later in .env.{{end}}</p>
+      <p class="lead">{{if .KO}}GitHub를 연결하고 이 서버에서 러너를 실행하세요.{{else}}Connect GitHub and run Actions jobs on this server.{{end}}</p>
     {{- else if eq .Phase "working"}}
       <h1>{{if .KO}}GitHub 연결{{else}}Connect GitHub{{end}}</h1>
       {{- if .Step}}
@@ -367,7 +334,7 @@ var wizardHome = template.Must(template.Must(template.New("wizard").Parse(wizard
       <p class="lead">{{if .KO}}GitHub 연결을 마쳤습니다. 배포 대상을 확인하세요.{{else}}GitHub is connected. Review the deployment target.{{end}}</p>
       {{- end}}
     {{- else if eq .Phase "deploying"}}
-      <h1>{{if .Toggling}}{{if .KO}}Tailscale 경로 변경 중{{else}}Updating Tailscale routes{{end}}{{else if .CheckCompose}}{{if .KO}}배포 상태 확인 중{{else}}Checking deployment{{end}}{{else}}{{if .KO}}Runquill 배포 중{{else}}Deploying Runquill{{end}}{{end}}</h1>
+      <h1>{{if .CheckCompose}}{{if .KO}}배포 상태 확인 중{{else}}Checking deployment{{end}}{{else}}{{if .KO}}Runquill 배포 중{{else}}Deploying Runquill{{end}}{{end}}</h1>
       <p class="lead" role="status" id="wizard-activity"><span data-activity>{{.Activity}}</span></p>
     {{- else if eq .Phase "done"}}
       <h1><span class="tick large" aria-hidden="true"></span>{{if .KO}}배포 완료{{else}}Deployment complete{{end}}</h1>
@@ -382,21 +349,13 @@ var wizardHome = template.Must(template.Must(template.New("wizard").Parse(wizard
     {{- end}}
     {{- if eq .Phase "options"}}
     <form method="post" action="/start" class="steps-form">
-      <section class="group" aria-labelledby="group-target">
-        <h2 id="group-target">{{if .KO}}배포 대상{{else}}Where runners run{{end}}</h2>
-        <div class="form-row">
-          <div class="field">
-            <label for="wizard-backend">{{if .KO}}배포 대상{{else}}Deployment target{{end}}</label>
-            <select id="wizard-backend" name="backend"{{if eq .Field "backend"}} aria-invalid="true" aria-describedby="wizard-error{{if .Docker.Blocked}} wizard-docker{{end}}" autofocus{{else if .Docker.Blocked}} aria-describedby="wizard-docker"{{end}}><option value="docker">Docker Compose</option><option value="k3s"{{if eq .Form.Backend "k3s"}} selected{{end}}>K3s</option></select>
-            {{- if eq .Field "backend"}}{{template "field-error" .}}{{end}}
-          </div>
-          <div class="field" data-k3s{{if ne .Form.Backend "k3s"}} hidden{{end}}>
-            <label for="wizard-context">{{if .KO}}K3s 컨텍스트 이름{{else}}K3s context name{{end}}</label>
-            <input id="wizard-context" name="context" maxlength="200" spellcheck="false" autocomplete="off" value="{{.Form.Context}}"{{if eq .Form.Backend "k3s"}} required{{end}}{{if eq .Field "context"}} aria-invalid="true" aria-describedby="wizard-error help-context" autofocus{{else}} aria-describedby="help-context"{{end}}>
-            {{- if eq .Field "context"}}{{template "field-error" .}}{{end}}
-            <p class="hint" id="help-context">{{if .KO}}kubectl config get-contexts에 표시되는 이름입니다.{{else}}As listed by kubectl config get-contexts.{{end}}</p>
-          </div>
-        </div>
+      <dl class="kv">
+        <div><dt>{{if .KO}}실행 환경{{else}}Runners{{end}}</dt><dd>{{if eq .Form.Backend "k3s"}}K3s{{else}}Docker Compose{{end}}{{if .Form.MaxRunners}} · {{if .KO}}최대 {{.Form.MaxRunners}}개 동시 실행{{else}}Up to {{.Form.MaxRunners}} at once{{end}}{{end}}</dd></div>
+        <div><dt>{{if .KO}}작업 수신{{else}}Job delivery{{end}}</dt><dd>{{if .Form.WebhookURL}}{{if .KO}}지정한 웹훅과 폴링{{else}}Custom webhook and polling{{end}}{{else if or .SkipTailscale .Form.LocalOnly (eq .Form.Backend "k3s")}}{{if .KO}}GitHub 폴링{{else}}GitHub polling{{end}}{{else}}{{if .KO}}가능하면 Tailscale 웹훅을 쓰고 폴링을 유지합니다.{{else}}Tailscale webhooks when available, with GitHub polling.{{end}}{{end}}</dd></div>
+      </dl>
+      {{- if not (or .SkipTailscale .Form.LocalOnly (eq .Form.Backend "k3s") .Form.PanelURL)}}
+      <p class="hint">{{if .KO}}Tailscale에 연결되면 패널을 tailnet에서 열 수 있습니다.{{else}}Runquill connects the panel to your tailnet when available.{{end}}</p>
+      {{- end}}
         {{- if .Docker.Blocked}}
         <div class="callout" data-state="failed" id="wizard-docker" data-docker data-docker-blocked{{if eq .Form.Backend "k3s"}} hidden{{end}}>
           {{- if eq .Docker.State "permission"}}
@@ -416,9 +375,24 @@ var wizardHome = template.Must(template.Must(template.New("wizard").Parse(wizard
           <details class="detail-line"><summary>{{if .KO}}Docker 응답 보기{{else}}Show Docker's reply{{end}}</summary><code>{{.Docker.Detail}}</code></details>
           {{- end}}
         </div>
-        {{- else if eq .Docker.State "ok"}}
-        <p class="confirm" data-docker{{if eq .Form.Backend "k3s"}} hidden{{end}}><span class="tick" aria-hidden="true"></span>{{if .KO}}Docker {{.Docker.Detail}}에 연결할 수 있습니다.{{else}}Docker {{.Docker.Detail}} is reachable.{{end}}</p>
         {{- end}}
+      <details class="advanced"{{if .Advanced}} open{{end}}>
+        <summary>{{if .KO}}고급 설정{{else}}Advanced settings{{end}}</summary>
+        <div class="advanced-body">
+      <section class="group">
+        <div class="form-row">
+          <div class="field">
+            <label for="wizard-backend">{{if .KO}}배포 대상{{else}}Deployment target{{end}}</label>
+            <select id="wizard-backend" name="backend"{{if eq .Field "backend"}} aria-invalid="true" aria-describedby="wizard-error{{if .Docker.Blocked}} wizard-docker{{end}}" autofocus{{else if .Docker.Blocked}} aria-describedby="wizard-docker"{{end}}><option value="docker">Docker Compose</option><option value="k3s"{{if eq .Form.Backend "k3s"}} selected{{end}}>K3s</option></select>
+            {{- if eq .Field "backend"}}{{template "field-error" .}}{{end}}
+          </div>
+          <div class="field" data-k3s{{if ne .Form.Backend "k3s"}} hidden{{end}}>
+            <label for="wizard-context">{{if .KO}}K3s 컨텍스트 이름{{else}}K3s context name{{end}}</label>
+            <input id="wizard-context" name="context" maxlength="200" spellcheck="false" autocomplete="off" value="{{.Form.Context}}"{{if eq .Form.Backend "k3s"}} required{{end}}{{if eq .Field "context"}} aria-invalid="true" aria-describedby="wizard-error help-context" autofocus{{else}} aria-describedby="help-context"{{end}}>
+            {{- if eq .Field "context"}}{{template "field-error" .}}{{end}}
+            <p class="hint" id="help-context">{{if .KO}}kubectl config get-contexts에 표시되는 이름입니다.{{else}}As listed by kubectl config get-contexts.{{end}}</p>
+          </div>
+        </div>
       </section>
       <section class="group" aria-labelledby="group-capacity">
         <h2 id="group-capacity">{{if .KO}}러너 용량{{else}}Runner capacity{{end}}</h2>
@@ -451,29 +425,10 @@ var wizardHome = template.Must(template.Must(template.New("wizard").Parse(wizard
         <h2 id="group-github">GitHub</h2>
         <div class="field">
           <label for="wizard-repositories">{{if .KO}}저장소 접근 범위{{else}}Repository access{{end}}</label>
-          <select id="wizard-repositories" name="repositories" aria-describedby="help-repositories"><option value="all">{{if .KO}}전체 저장소{{else}}All repositories{{end}}</option><option value="selected"{{if eq .Form.Repositories "selected"}} selected{{end}}>{{if .KO}}선택한 저장소{{else}}Selected repositories{{end}}</option></select>
+          <select id="wizard-repositories" name="repositories" aria-describedby="help-repositories"><option value="">{{if .KO}}기본값 (새 설치는 전체 저장소){{else}}Default (all repositories on new installs){{end}}</option><option value="selected"{{if eq .Form.Repositories "selected"}} selected{{end}}>{{if .KO}}선택한 저장소{{else}}Selected repositories{{end}}</option></select>
           <p class="hint" id="help-repositories">{{if .KO}}GitHub에서 앱을 설치할 때도 같은 범위를 선택하세요.{{else}}Choose the same access when you install the App on GitHub.{{end}}</p>
         </div>
       </section>
-      <section class="group" aria-labelledby="group-delivery">
-        <h2 id="group-delivery">{{if .KO}}작업 수신{{else}}Job delivery{{end}}</h2>
-        <p class="host">{{if .KO}}GitHub 웹훅이 작업을 바로 알리고, 30초마다 도는 폴링이 놓친 작업을 보완합니다.{{else}}GitHub webhooks announce jobs at once, and polling every 30 seconds catches any that were missed.{{end}}</p>
-        <div data-docker{{if eq .Form.Backend "k3s"}} hidden{{end}}>
-          <label class="check"><input type="checkbox" name="funnel" data-funnel{{if .Form.Funnel}} checked{{end}}{{if eq .Form.Backend "k3s"}} disabled{{end}}{{if eq .Field "funnel"}} aria-invalid="true" aria-describedby="wizard-error help-funnel" autofocus{{else}} aria-describedby="help-funnel"{{end}}>{{if .KO}}Tailscale Funnel로 웹훅 받기{{else}}Receive webhooks through Tailscale Funnel{{end}}</label>
-          {{- if eq .Field "funnel"}}{{template "field-error" .}}{{end}}
-          {{- if .Tailnet.Funnel}}
-          <p class="hint" id="help-funnel">{{if .KO}}<code>{{.Tailnet.Name}}</code>의 8443 포트에서 <code>/webhook</code> 경로만 인터넷에 공개합니다. 패널은 공개되지 않습니다.{{else}}Publishes only the <code>/webhook</code> path on port 8443 of <code>{{.Tailnet.Name}}</code>. The panel stays private.{{end}}</p>
-          {{- else if .Tailnet.Name}}
-          <p class="hint" id="help-funnel">{{if .KO}}이 노드는 아직 Funnel을 쓸 수 없습니다. tailnet에서 HTTPS 인증서를 켜고 접근 제어 정책에 <code>funnel</code> 노드 속성을 허용한 뒤 새로고침하세요. 꺼 두면 폴링만으로 동작합니다.{{else}}This node may not use Funnel yet. Enable HTTPS certificates for the tailnet and grant the <code>funnel</code> node attribute in the access controls, then reload. Left off, polling alone finds jobs.{{end}}</p>
-          {{- else}}
-          <p class="hint" id="help-funnel">{{if .KO}}이 서버에서 연결된 Tailscale을 찾지 못했습니다. 꺼 두면 폴링만으로 동작합니다. Tailscale을 연결하고 MagicDNS를 켠 뒤 새로고침하면 기본으로 켜집니다.{{else}}No connected Tailscale was found on this server. Left off, polling alone finds jobs. Connect Tailscale with MagicDNS and reload to have this on by default.{{end}}</p>
-          {{- end}}
-        </div>
-        <p class="hint" data-k3s{{if ne .Form.Backend "k3s"}} hidden{{end}}>{{if .KO}}K3s에서는 고급 옵션의 공개 웹훅 URL로 직접 연결하세요. 비워 두면 폴링만으로 동작합니다.{{else}}For K3s, supply your own public webhook URL under the advanced options. Left empty, polling alone finds jobs.{{end}}</p>
-      </section>
-      <details class="advanced"{{if .Advanced}} open{{end}}>
-        <summary>{{if .KO}}조직 및 네트워크{{else}}Organization and network{{end}}</summary>
-        <div class="advanced-body">
           <div class="form-row">
             <div class="field">
               <label for="wizard-organization">{{if .KO}}GitHub 조직 (선택){{else}}GitHub organization (optional){{end}}</label>
@@ -492,7 +447,7 @@ var wizardHome = template.Must(template.Must(template.New("wizard").Parse(wizard
             <label for="wizard-panel-url">{{if .KO}}패널 주소 (선택){{else}}Panel origin (optional){{end}}</label>
             <input id="wizard-panel-url" name="panel_url" type="url" spellcheck="false" placeholder="http://127.0.0.1:8081" value="{{.Form.PanelURL}}"{{if eq .Field "panel_url"}} aria-invalid="true" aria-describedby="wizard-error help-panel-url" autofocus{{else}} aria-describedby="help-panel-url"{{end}}>
             {{- if eq .Field "panel_url"}}{{template "field-error" .}}{{end}}
-            <p class="hint" id="help-panel-url">{{if .KO}}비워 두면 http://127.0.0.1:8081을 씁니다.{{else}}Defaults to http://127.0.0.1:8081.{{end}}</p>
+            <p class="hint" id="help-panel-url">{{if .KO}}비워 두면 Tailscale Serve 또는 http://127.0.0.1:8081을 씁니다.{{else}}Defaults to Tailscale Serve when available, or http://127.0.0.1:8081.{{end}}</p>
           </div>
           <div class="field">
             <label for="wizard-webhook-url">{{if .KO}}공개 웹훅 URL (선택){{else}}Public webhook URL (optional){{end}}</label>
@@ -500,26 +455,19 @@ var wizardHome = template.Must(template.Must(template.New("wizard").Parse(wizard
             {{- if eq .Field "webhook_url"}}{{template "field-error" .}}{{end}}
             <p class="hint" id="help-webhook-url">{{if .KO}}Funnel 대신 직접 운영하는 공개 주소가 있을 때만 입력하세요.{{else}}Only when you run your own public address instead of Funnel.{{end}}</p>
           </div>
-          <fieldset aria-describedby="help-tailscale">
-            <legend>Tailscale</legend>
-            <label class="check"><input type="checkbox" name="serve"{{if .Form.Serve}} checked{{end}}{{if eq .Field "serve"}} aria-invalid="true" aria-describedby="wizard-error" autofocus{{end}}>{{if .KO}}Serve로 패널을 tailnet에만 공개{{else}}Serve the panel privately on the tailnet{{end}}</label>
-            {{- if eq .Field "serve"}}{{template "field-error" .}}{{end}}
-            <p class="hint" id="help-tailscale">{{if .KO}}Docker Compose 설치에서만 쓸 수 있습니다. 이 호스트가 Tailscale에 연결되어 있고 MagicDNS가 켜져 있어야 합니다.{{else}}Docker Compose only. This host must be connected to Tailscale with MagicDNS enabled.{{end}}</p>
-          </fieldset>
+          {{- if not .SkipTailscale}}
+          <div data-docker{{if eq .Form.Backend "k3s"}} hidden{{end}}>
+            <label class="check"><input type="checkbox" name="local_only"{{if .Form.LocalOnly}} checked{{end}}>{{if .KO}}Tailscale 자동 연결 건너뛰기{{else}}Skip automatic Tailscale setup{{end}}</label>
+            <p class="hint">{{if .KO}}자동 연결은 사용 가능한 경우 패널을 tailnet에 연결하고 GitHub 웹훅 경로만 공개합니다.{{else}}When available, automatic setup puts the panel on your tailnet and exposes only the GitHub webhook path.{{end}}</p>
+          </div>
+          {{- end}}
         </div>
       </details>
       <input type="hidden" name="lang" value="{{.Language}}">
-      <div class="actions"><button class="button primary" data-start>{{if .KO}}GitHub 연결 시작{{else}}Connect GitHub{{end}}</button><p class="next">{{if .KO}}다음 단계에서 GitHub에 Runquill용 비공개 앱을 등록합니다.{{else}}Next, you register a private App for Runquill on GitHub.{{end}}</p></div>
+      <div class="actions"><button class="button primary" data-start>{{if .KO}}GitHub 연결{{else}}Connect GitHub{{end}}</button></div>
     </form>
     {{- else if eq .Phase "working"}}
-    {{- if .Step}}
-    <div class="actions"><a class="button primary" href="{{.Step}}/">{{if .KO}}현재 단계 열기{{else}}Open the current step{{end}}</a></div>
-    {{- else if .Install}}
-    <ol class="howto">
-      <li>{{if .KO}}아래 버튼으로 GitHub를 새 탭에서 엽니다.{{else}}Open GitHub in a new tab with the button below.{{end}}</li>
-      <li>{{if .KO}}설치 옵션에서 고른 저장소 범위를 선택하고 앱을 설치합니다.{{else}}Pick the repository access you chose in the options and install the App.{{end}}</li>
-      <li>{{if .KO}}이 탭으로 돌아오면 자동으로 다음 단계로 넘어갑니다.{{else}}Come back to this tab; it moves on by itself.{{end}}</li>
-    </ol>
+    {{- if .Install}}
     <div class="actions"><a class="button primary" href="{{.Install}}" rel="noreferrer" target="_blank">{{if .KO}}GitHub에 앱 설치{{else}}Install the GitHub App{{end}}</a><p class="next waiting"><span class="spinner" aria-hidden="true"></span>{{if .KO}}설치를 기다리고 있습니다.{{else}}Waiting for the installation.{{end}}</p></div>
     {{- end}}
     {{- else if eq .Phase "ready"}}
@@ -535,20 +483,25 @@ var wizardHome = template.Must(template.Must(template.New("wizard").Parse(wizard
     {{- if .Funnel}}
     <p class="notice" data-state="waiting">{{if .KO}}배포하면 웹훅 경로가 인터넷에 공개됩니다. 웹훅이 닿지 않는 동안에도 30초마다 폴링이 작업을 찾습니다.{{else}}Deploying publishes the webhook path to the internet. Polling every 30 seconds still finds jobs whenever a webhook does not arrive.{{end}}</p>
     {{- end}}
-    {{template "stages" .}}
     <form method="post" action="/deploy"><div class="actions"><button class="button primary">{{if .CheckCompose}}{{if .KO}}사전 점검 다시 실행{{else}}Run preflight again{{end}}{{else}}{{if .KO}}배포 및 사전 점검{{else}}Deploy and check installation{{end}}{{end}}</button></div></form>
-    {{- else if eq .Phase "deploying"}}
-    {{template "stages" .}}
     {{- else if eq .Phase "done"}}
+    {{- if .FunnelFailed}}
+    <p class="notice" data-state="waiting">{{if .KO}}Tailscale 웹훅에 연결하지 못했습니다. GitHub 폴링을 사용 중이면 작업 수신은 계속됩니다.{{else}}Tailscale Funnel is unavailable. If GitHub polling is enabled, jobs still arrive.{{end}}</p>
+    {{- end}}
     {{- if .PanelURL}}
     <section class="group" aria-labelledby="panel-title">
       <h2 id="panel-title">{{if .KO}}운영 패널{{else}}Operations panel{{end}}</h2>
-      {{template "value" .PanelOrigin}}
-      {{- if .K3s}}
+      {{- if .ServeFailed}}
+      <p class="notice" data-state="failed">{{if .KO}}패널은 실행 중이지만 Tailscale Serve에 연결되지 않았습니다. 배포 로그에서 원인을 확인한 뒤 서버에서 다음 명령으로 패널 경로를 복구하세요.{{else}}The panel is running but Tailscale Serve is unavailable. Check the deployment log, then restore the panel route on the server with this command.{{end}}</p>
+      {{template "value" "tailscale serve --bg --https=9443 http://127.0.0.1:8081"}}
+      {{- else if .PanelForward}}
+      <p class="hint">{{if .KO}}패널을 열기 전에 내 컴퓨터에서 이 명령을 실행하세요.{{else}}Run this command on your computer before opening the panel.{{end}}</p>
+      {{template "value" .PanelForward}}
+      {{- else if .K3s}}
       <p class="hint">{{if .KO}}루프백 주소의 K3s 패널은 포트를 포워딩한 뒤 여세요.{{else}}For a loopback K3s panel, forward the port first.{{end}}</p>
       {{template "value" "kubectl -n runquill-system port-forward svc/runquill 8081:8081"}}
       {{- end}}
-      <div class="actions"><a class="button primary" href="{{.PanelURL}}">{{if .KO}}운영 패널 열기{{else}}Open the operations panel{{end}}</a></div>
+      {{- if not .ServeFailed}}<div class="actions"><a class="button primary" href="{{.PanelURL}}">{{if .KO}}운영 패널 열기{{else}}Open the operations panel{{end}}</a></div>{{end}}
     </section>
     {{- else if .K3s}}
     <p class="hint">{{if .KO}}루프백 주소의 K3s 패널은 포트를 포워딩한 뒤 여세요.{{else}}For a loopback K3s panel, forward the port first.{{end}}</p>
@@ -556,18 +509,9 @@ var wizardHome = template.Must(template.Must(template.New("wizard").Parse(wizard
     {{- end}}
     <section class="group" aria-labelledby="first-job-title">
       <h2 id="first-job-title">{{if .KO}}첫 작업 실행{{else}}Run a first job{{end}}</h2>
-      <ol class="howto">
-        <li><span>{{if .KO}}첫 작업 워크플로를 내려받습니다.{{else}}Download the first-job workflow.{{end}}</span><a class="button" href="/first-job.yml" download="runquill-first-job.yml">{{if .KO}}첫 작업 워크플로 다운로드{{else}}Download the first-job workflow{{end}}</a></li>
-        <li>{{if .KO}}워크플로를 비공개 저장소의 .github/workflows/에 추가하고 Actions에서 실행하세요.{{else}}Add the workflow to .github/workflows/ in a private repository and run it from Actions.{{end}}</li>
-        <li>{{if .KO}}운영 패널에서 작업 수신과 러너 정리를 확인하세요.{{else}}Follow job discovery and runner cleanup in the operations panel.{{end}}</li>
-      </ol>
+      <p>{{if .KO}}워크플로를 비공개 저장소의 <code>.github/workflows/</code>에 추가한 뒤 GitHub Actions에서 실행하세요.{{else}}Add the workflow to <code>.github/workflows/</code> in a private repository and run it from GitHub Actions.{{end}}</p>
+      <div class="actions"><a class="button" href="/first-job.yml" download="runquill-first-job.yml">{{if .KO}}첫 작업 워크플로 다운로드{{else}}Download the first-job workflow{{end}}</a></div>
     </section>
-    {{- if or .Serve .Funnel}}
-    <section class="group" aria-labelledby="tailscale-title">
-      <h2 id="tailscale-title">Tailscale</h2>
-      <form action="/tailscale" method="post"><div class="actions"><button class="button">{{if .NetworkEnabled}}{{if .KO}}Tailscale 경로 일시 중지{{else}}Pause Tailscale routes{{end}}{{else}}{{if .KO}}Tailscale 경로 다시 켜기{{else}}Resume Tailscale routes{{end}}{{end}}</button><p class="next">{{if .NetworkEnabled}}{{if .KO}}현재 켜져 있습니다.{{else}}Routes are on.{{end}}{{else}}{{if .KO}}현재 꺼져 있습니다.{{else}}Routes are off.{{end}}{{end}}</p></div></form>
-    </section>
-    {{- end}}
     {{- end}}
     {{- if or .Log (eq .Phase "deploying")}}
     <details class="deploy-log"{{if ne .Phase "done"}} open{{end}}>
@@ -583,14 +527,7 @@ var wizardHome = template.Must(template.Must(template.New("wizard").Parse(wizard
 </body>
 </html>
 {{define "field-error"}}<p class="field-error" id="wizard-error" role="alert"><strong>{{if .KO}}오류:{{else}}Error:{{end}}</strong> {{.Problem}}</p>{{end}}
-{{define "stages"}}<section class="group" aria-labelledby="stages-title">
-      <h2 id="stages-title">{{if .Toggling}}{{if .KO}}진행 단계{{else}}Stages{{end}}{{else}}{{if .KO}}배포 단계{{else}}Deployment stages{{end}}{{end}}</h2>
-      <ol class="stages" id="wizard-stages" data-ok="{{if .KO}}완료{{else}}done{{end}}" data-current="{{if .KO}}진행 중{{else}}in progress{{end}}" data-pending="{{if .KO}}대기{{else}}pending{{end}}">
-        {{- range .Stages}}
-        <li data-stage="{{.Key}}" data-state="{{.State}}"{{if eq .State "current"}} aria-current="step"{{end}}><span class="node" aria-hidden="true"></span><span class="stage-label">{{.Label}}</span><span class="state-text">{{.StateText}}</span></li>
-        {{- end}}
-      </ol>
-    </section>{{end}}`))
+`))
 
 func wizardCommand(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("runquill wizard", flag.ContinueOnError)
@@ -612,7 +549,8 @@ func wizardCommand(ctx context.Context, args []string) error {
 func runWizard(ctx context.Context, out io.Writer, dir string, client *http.Client, apiBase string, port uint, checkCompose bool) error {
 	ctx, cancel := context.WithTimeout(ctx, time.Hour)
 	defer cancel()
-	listener, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.FormatUint(uint64(port), 10)))
+	sshConnection, user := os.Getenv("SSH_CONNECTION"), wizardUser()
+	listener, err := listenWizard(port, wizardSSHTarget(sshConnection, user) != "")
 	if err != nil {
 		return err
 	}
@@ -621,7 +559,14 @@ func runWizard(ctx context.Context, out io.Writer, dir string, client *http.Clie
 		origin: "http://" + listener.Addr().String(), key: rand.Text(), dir: dir,
 		client: client, apiBase: apiBase, log: out, ctx: ctx, language: "en", phase: "options",
 		host: detectWizardHost(), command: execWizardCommand,
+		skipTailscale: os.Getenv("RUNQUILL_SKIP_TAILSCALE") == "1", sshConnection: sshConnection,
 	}
+	defer func() {
+		cancel()
+		web.mu.Lock()
+		web.mu.Unlock()
+		web.setupWork.Wait()
+	}()
 	if checkCompose {
 		data, err := os.ReadFile(filepath.Join(dir, setupEnvFile))
 		if err != nil {
@@ -645,7 +590,7 @@ func runWizard(ctx context.Context, out io.Writer, dir string, client *http.Clie
 		// install.sh has already printed the forwarding command and the note about the key.
 		fmt.Fprintf(out, "Open %s/?key=%s in your browser.\n", web.origin, web.key)
 	} else {
-		fmt.Fprint(out, wizardStartMessage(web.origin, web.key, listener.Addr().(*net.TCPAddr).Port, os.Getenv("SSH_CONNECTION"), wizardUser()))
+		fmt.Fprint(out, wizardStartMessage(web.origin, web.key, listener.Addr().(*net.TCPAddr).Port, sshConnection, user))
 	}
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(listener) }()
@@ -657,6 +602,17 @@ func runWizard(ctx context.Context, out io.Writer, dir string, client *http.Clie
 		defer cancel()
 		return server.Shutdown(shutdown)
 	}
+}
+
+func listenWizard(port uint, ssh bool) (net.Listener, error) {
+	if port == 0 && ssh {
+		for port := 18080; port <= 18089; port++ {
+			if listener, err := net.Listen("tcp4", "127.0.0.1:"+strconv.Itoa(port)); err == nil {
+				return listener, nil
+			}
+		}
+	}
+	return net.Listen("tcp4", "127.0.0.1:"+strconv.FormatUint(uint64(port), 10))
 }
 
 func (web *setupWizard) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -696,6 +652,10 @@ func (web *setupWizard) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	web.mu.Lock()
 	step, handler := web.step, web.handler
 	web.mu.Unlock()
+	if r.Method == http.MethodGet && r.URL.Path == "/" && handler != nil && (step == "/connect" || step == "/oauth") {
+		http.Redirect(w, r, step+"/", http.StatusSeeOther)
+		return
+	}
 	if handler != nil && strings.HasPrefix(r.URL.Path, step+"/") {
 		handler.ServeHTTP(w, r)
 		return
@@ -710,13 +670,11 @@ func (web *setupWizard) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 		fmt.Fprint(w, wizardJS)
 	case r.Method == http.MethodGet && r.URL.Path == "/status":
-		web.status(w)
+		web.status(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == "/start":
 		web.start(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == "/deploy":
 		web.deploy(w, r)
-	case r.Method == http.MethodPost && r.URL.Path == "/tailscale":
-		web.toggleNetwork(w, r)
 	case r.Method == http.MethodGet && r.URL.Path == "/first-job.yml":
 		web.mu.Lock()
 		isDone := web.phase == "done"
@@ -742,12 +700,8 @@ func (web *setupWizard) render(w http.ResponseWriter, r *http.Request) {
 	options, run := web.phase == "options", web.command
 	web.mu.Unlock()
 	var docker wizardDocker
-	var tailnet wizardTailnet
 	if options {
 		docker = probeWizardDocker(r.Context(), run)
-		if run != nil {
-			tailnet = probeWizardTailnet(r.Context())
-		}
 	}
 	web.mu.Lock()
 	language := web.language
@@ -761,33 +715,27 @@ func (web *setupWizard) render(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{Name: "runquill_language", Value: language, Path: "/", SameSite: http.SameSiteLaxMode, MaxAge: 3600})
 	stage, log := web.progress.snapshot()
 	view := struct {
-		Language, Phase, Step, Install, Target, PanelURL, Stage, Log, Problem, Field, Activity string
-		User, HostMemory, PanelOrigin                                                          string
-		KO, K3s, Serve, Funnel, NetworkEnabled, CheckCompose, Error, Advanced, Toggling        bool
-		Form                                                                                   wizardForm
-		Steps, Stages                                                                          []wizardMark
-		Chrome                                                                                 *wizardChrome
-		Host                                                                                   wizardHost
-		Docker                                                                                 wizardDocker
-		Tailnet                                                                                wizardTailnet
+		Language, Phase, Step, Install, Target, PanelURL, Log, Problem, Field, Activity string
+		User, HostMemory, PanelOrigin, PanelForward                                     string
+		KO, K3s, Serve, Funnel, CheckCompose, Error, Advanced, SkipTailscale            bool
+		ServeFailed, FunnelFailed                                                       bool
+		Form                                                                            wizardForm
+		Steps                                                                           []wizardMark
+		Chrome                                                                          *wizardChrome
+		Host                                                                            wizardHost
+		Docker                                                                          wizardDocker
 	}{Language: language, Phase: web.phase, Step: web.step, Install: web.installURL, Target: web.kubeContext,
-		PanelURL: web.panelLink(language), Stage: stage, Log: log, KO: language == "ko", K3s: web.options.kubernetes,
-		Serve: web.network.serve, Funnel: web.network.funnel, NetworkEnabled: web.networkEnabled,
-		CheckCompose: web.checkCompose, Error: web.failed, Toggling: web.toggling,
-		Host: web.host, HostMemory: strconv.FormatFloat(float64(web.host.MemoryMiB)/1024, 'f', 1, 64), Docker: docker, Tailnet: tailnet}
+		PanelURL: web.panelLink(language), Log: log, KO: language == "ko", K3s: web.options.kubernetes,
+		Serve: web.network.serve, Funnel: web.network.funnel, ServeFailed: web.serveFailed, FunnelFailed: web.funnelFailed,
+		CheckCompose: web.checkCompose, Error: web.failed, SkipTailscale: web.skipTailscale,
+		Host: web.host, HostMemory: strconv.FormatFloat(float64(web.host.MemoryMiB)/1024, 'f', 1, 64), Docker: docker}
 	view.Steps = wizardSteps(view.KO, view.Phase, view.Step, view.Install != "", view.Error)
 	view.Chrome = newWizardChrome(view.KO, view.Steps)
 	view.PanelOrigin, _, _ = strings.Cut(view.PanelURL, "/?")
-	view.Stages = wizardStages(view.KO, view.K3s, view.CheckCompose, web.network.host != "", view.Toggling, view.Phase, stage, view.Error)
-	view.Activity = wizardActivity[""][1]
-	if activity, ok := wizardActivity[stage]; ok {
-		view.Activity = activity[1]
-		if view.KO {
-			view.Activity = activity[0]
-		}
-	} else if view.KO {
-		view.Activity = wizardActivity[""][0]
+	if web.phase == "done" && !view.K3s && view.PanelOrigin == defaultSetupPanelURL {
+		view.PanelForward = wizardSSHForward(8081, web.sshConnection, wizardUser())
 	}
+	view.Activity = wizardActivityText(view.KO, stage)
 	if web.phase == "options" && docker.State == "ok" && web.issue != nil && web.issue.field == "backend" {
 		// Docker was refused earlier and is reachable now: the refusal no longer applies.
 		web.failed, web.issue = false, nil
@@ -801,10 +749,6 @@ func (web *setupWizard) render(w http.ResponseWriter, r *http.Request) {
 			suggested := recommendCapacity(web.host)
 			view.Form.MaxRunners = strconv.Itoa(suggested.Runners)
 			view.Form.RunnerCPUs, view.Form.RunnerMemory = wizardCPUText(suggested.CPUs), wizardGiB(suggested.MemoryMiB)
-		}
-		if web.form == (wizardForm{}) && !web.failed {
-			// Webhooks through Funnel are the default wherever this host can offer them.
-			view.Form.Funnel = view.Tailnet.Funnel
 		}
 		if view.Docker.Blocked() {
 			view.User = wizardUser()
@@ -846,7 +790,7 @@ func (web *setupWizard) start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	web.mu.Lock()
-	if web.phase != "options" {
+	if web.phase != "options" || web.ctx.Err() != nil {
 		web.mu.Unlock()
 		http.Error(w, "Setup is already in progress.", http.StatusConflict)
 		return
@@ -859,8 +803,8 @@ func (web *setupWizard) start(w http.ResponseWriter, r *http.Request) {
 		web.language = "en"
 	}
 	form := r.PostForm
+	web.setupWork.Go(func() { web.configure(form) })
 	web.mu.Unlock()
-	go web.configure(form)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
@@ -936,7 +880,8 @@ func (web *setupWizard) configure(form url.Values) {
 		web.reject(form, err)
 		return
 	}
-	capacity, err := parseCapacity(wizardFormValues(form))
+	answers := wizardFormValues(form)
+	capacity, err := parseCapacity(answers)
 	if err != nil {
 		web.reject(form, err)
 		return
@@ -948,13 +893,8 @@ func (web *setupWizard) configure(form url.Values) {
 			return
 		}
 	}
-	network := wizardNetwork{serve: form.Get("serve") == "on", funnel: form.Get("funnel") == "on"}
-	if err := network.configure(web.ctx, &opts); err != nil {
-		web.reject(form, err)
-		return
-	}
 	web.mu.Lock()
-	web.options, web.network, web.kubeContext = opts, network, kubeContext
+	web.options, web.form, web.kubeContext = opts, answers, kubeContext
 	web.mu.Unlock()
 	ctx := context.WithValue(web.ctx, setupWizardKey{}, web)
 	if err := setup(ctx, web.log, web.dir, web.client, web.apiBase, opts); err != nil {
@@ -977,6 +917,10 @@ func (web *setupWizard) configure(form url.Values) {
 	}
 	web.mu.Lock()
 	web.options.panelURL = values["RUNQUILL_PANEL_URL"]
+	if web.network.host != "" {
+		web.network.serve = answers.PanelURL == "" && web.options.panelURL == web.network.panelURL()
+		web.network.funnel = answers.WebhookURL == "" && values["RUNQUILL_WEBHOOK_URL"] == web.network.webhookURL()
+	}
 	web.mu.Unlock()
 	web.setResult("ready", nil)
 }
@@ -1002,37 +946,7 @@ func (web *setupWizard) launchDeployment() {
 			fmt.Fprintln(&web.progress, err)
 			web.setResult("ready", err)
 		} else {
-			web.mu.Lock()
-			web.networkEnabled = web.network.host != ""
-			web.mu.Unlock()
 			web.setResult("done", nil)
 		}
 	}()
-}
-
-func (web *setupWizard) toggleNetwork(w http.ResponseWriter, r *http.Request) {
-	web.mu.Lock()
-	if web.phase != "done" || web.network.host == "" {
-		web.mu.Unlock()
-		http.Error(w, "Network settings are unavailable in this step.", http.StatusConflict)
-		return
-	}
-	enabled := !web.networkEnabled
-	web.progress.mark("network")
-	web.phase, web.failed, web.toggling = "deploying", false, true
-	web.mu.Unlock()
-	go func() {
-		err := web.network.apply(web.ctx, enabled)
-		if err != nil {
-			fmt.Fprintln(&web.progress, err)
-		}
-		web.mu.Lock()
-		web.toggling = false
-		if err == nil {
-			web.networkEnabled = enabled
-		}
-		web.mu.Unlock()
-		web.setResult("done", err)
-	}()
-	http.Redirect(w, r, "/", http.StatusSeeOther)
 }

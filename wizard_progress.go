@@ -88,17 +88,22 @@ func (p *wizardProgress) snapshot() (stage, log string) {
 	return p.stage, string(p.tail)
 }
 
-func (web *setupWizard) status(w http.ResponseWriter) {
+func (web *setupWizard) status(w http.ResponseWriter, r *http.Request) {
 	web.mu.Lock()
 	phase, step, install := web.phase, web.step, web.installURL != ""
+	ko := web.language == "ko"
 	web.mu.Unlock()
+	if language, err := r.Cookie("runquill_language"); err == nil {
+		ko = language.Value == "ko"
+	}
 	stage, log := web.progress.snapshot()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(struct {
-		Phase   string `json:"phase"`
-		Step    string `json:"step"`
-		Install bool   `json:"install"`
-		Stage   string `json:"stage"`
-		Log     string `json:"log"`
-	}{phase, step, install, stage, log})
+		Phase    string `json:"phase"`
+		Step     string `json:"step"`
+		Install  bool   `json:"install"`
+		Stage    string `json:"stage"`
+		Activity string `json:"activity"`
+		Log      string `json:"log"`
+	}{phase, step, install, stage, wizardActivityText(ko, stage), log})
 }

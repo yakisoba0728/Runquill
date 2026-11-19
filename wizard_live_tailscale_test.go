@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -18,10 +19,9 @@ func TestLiveWizardTailscale(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Second)
 	defer cancel()
-	opts := setupOptions{panel: true}
-	routes := wizardNetwork{serve: true, funnel: true}
-	if err := routes.configure(ctx, &opts); err != nil {
-		t.Fatal(err)
+	routes := discoverWizardNetwork(ctx)
+	if !routes.serve || !routes.funnel {
+		t.Fatal("test requires permission to use both Tailscale routes")
 	}
 	current, err := readTailscaleMappings(ctx)
 	if err != nil {
@@ -53,15 +53,18 @@ func TestLiveWizardTailscale(t *testing.T) {
 	t.Cleanup(func() {
 		cleanup, stop := context.WithTimeout(context.Background(), 35*time.Second)
 		defer stop()
-		if err := routes.apply(cleanup, false); err != nil {
-			t.Errorf("remove temporary Tailscale listeners: %v", err)
+		for _, route := range routes.routes() {
+			if _, err := routes.setRoute(cleanup, route, false); err != nil {
+				t.Errorf("remove temporary Tailscale %s listener: %v", route.command, err)
+			}
 		}
 	})
-	if err := routes.apply(ctx, true); err != nil {
-		t.Fatal(err)
+	var log strings.Builder
+	if serveFailed, funnelFailed := routes.activate(ctx, &log); serveFailed || funnelFailed {
+		t.Fatal(log.String())
 	}
 	t.Log("Tailscale configured a tailnet-only panel and a public webhook-only handler")
-	webhook, err := url.Parse(opts.webhookURL)
+	webhook, err := url.Parse(routes.webhookURL())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +75,7 @@ func TestLiveWizardTailscale(t *testing.T) {
 		method, address string
 		status          int
 	}{
-		{http.MethodGet, opts.panelURL + "/", http.StatusNoContent},
+		{http.MethodGet, routes.panelURL() + "/", http.StatusNoContent},
 		{http.MethodPost, webhook.String(), http.StatusAccepted},
 		{http.MethodGet, "https://" + webhook.Host + "/", http.StatusNotFound},
 	} {

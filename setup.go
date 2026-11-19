@@ -93,6 +93,11 @@ func setup(ctx context.Context, out io.Writer, dir string, client *http.Client, 
 	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		return fmt.Errorf("lock setup directory: %w", err)
 	}
+	web := currentWizard(ctx)
+	if web != nil {
+		cleanup := web.prepareNetwork(ctx, &opts)
+		defer cleanup()
+	}
 
 	envData, err := setupFiles(ctx, out, dir, client, apiBase, opts)
 	if err != nil {
@@ -155,6 +160,9 @@ func setup(ctx context.Context, out io.Writer, dir string, client *http.Client, 
 		fmt.Fprintln(out, "Panel settings saved in .env.")
 	}
 
+	if web != nil {
+		return nil
+	}
 	if opts.kubernetes {
 		fmt.Fprintln(out, "Apply runquill-k3s.yaml to the intended Kubernetes context.")
 		fmt.Fprintln(out, "  kubectl apply -f runquill-k3s.yaml")

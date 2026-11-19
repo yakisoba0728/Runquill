@@ -88,7 +88,7 @@ run_image() {
 
     if [ "${RUNQUILL_TEST_WIZARD:-}" = 1 ]; then
         expect 'wizard over SSH prints the forwarding command' 0 'ssh -L 18080:127.0.0.1:18080 -p 2222 alice@10.0.0.9' \
-            'SSH_CONNECTION="203.0.113.5 50000 10.0.0.9 2222" timeout 120 sh /src/install.sh --wizard --dir "$HOME/runquill" </dev/null >wizard.log 2>&1; cat wizard.log; grep -q "Open http://127.0.0.1:18080/?key=" wizard.log'
+            'SSH_CONNECTION="203.0.113.5 50000 10.0.0.9 2222" timeout 120 sh /src/install.sh --wizard --no-tailscale --listen-port 18080 --dir "$HOME/runquill" </dev/null >wizard.log 2>&1; cat wizard.log; grep -q "Open http://127.0.0.1:18080/?key=" wizard.log'
         expect '--upgrade runs the checks and keeps working' 0 'is already installed in' \
             'sh /src/install.sh --upgrade --dir "$HOME/runquill" --version "$("$HOME/runquill/runquill" --version)" </dev/null'
     fi

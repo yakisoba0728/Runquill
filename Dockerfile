@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS build
+FROM --platform=$BUILDPLATFORM golang:1.26.11-bookworm AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -11,7 +11,7 @@ ARG VERSION=dev
 # Release builds name their registry so the runner image catalogue can offer the published OS variants.
 ARG RELEASE_IMAGE=
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-    go build -trimpath -ldflags="-s -w -X main.version=$VERSION -X main.releaseImage=$RELEASE_IMAGE" -o /out/runquill .
+    go build -buildvcs=false -trimpath -ldflags="-s -w -X main.version=$VERSION -X main.releaseImage=$RELEASE_IMAGE" -o /out/runquill .
 
 FROM docker:29-cli
 LABEL org.opencontainers.image.licenses="Apache-2.0"

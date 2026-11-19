@@ -62,11 +62,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const contextInput = document.querySelector("[name=context]");
     const blocked = document.querySelector("[data-docker-blocked]");
     const start = document.querySelector("[data-start]");
-    const funnel = document.querySelector("[data-funnel]");
     const updateBackend = () => {
       const k3s = backend.value === "k3s";
-      // A disabled box is not submitted: Funnel is managed for Docker Compose only.
-      if (funnel) funnel.disabled = k3s;
       for (const element of k3sOnly) element.hidden = !k3s;
       for (const element of dockerOnly) element.hidden = k3s;
       contextInput.required = k3s;
@@ -97,47 +94,16 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  const { phase, step, install, stage } = document.body.dataset;
+  const { phase, step, install } = document.body.dataset;
   const activity = document.getElementById("wizard-activity");
-  const stages = document.getElementById("wizard-stages");
   const log = document.getElementById("wizard-log");
   const connection = document.getElementById("wizard-connection");
-  const korean = document.documentElement.lang === "ko";
-  // The same sentences as wizardActivity in wizard.go.
-  const sentences = {
-    images: ["러너 이미지를 준비하고 있습니다.", "Preparing runner images."],
-    resources: ["K3s 리소스를 적용하고 있습니다.", "Applying K3s resources."],
-    manager: ["매니저를 시작하고 있습니다.", "Starting the manager."],
-    network: ["Tailscale 경로를 적용하고 있습니다.", "Applying Tailscale routes."],
-    check: ["서버와 GitHub 연결을 점검하고 있습니다.", "Checking the server and GitHub connection."],
-  };
   const pollDelay = 1000;
   const maxPollDelay = 10000;
   let delay = pollDelay;
   let timer = 0;
   let inFlight = false;
   let stopped = false;
-
-  function updateStage(next) {
-    const sentence = activity?.querySelector("[data-activity]") || activity;
-    if (sentence && Object.hasOwn(sentences, next)) {
-      const label = sentences[next][korean ? 0 : 1];
-      if (sentence.textContent !== label) sentence.textContent = label;
-    }
-    if (!stages || phase !== "deploying") return;
-    const items = [...stages.querySelectorAll("li[data-stage]")];
-    const at = items.findIndex((item) => item.dataset.stage === next);
-    if (at < 0) return;
-    items.forEach((item, index) => {
-      const state = index < at ? "ok" : index === at ? "current" : "pending";
-      if (item.dataset.state === state) return;
-      item.dataset.state = state;
-      if (state === "current") item.setAttribute("aria-current", "step");
-      else item.removeAttribute("aria-current");
-      const text = item.querySelector(".state-text");
-      if (text) text.textContent = stages.dataset[state] || "";
-    });
-  }
 
   function updateLog(text) {
     if (!log || log.textContent === text) return;
@@ -163,7 +129,8 @@ document.addEventListener("DOMContentLoaded", () => {
         location.reload();
         return "reload";
       }
-      updateStage(status.stage);
+      const sentence = activity?.querySelector("[data-activity]");
+      if (sentence && sentence.textContent !== status.activity) sentence.textContent = status.activity;
       updateLog(status.log);
       return "ok";
     } catch {
@@ -193,7 +160,6 @@ document.addEventListener("DOMContentLoaded", () => {
     schedule();
   }
 
-  updateStage(stage);
   if (log) log.scrollTop = log.scrollHeight;
   if (phase === "working" || phase === "deploying") {
     document.addEventListener("visibilitychange", () => {
