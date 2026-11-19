@@ -1,7 +1,9 @@
-/* Runquill setup wizard. The wizard cannot load panel.css, so the tokens,
-   type scale, controls and state colours below mirror panel.css: keep the
-   two in step when either changes. Neutral greys everywhere; colour only
-   for state (ok, waiting, failed, offline) and one accent for focus. */
+/* Runquill setup wizard. The colour tokens and state colours mirror
+   panel.css (the wizard cannot load it): keep the two in step when either
+   changes. The wizard is the same product at a calmer pace than the
+   console: larger type, more air, and one clear "you are here". Neutral
+   greys everywhere; colour only for state and one accent for focus and
+   links. State is always carried by shape or text as well as colour. */
 
 :root {
   color-scheme: light;
@@ -23,8 +25,9 @@
 
   --font: system-ui, -apple-system, "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  --row: 32px;
-  --topbar: 40px;
+  --radius: 6px;
+  --rail: 300px;
+  --measure: 640px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -75,21 +78,29 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 13px/20px var(--font);
+  font: 15px/24px var(--font);
   font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
 }
 
-h1, h2, p, dl, dd, ol, ul { margin: 0; }
+h1, h2, h3, p, dl, dd, ol, ul { margin: 0; }
 ol, ul { padding: 0; list-style: none; }
-h1 { font-size: 18px; line-height: 26px; font-weight: 600; }
-h2 { font-size: 14px; line-height: 20px; font-weight: 600; }
 
-a { color: var(--accent); text-underline-offset: 2px; }
+/* Type scale: 13 / 15 / 17 / 30. The jump to the heading is deliberate,
+   the rest stays close to body size so forms read evenly. */
+h1 { font-size: 30px; line-height: 38px; font-weight: 650; letter-spacing: -0.02em; }
+h2 { font-size: 17px; line-height: 26px; font-weight: 600; letter-spacing: -0.005em; }
+h3 { font-size: 15px; line-height: 24px; font-weight: 600; }
+:lang(ko) h1 { letter-spacing: -0.01em; }
+:lang(ko) h1, :lang(ko) h2, :lang(ko) .lead, :lang(ko) .step-label { word-break: keep-all; }
+
+a { color: var(--accent); text-underline-offset: 3px; }
 a:hover { text-decoration-thickness: 2px; }
 
-code { font-family: var(--mono); font-size: 12px; background: var(--bg-code); padding: 1px 4px; border-radius: 2px; overflow-wrap: anywhere; }
+code { font-family: var(--mono); font-size: 13px; background: var(--bg-code); padding: 1px 5px; border-radius: 3px; overflow-wrap: anywhere; }
 
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+main:focus { outline: none; }
 [hidden] { display: none !important; }
 
 .visually-hidden {
@@ -97,141 +108,285 @@ code { font-family: var(--mono); font-size: 12px; background: var(--bg-code); pa
   clip-path: inset(50%); white-space: nowrap;
 }
 
-/* Top bar: same height, background and border as the panel's. */
-
-.topbar {
-  display: flex; align-items: center; gap: 16px;
-  min-height: var(--topbar); padding: 0 16px;
-  background: var(--bg-nav); border-bottom: 1px solid var(--border);
+.skip {
+  position: absolute; left: 12px; top: -48px; z-index: 10;
+  padding: 6px 12px; background: var(--bg); border: 2px solid var(--accent); border-radius: var(--radius);
 }
-.brand { font-weight: 700; font-size: 14px; letter-spacing: -.01em; color: var(--text); }
-.topbar-title { color: var(--muted); }
-.topbar-controls { margin-left: auto; display: flex; align-items: center; gap: 12px; white-space: nowrap; }
-.topbar-controls select { height: 26px; }
+.skip:focus { top: 12px; }
 
-/* One narrow column. */
+/* Frame: the step rail on the left, the current step on the right. */
 
-.wizard { max-width: 720px; margin: 0 auto; padding: 16px 20px 48px; }
-.wizard > * + * { margin-top: 16px; }
-.wizard h1 + p, .wizard h1 + .muted { margin-top: 6px; }
-.muted { color: var(--muted); }
-.hint { color: var(--muted); font-size: 12px; line-height: 18px; }
+.frame { display: grid; grid-template-columns: var(--rail) minmax(0, 1fr); min-height: 100vh; background: var(--bg-nav); }
 
-/* Step list: text plus a state marker; the current step is bold. */
-
-.steps { display: flex; flex-wrap: wrap; gap: 4px 20px; padding-bottom: 10px; border-bottom: 1px solid var(--border); color: var(--muted); }
-.steps li, .stages li { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.steps li::before, .stages li::before {
-  content: ""; flex: none; width: 8px; height: 8px;
-  border: 1px solid var(--border-strong); background: transparent;
+.rail {
+  position: sticky; top: 0; height: 100vh; overflow-y: auto;
+  display: flex; flex-direction: column;
+  padding: 36px 28px 24px 32px;
+  background: var(--bg-nav);
 }
-.steps [data-state="ok"]::before, .stages [data-state="ok"]::before { background: var(--ok); border-color: var(--ok); }
-.steps [data-state="current"]::before, .stages [data-state="current"]::before { background: var(--text); border-color: var(--text); }
-.steps [data-state="failed"]::before, .stages [data-state="failed"]::before { background: var(--failed); border-color: var(--failed); }
-.steps [data-state="current"], .steps [data-state="failed"] { color: var(--text); font-weight: 600; }
-.steps .detail { font-weight: 400; color: var(--muted); }
+.brand { display: grid; gap: 2px; margin-bottom: 56px; }
+.brand-name { font-size: 16px; line-height: 22px; font-weight: 700; letter-spacing: -0.01em; }
+.brand-sub { font-size: 13px; line-height: 20px; color: var(--muted); }
 
-/* Deployment stages: compact rows like the panel's checklists. */
+/* Steps: a sequence, so they are numbered. Done steps recede into a tick
+   and muted text, upcoming ones stay outlined, and the current step is the
+   only solid dark mark with full-strength text. */
 
-.stages { border: 1px solid var(--border); border-radius: 2px; }
-.stages li { min-height: var(--row); padding: 6px 10px; border-bottom: 1px solid var(--border); color: var(--muted); }
-.stages li:last-child { border-bottom: 0; }
-.stages [data-state="current"] { color: var(--text); font-weight: 600; }
-.stages [data-state="ok"] { color: var(--text); }
-.stages [data-state="failed"] { color: var(--failed); font-weight: 600; }
-.stages .state-text { margin-left: auto; font-weight: 400; color: var(--muted); font-size: 12px; }
-.stages [data-state="failed"] .state-text { color: var(--failed); }
+.steps li {
+  position: relative;
+  display: grid; grid-template-columns: 32px minmax(0, 1fr); column-gap: 14px;
+  padding-bottom: 30px; color: var(--muted);
+}
+.steps li:last-child { padding-bottom: 0; }
+.steps li:not(:last-child)::after {
+  content: ""; position: absolute; left: 15px; top: 38px; bottom: 6px;
+  width: 2px; border-radius: 1px; background: var(--border);
+}
+.steps li[data-state="ok"]::after { background: var(--ok); }
+.step-text { display: grid; padding-top: 4px; min-width: 0; }
+.step-label { font-size: 15px; line-height: 24px; }
+.step-detail { font-size: 13px; line-height: 20px; color: var(--muted); }
+.steps [data-state="current"] .step-label, .steps [data-state="failed"] .step-label { color: var(--text); font-weight: 600; }
+.steps [data-state="failed"] .step-detail { color: var(--failed); font-weight: 600; }
 
-/* Notices: a left rule in the state colour plus a text prefix, so the state
-   never depends on colour alone. */
+.node {
+  position: relative;
+  display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%;
+  border: 1.5px solid var(--border-strong); background: var(--bg-nav);
+  font-size: 13px; line-height: 1; font-weight: 600; color: var(--muted);
+}
+[data-state="current"] > .node { border-color: var(--text); background: var(--text); color: var(--bg); }
+[data-state="ok"] > .node, [data-state="failed"] > .node { font-size: 0; }
+[data-state="ok"] > .node { border-color: var(--ok); background: var(--ok); }
+[data-state="ok"] > .node::before, .tick::before {
+  content: ""; position: absolute; left: 50%; top: 50%; width: 7px; height: 12px;
+  border: solid var(--bg); border-width: 0 2.5px 2.5px 0; transform: translate(-50%, -62%) rotate(45deg);
+}
+.tick { position: relative; }
+[data-state="failed"] > .node { border-color: var(--failed); background: var(--failed); }
+[data-state="failed"] > .node::before { content: "!"; font-size: 16px; font-weight: 700; color: var(--bg); }
 
-.notice { padding: 6px 10px; border-left: 3px solid var(--border-strong); background: var(--bg-nav); }
+.compact, .bar { display: none; }
+
+.prefs { margin-top: auto; padding-top: 32px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; font-size: 14px; }
+.prefs select { height: 32px; font-size: 14px; }
+
+/* Content column */
+
+.content { padding: 72px clamp(24px, 6vw, 96px) 96px; min-width: 0; background: var(--bg); border-left: 1px solid var(--border); }
+.content > * { max-width: var(--measure); }
+.content > * + * { margin-top: 32px; }
+.content > .notice:empty + * { margin-top: 0; }
+.intro { display: grid; gap: 12px; }
+.lead { font-size: 17px; line-height: 28px; color: var(--muted); max-width: 36em; }
+.lead.waiting, .next.waiting { display: flex; align-items: center; gap: 12px; }
+.hint { color: var(--muted); font-size: 13px; line-height: 20px; }
+.intro.done h1 { display: flex; align-items: center; gap: 14px; }
+
+.group { display: grid; gap: 18px; }
+.group h2 + .hint, .group h2 + .host { margin-top: -10px; }
+.steps-form > .group + .group, .steps-form > .group + details, .content > .group + .group { border-top: 1px solid var(--border); padding-top: 32px; }
+
+/* Notices and callouts: a rule in the state colour plus words that name
+   the state, so it never depends on colour alone. */
+
+.notice { padding: 12px 16px; border-left: 4px solid var(--border-strong); border-radius: 0 var(--radius) var(--radius) 0; background: var(--bg-nav); }
 .notice[data-state="failed"] { border-left-color: var(--failed); }
 .notice[data-state="waiting"] { border-left-color: var(--waiting); }
 .notice:empty { display: none; }
+.notice strong, .field-error strong { font-weight: 650; }
 
-/* Forms: label above the control, help below in small muted type, errors
-   in the failed colour with an "Error:" prefix. */
+.callout {
+  display: grid; gap: 12px; padding: 18px 20px;
+  border: 1px solid var(--border); border-left: 4px solid var(--failed); border-radius: var(--radius);
+}
+.callout h3 { color: var(--failed); }
+.detail-line > summary { font-size: 13px; line-height: 20px; color: var(--muted); }
+.detail-line > summary::before { width: 6px; height: 6px; }
+.detail-line > code { display: block; margin-top: 8px; padding: 8px 10px; font-size: 12.5px; line-height: 19px; }
 
-form { display: grid; gap: 14px; }
-.form-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 16px; }
-.field { display: grid; gap: 4px; align-content: start; min-width: 0; }
-.field > label, legend { font-weight: 500; }
-.field input:not([type="checkbox"]), .field select { width: 100%; max-width: 420px; }
-.form-row .field input, .form-row .field select { max-width: none; }
-.field-error { color: var(--failed); font-size: 12px; line-height: 18px; }
-.field-error strong, .notice strong { font-weight: 600; }
+.confirm { display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--muted); }
+.tick {
+  flex: none; display: inline-grid; place-items: center;
+  width: 20px; height: 20px; border-radius: 50%; background: var(--ok);
+}
+.tick::before { width: 5px; height: 9px; border-width: 0 2px 2px 0; }
+.tick.large { width: 34px; height: 34px; }
+.tick.large::before { width: 8px; height: 15px; border-width: 0 3px 3px 0; }
+
+.host { font-size: 14px; line-height: 22px; color: var(--muted); }
+
+/* Forms */
+
+form { display: grid; gap: 20px; }
+.steps-form { gap: 32px; }
+.form-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.form-row.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.field { display: grid; gap: 6px; align-content: start; min-width: 0; }
+.field > label, legend { font-size: 14px; line-height: 20px; font-weight: 550; }
+.field input:not([type="checkbox"]), .field select { width: 100%; }
+.field-error { color: var(--failed); font-size: 13px; line-height: 20px; }
 
 input, select {
-  font: inherit; color: var(--text); background: var(--bg-input);
-  border: 1px solid var(--border-strong); border-radius: 3px;
-  height: 28px; padding: 0 8px;
+  font: inherit; font-size: 15px; color: var(--text); background: var(--bg-input);
+  border: 1px solid var(--border-strong); border-radius: var(--radius);
+  height: 40px; padding: 0 12px;
 }
-select { padding-right: 4px; }
+select { padding-right: 8px; }
 input::placeholder { color: var(--muted); opacity: 1; }
-input[type="checkbox"] { width: 14px; height: 14px; margin: 0; padding: 0; accent-color: var(--accent); }
-[aria-invalid="true"] { border-color: var(--failed); outline: 1px solid var(--failed); outline-offset: 0; }
-input[type="checkbox"][aria-invalid="true"] { outline: 2px solid var(--failed); outline-offset: 1px; }
-[aria-invalid="true"]:focus-visible { outline: 2px solid var(--failed); }
+input:hover, select:hover { border-color: var(--text); }
+input[type="checkbox"] { width: 18px; height: 18px; margin: 0; padding: 0; flex: none; accent-color: var(--accent); }
+[aria-invalid="true"] { border-color: var(--failed); box-shadow: inset 0 0 0 1px var(--failed); }
+input[type="checkbox"][aria-invalid="true"] { outline: 2px solid var(--failed); outline-offset: 2px; }
+[aria-invalid="true"]:focus-visible { outline-color: var(--failed); }
 
-fieldset { margin: 0; padding: 0; border: 0; display: grid; gap: 4px; }
+fieldset { margin: 0; padding: 0; border: 0; display: grid; gap: 6px; min-width: 0; }
 legend { padding: 0; margin-bottom: 4px; }
-.check { display: inline-flex; align-items: center; gap: 8px; min-height: 28px; }
+.check { display: flex; align-items: center; gap: 10px; min-height: 32px; }
 
 details.advanced { border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
-details.advanced > summary { padding: 6px 0; cursor: pointer; font-weight: 500; }
+details > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 10px; }
+details > summary::-webkit-details-marker { display: none; }
+details > summary::before {
+  content: ""; flex: none; width: 7px; height: 7px; margin-left: 2px;
+  border: solid var(--muted); border-width: 0 2px 2px 0; transform: rotate(-45deg);
+  transition: transform 150ms ease;
+}
+details[open] > summary::before { transform: rotate(45deg); margin-top: -4px; }
+details.advanced > summary { padding: 16px 0; font-size: 15px; font-weight: 600; }
 details.advanced > summary:hover { color: var(--accent); }
-details.advanced[open] > summary { border-bottom: 1px solid var(--border); }
-.advanced-body { display: grid; gap: 14px; padding: 12px 0 14px; }
+.advanced-body { display: grid; gap: 20px; padding: 4px 0 24px; }
 
 .button {
-  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  height: 28px; padding: 0 12px;
-  border: 1px solid var(--border-strong); border-radius: 3px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  height: 40px; padding: 0 18px;
+  border: 1px solid var(--border-strong); border-radius: var(--radius);
   background: var(--bg); color: var(--text);
-  font: inherit; line-height: 1; white-space: nowrap; text-decoration: none; cursor: pointer;
+  font: inherit; font-size: 15px; font-weight: 600; line-height: 1; white-space: nowrap; text-decoration: none; cursor: pointer;
 }
-.button:hover { background: var(--bg-hover); }
+.button:hover { background: var(--bg-hover); border-color: var(--text); }
 .button.primary { background: var(--text); border-color: var(--text); color: var(--bg); }
-.button.primary:hover { opacity: .88; }
-.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-form > .actions { margin-top: 2px; }
+.button.primary:hover { background: var(--text); opacity: .86; }
+.button[aria-disabled="true"] { opacity: .45; cursor: not-allowed; }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; }
+.next { font-size: 14px; line-height: 22px; color: var(--muted); }
 
-/* Key/value list, as the panel's .kv.wide. */
+/* Technical values: monospace on a quiet well, wrapped rather than cut,
+   with a copy button that appears once the script can offer it. */
 
-.kv { display: grid; grid-template-columns: minmax(140px, max-content) minmax(0, 1fr); border: 1px solid var(--border); border-radius: 2px; }
-.kv > div { display: contents; }
-.kv dt, .kv dd { min-height: var(--row); padding: 6px 10px; border-bottom: 1px solid var(--border); }
-.kv dt { color: var(--muted); }
-.kv dd { overflow-wrap: anywhere; }
-.kv > div:last-child > * { border-bottom: 0; }
-
-/* Numbered instructions for the first job. */
-
-.howto { display: grid; gap: 8px; padding-left: 20px; list-style: decimal; }
-.howto li { padding-left: 2px; }
-.howto li > .button, .howto li > code { margin-top: 4px; }
-.howto li > code { display: inline-block; }
-
-/* Deployment log, as the panel's pre.report. */
-
-details.deploy-log > summary { padding: 6px 0; cursor: pointer; font-weight: 500; }
-pre {
-  margin: 4px 0 0; padding: 8px 10px; min-height: 56px; max-height: 360px; overflow: auto;
-  background: var(--bg-code); border: 1px solid var(--border); border-radius: 2px;
-  font: 12px/18px var(--mono); white-space: pre-wrap; overflow-wrap: anywhere;
+.value {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 7px 7px 7px 14px; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg-code);
 }
-.deploy-log .hint { display: inline-block; margin-top: 6px; }
+.value code { flex: 1; min-width: 0; padding: 5px 0; background: none; font-size: 13.5px; line-height: 20px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.copy {
+  flex: none; height: 30px; min-width: 64px; padding: 0 10px;
+  border: 1px solid var(--border-strong); border-radius: 4px; background: var(--bg); color: var(--text);
+  font: inherit; font-size: 13px; font-weight: 550; cursor: pointer;
+}
+.copy:hover { border-color: var(--text); }
+.copy[data-done] { border-color: var(--ok); color: var(--ok); }
 
-@media (max-width: 600px) {
-  .topbar { flex-wrap: wrap; padding: 6px 16px; gap: 6px 12px; }
-  .topbar-title { display: none; }
-  .wizard { padding: 12px 16px 40px; }
-  .form-row { grid-template-columns: minmax(0, 1fr); }
-  .kv { grid-template-columns: minmax(0, 1fr); }
-  .kv dt { min-height: 0; padding-bottom: 0; border-bottom: 0; }
+/* Key/value summary before deployment */
+
+.kv { border-bottom: 1px solid var(--border); }
+.kv > div { display: grid; grid-template-columns: 160px minmax(0, 1fr); column-gap: 24px; padding: 12px 0; border-top: 1px solid var(--border); }
+.kv dt { color: var(--muted); font-size: 14px; }
+.kv dd { overflow-wrap: anywhere; }
+
+.values { display: grid; gap: 16px; }
+.values dt { font-size: 14px; font-weight: 550; margin-bottom: 6px; }
+
+.facts { display: grid; gap: 8px; padding-left: 16px; border-left: 2px solid var(--border); color: var(--muted); }
+
+/* Numbered instructions */
+
+.howto { display: grid; gap: 14px; counter-reset: howto; }
+.howto li { position: relative; display: grid; gap: 10px; justify-items: start; padding-left: 40px; counter-increment: howto; }
+.howto li::before {
+  content: counter(howto); position: absolute; left: 0; top: 0;
+  display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%;
+  border: 1.5px solid var(--border-strong); font-size: 12px; font-weight: 600; color: var(--muted);
+}
+
+/* Deployment stages: the same node language as the step rail, one row per
+   stage. The running stage is the single moving thing on the page. */
+
+.stages { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.stages li {
+  display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; column-gap: 14px;
+  padding: 14px 18px; color: var(--muted);
+}
+.stages li + li { border-top: 1px solid var(--border); }
+.stages .node { width: 22px; height: 22px; background: transparent; transition: background-color 200ms ease, border-color 200ms ease; }
+.stages [data-state="ok"] > .node { background: var(--ok); }
+.stages [data-state="failed"] > .node { background: var(--failed); }
+.stages [data-state="ok"] > .node::before { width: 5px; height: 10px; border-width: 0 2px 2px 0; }
+.stages [data-state="failed"] > .node::before { font-size: 13px; }
+.stages [data-state="current"] { background: var(--selected); color: var(--text); font-weight: 600; }
+.stages [data-state="current"] > .node, .spinner {
+  border: 2px solid var(--border); border-top-color: var(--text); border-right-color: var(--text); background: transparent;
+  animation: spin 900ms linear infinite;
+}
+.stages [data-state="ok"] { color: var(--text); }
+.stages [data-state="failed"] { color: var(--failed); font-weight: 600; }
+.state-text { font-size: 13px; font-weight: 400; color: var(--muted); }
+.stages [data-state="failed"] .state-text { color: var(--failed); font-weight: 600; }
+
+.spinner { flex: none; display: inline-block; width: 18px; height: 18px; border-radius: 50%; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Deployment log */
+
+details.deploy-log > summary { padding: 4px 0; font-size: 15px; font-weight: 600; }
+pre {
+  margin: 12px 0 0; padding: 14px 16px; min-height: 64px; max-height: 420px; overflow: auto;
+  background: var(--bg-code); border: 1px solid var(--border); border-radius: var(--radius);
+  font: 12.5px/19px var(--mono); white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.deploy-log .hint { display: inline-block; margin-top: 8px; }
+
+/* Standalone GitHub-step pages (runquill setup without the wizard). */
+
+.frame.standalone { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; background: var(--bg); }
+.rail.standalone { position: static; height: auto; flex-direction: row; padding: 16px 24px; border-right: 0; border-bottom: 1px solid var(--border); }
+.rail.standalone .brand { margin: 0; }
+.standalone .content { border-left: 0; padding-top: 56px; margin: 0 auto; width: 100%; max-width: calc(var(--measure) + 2 * 48px); padding-inline: 24px; }
+
+/* Phones: the rail becomes a header with a compact step line and a
+   four-part progress bar; the content is one comfortable column. */
+
+@media (max-width: 760px) {
+  .frame { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; }
+  .rail {
+    position: static; height: auto; overflow: visible;
+    display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px 12px;
+    padding: 14px 16px 16px; border-right: 0; border-bottom: 1px solid var(--border);
+  }
+  .brand { margin: 0; }
+  .brand-sub { display: none; }
+  .prefs { grid-row: 1; grid-column: 2; margin: 0; padding: 0; gap: 12px; }
+  .progress { grid-column: 1 / -1; display: grid; gap: 10px; }
+  .steps { display: none; }
+  .compact { display: block; font-size: 14px; line-height: 20px; font-weight: 600; }
+  .bar { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+  .bar li { height: 4px; border-radius: 2px; background: var(--border); }
+  .bar [data-state="ok"] { background: var(--ok); }
+  .bar [data-state="current"] { background: var(--text); }
+  .bar [data-state="failed"] { background: var(--failed); }
+  .content { padding: 28px 16px 64px; border-left: 0; }
+  .content > * + * { margin-top: 28px; }
+  h1 { font-size: 26px; line-height: 34px; }
+  .lead { font-size: 16px; line-height: 26px; }
+  .form-row, .form-row.three { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+  .kv > div { grid-template-columns: minmax(0, 1fr); row-gap: 2px; }
+  .actions .button { width: 100%; }
+  .stages li { padding: 12px 14px; }
+  .rail.standalone { display: flex; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  * { scroll-behavior: auto !important; transition: none !important; }
+  *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
 }

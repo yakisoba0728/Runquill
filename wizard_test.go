@@ -7,14 +7,17 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"html"
 	"io"
+	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -128,6 +131,7 @@ fi
 	}
 	request(http.MethodPost, "/start", server.URL, url.Values{
 		"backend": {"docker"}, "repositories": {"selected"}, "lang": {"ko"},
+		"max_runners": {"3"}, "runner_cpus": {"2"}, "runner_memory": {"4"},
 	})
 	manifest := waitPage("/connect/", "GitHub App 등록")
 	githubState := regexp.MustCompile(`state=([A-Za-z0-9]+)`).FindStringSubmatch(manifest)
@@ -158,6 +162,10 @@ fi
 		!strings.Contains(string(envData), "RUNQUILL_PANEL_GITHUB_CLIENT_ID=example-client") ||
 		!strings.Contains(string(envData), "RUNQUILL_PANEL_BOOTSTRAP_ID=88") {
 		t.Fatalf("wizard did not save selected coverage and OAuth settings: %v", err)
+	}
+	if !strings.Contains(string(envData), "\nRUNQUILL_MAX_RUNNERS=3\n") ||
+		!strings.Contains(string(envData), "\nRUNQUILL_WORKER_POOLS='{\"default\":{\"cpus\":2,\"memory_mib\":4096}}'\n") {
+		t.Fatalf("wizard did not save the runner capacity:\n%s", envData)
 	}
 	request(http.MethodPost, "/deploy", server.URL, nil)
 	progress := waitPage("/status", "[redacted]")
@@ -358,5 +366,308 @@ func TestWizardFirstStepErrorsStayInBrowserWithAnswers(t *testing.T) {
 	web.render(rec, httptest.NewRequest(http.MethodGet, "/?lang=en", nil))
 	if strings.Contains(rec.Body.String(), `id="wizard-error"`) || strings.Contains(rec.Body.String(), `<details class="advanced" open>`) {
 		t.Fatal("a fresh first step must not show an earlier problem")
+	}
+}
+
+func TestRecommendCapacityLeavesRoomForTheHost(t *testing.T) {
+	for _, test := range []struct {
+		host wizardHost
+		want wizardCapacity
+	}{
+		{wizardHost{CPUs: 16, MemoryMiB: 65536}, wizardCapacity{Runners: 8, CPUs: 1.5, MemoryMiB: 7680}},
+		{wizardHost{CPUs: 64, MemoryMiB: 262144}, wizardCapacity{Runners: 8, CPUs: 7.5, MemoryMiB: 32256}},
+		{wizardHost{CPUs: 4, MemoryMiB: 8192}, wizardCapacity{Runners: 2, CPUs: 1, MemoryMiB: 2048}},
+		{wizardHost{CPUs: 8, MemoryMiB: 6144}, wizardCapacity{Runners: 1, CPUs: 6, MemoryMiB: 3072}},
+		{wizardHost{CPUs: 2, MemoryMiB: 2048}, wizardCapacity{Runners: 1, CPUs: 1, MemoryMiB: 1024}},
+		{wizardHost{CPUs: 1, MemoryMiB: 1024}, wizardCapacity{Runners: 1, CPUs: 0.5, MemoryMiB: 512}},
+		{wizardHost{CPUs: 12}, wizardCapacity{Runners: 8, CPUs: 1}},
+		{wizardHost{}, wizardCapacity{Runners: 1, CPUs: 0.5}},
+	} {
+		if got := recommendCapacity(test.host); got != test.want {
+			t.Errorf("recommendCapacity(%+v) = %+v, want %+v", test.host, got, test.want)
+		}
+	}
+	if got := parseMemInfo([]byte("MemFree:  1000 kB\nMemTotal:       65755136 kB\n")); got != 64214 {
+		t.Fatalf("MemTotal parsed as %d MiB", got)
+	}
+	if parseMemInfo([]byte("MemFree: 12 kB\n")) != 0 || parseMemInfo([]byte("MemTotal: lots kB\n")) != 0 {
+		t.Fatal("an unreadable MemTotal must count as unknown")
+	}
+}
+
+func TestWizardCapacityReachesConfiguration(t *testing.T) {
+	const base = setupEnvHeader + "RUNQUILL_OWNER=owner\nRUNQUILL_APP_ID=1\nRUNQUILL_KEY_FILE=./github-app.pem\n"
+	write := func(t *testing.T, content string) string {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+	read := func(t *testing.T, dir string) map[string]string {
+		data, err := os.ReadFile(filepath.Join(dir, ".env"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		info, err := os.Stat(filepath.Join(dir, ".env"))
+		if err != nil || info.Mode().Perm() != 0600 {
+			t.Fatal("the .env must stay private")
+		}
+		values, err := setupValues(data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return values
+	}
+	capacity, err := parseCapacity(wizardForm{MaxRunners: "3", RunnerCPUs: "1.5", RunnerMemory: "2.5"})
+	if err != nil || capacity != (wizardCapacity{Runners: 3, CPUs: 1.5, MemoryMiB: 2560}) {
+		t.Fatalf("parseCapacity = %+v, %v", capacity, err)
+	}
+
+	dir := write(t, base)
+	if err := saveCapacity(dir, false, capacity); err != nil {
+		t.Fatal(err)
+	}
+	values := read(t, dir)
+	t.Setenv("RUNQUILL_MAX_RUNNERS", values["RUNQUILL_MAX_RUNNERS"])
+	if limit, err := runnerLimit(); err != nil || limit != 3 {
+		t.Fatalf("RUNQUILL_MAX_RUNNERS gave %d, %v", limit, err)
+	}
+	// Compose strips the single quotes, as for the README's examples.
+	raw := values["RUNQUILL_WORKER_POOLS"]
+	if !strings.HasPrefix(raw, "'") || !strings.HasSuffix(raw, "'") {
+		t.Fatalf("worker pools are not quoted for Compose: %s", raw)
+	}
+	fleet, err := parseDockerFleet("runner:local", "local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pools, err := fleet.configurePools(strings.Trim(raw, "'"))
+	if err != nil || pools[defaultWorkerPool].CPUs != 1.5 || pools[defaultWorkerPool].MemoryMiB != 2560 ||
+		fleet.hosts[0].cpus != 1.5 || fleet.hosts[0].memoryMiB != 2560 {
+		t.Fatalf("worker pools did not carry the limits: %+v %v", pools, err)
+	}
+
+	// A resumed directory keeps what it already has.
+	dir = write(t, base+"RUNQUILL_MAX_RUNNERS=5\n")
+	if err := saveCapacity(dir, false, wizardCapacity{Runners: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, ".env")); strings.Count(string(data), "RUNQUILL_MAX_RUNNERS") != 1 || read(t, dir)["RUNQUILL_MAX_RUNNERS"] != "5" {
+		t.Fatal("an existing runner limit was duplicated or replaced")
+	}
+
+	// K3s takes Kubernetes quantities and never worker pools, which its backend refuses.
+	dir = write(t, base)
+	if err := saveCapacity(dir, true, capacity); err != nil {
+		t.Fatal(err)
+	}
+	values = read(t, dir)
+	if _, exists := values["RUNQUILL_WORKER_POOLS"]; exists || values["RUNQUILL_MAX_RUNNERS"] != "3" {
+		t.Fatalf("K3s configuration is wrong: %v", values)
+	}
+	t.Setenv("RUNQUILL_K8S_RUNNER_NAMESPACE", "runquill-runners")
+	t.Setenv("RUNQUILL_K8S_JOB_CPU", values["RUNQUILL_K8S_JOB_CPU"])
+	t.Setenv("RUNQUILL_K8S_JOB_MEMORY", values["RUNQUILL_K8S_JOB_MEMORY"])
+	opts, err := readKubeRunnerOptions("runner:local")
+	if err != nil || opts.resources.Limits.Cpu().String() != "1500m" || opts.resources.Limits.Memory().String() != "2560Mi" {
+		t.Fatalf("Kubernetes limits = %v, %v", opts.resources.Limits, err)
+	}
+
+	// Empty limits write nothing beyond the runner count; invalid ones are flagged on their field.
+	dir = write(t, base)
+	if err := saveCapacity(dir, false, wizardCapacity{Runners: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := read(t, dir)["RUNQUILL_WORKER_POOLS"]; exists {
+		t.Fatal("no limits must leave worker pools unset")
+	}
+	for field, form := range map[string]wizardForm{
+		"max_runners": {MaxRunners: "0"}, "runner_cpus": {RunnerCPUs: "0.001"}, "runner_memory": {RunnerMemory: "NaN"},
+	} {
+		var issue *wizardIssue
+		if _, err := parseCapacity(form); !errors.As(err, &issue) || issue.field != field {
+			t.Errorf("%s was not rejected on its field: %v", field, err)
+		}
+	}
+}
+
+func TestWizardDockerCheckBlocksBeforeGitHub(t *testing.T) {
+	reply := func(output string, err error) wizardCommandRunner {
+		return func(_ context.Context, name string, args ...string) ([]byte, error) {
+			if name != "docker" || strings.Join(args, " ") != "version --format {{.Server.Version}}" {
+				t.Errorf("unexpected Docker check: %s %v", name, args)
+			}
+			return []byte(output), err
+		}
+	}
+	for _, test := range []struct {
+		run   wizardCommandRunner
+		state string
+	}{
+		{nil, ""},
+		{reply("27.3.1\n", nil), "ok"},
+		{reply("", &exec.Error{Name: "docker", Err: exec.ErrNotFound}), "missing"},
+		{reply("permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock\n", errors.New("exit status 1")), "permission"},
+		{reply("Client: Docker Engine - Community\n Version: 27.3.1\npermission denied while trying to connect to the Docker daemon socket\n", errors.New("exit status 1")), "permission"},
+		{reply("Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?\n", errors.New("exit status 1")), "unreachable"},
+	} {
+		if got := probeWizardDocker(t.Context(), test.run); got.State != test.state {
+			t.Errorf("Docker check state %q, want %q", got.State, test.state)
+		}
+	}
+
+	web := &setupWizard{dir: t.TempDir(), log: io.Discard, ctx: t.Context(), language: "en", phase: "options",
+		command: reply("permission denied while trying to connect to the Docker daemon socket\n", errors.New("exit status 1"))}
+	page := func(lang string) string {
+		rec := httptest.NewRecorder()
+		web.render(rec, httptest.NewRequest(http.MethodGet, "/?lang="+lang, nil))
+		return rec.Body.String()
+	}
+	body := page("en")
+	if !strings.Contains(body, `id="wizard-docker"`) || !strings.Contains(body, "sudo usermod -aG docker "+html.EscapeString(wizardUser())) ||
+		!regexp.MustCompile(`name="backend" aria-describedby="wizard-docker"`).MatchString(body) || strings.Contains(body, `id="wizard-error"`) {
+		t.Fatal("a Docker permission problem must be explained on the first step with the fix")
+	}
+	if body = page("ko"); !strings.Contains(body, "이 사용자는 Docker를 쓸 권한이 없습니다") {
+		t.Fatal("the Docker notice is missing in Korean")
+	}
+	web.phase = "working"
+	web.configure(url.Values{"backend": {"docker"}, "max_runners": {"2"}})
+	if web.phase != "options" || web.issue == nil || web.issue.field != "backend" {
+		t.Fatalf("setup went on without Docker access: %s %+v", web.phase, web.issue)
+	}
+	if body = page("en"); !strings.Contains(body, `aria-describedby="wizard-error wizard-docker"`) || !strings.Contains(body, `value="2"`) {
+		t.Fatal("the refused start must point at the Docker notice and keep the answers")
+	}
+
+	// Fixed and reloaded: the notice and the refusal go away, and the answers stay.
+	web.command, web.host = reply("27.3.1\n", nil), wizardHost{CPUs: 4, MemoryMiB: 8192}
+	body = page("en")
+	if strings.Contains(body, `id="wizard-docker"`) || strings.Contains(body, `id="wizard-error"`) || strings.Contains(body, `data-state="failed"`) ||
+		!strings.Contains(body, "Docker 27.3.1 is reachable.") || !strings.Contains(body, `name="max_runners" type="number" inputmode="numeric" min="1" max="1000" step="1" value="2"`) {
+		t.Fatal("a fixed Docker host must clear the earlier refusal and keep the answers")
+	}
+
+	// A fresh first step suggests limits from the host's size.
+	web.form = wizardForm{}
+	body = page("en")
+	if strings.Contains(body, `id="wizard-docker"`) || !strings.Contains(body, "Docker 27.3.1 is reachable.") ||
+		!strings.Contains(body, `name="max_runners" type="number" inputmode="numeric" min="1" max="1000" step="1" value="2"`) ||
+		!strings.Contains(body, `name="runner_memory" type="number" inputmode="decimal" min="0.01" step="any" value="2"`) ||
+		!strings.Contains(body, "Detected 4 CPUs and 8.0 GiB") {
+		t.Fatal("a reachable Docker host must show its size and the suggested limits")
+	}
+}
+
+func TestWizardStartMessageOffersSSHForward(t *testing.T) {
+	plain := wizardStartMessage("http://127.0.0.1:40123", "SECRETKEY", 40123, "", "alice")
+	if !strings.HasPrefix(plain, "Open http://127.0.0.1:40123/?key=SECRETKEY in your browser.\n") ||
+		!strings.Contains(plain, "forward port 40123 over SSH") || strings.Contains(plain, "ssh -L") ||
+		!strings.Contains(plain, "secret for this setup session") {
+		t.Fatalf("local start message:\n%s", plain)
+	}
+	ssh := wizardStartMessage("http://127.0.0.1:40123", "SECRETKEY", 40123, "203.0.113.9 51234 198.51.100.7 22", "alice")
+	if !strings.Contains(ssh, "\n  ssh -L 40123:127.0.0.1:40123 alice@198.51.100.7\n") || !strings.Contains(ssh, "On your own computer") ||
+		strings.Count(ssh, "SECRETKEY") != 1 {
+		t.Fatalf("SSH start message:\n%s", ssh)
+	}
+	for connection, want := range map[string]string{
+		"203.0.113.9 51234 198.51.100.7 2222": "ssh -L 8080:127.0.0.1:8080 -p 2222 alice@198.51.100.7",
+		"2001:db8::1 51234 2001:db8::2 22":    "ssh -L 8080:127.0.0.1:8080 alice@2001:db8::2",
+		"203.0.113.9 51234 not-an-address 22": "",
+		"garbage":                             "",
+	} {
+		if got := wizardSSHForward(8080, connection, "alice"); got != want {
+			t.Errorf("wizardSSHForward(%q) = %q, want %q", connection, got, want)
+		}
+	}
+	if got := wizardSSHForward(8080, "203.0.113.9 51234 198.51.100.7 22", "a b;rm"); got != "ssh -L 8080:127.0.0.1:8080 USER@198.51.100.7" {
+		t.Errorf("an odd login must fall back to a placeholder: %q", got)
+	}
+}
+
+func TestWizardLanguageSwitchKeepsTheStep(t *testing.T) {
+	web := &setupWizard{origin: "http://example.test", key: "fixture-access", log: io.Discard, ctx: t.Context(), language: "en", phase: "working"}
+	web.step, web.handler = "/connect", http.StripPrefix("/connect", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "%s %t", r.URL.Path, wizardKorean(context.WithValue(r.Context(), setupWizardKey{}, web)))
+	}))
+	req := httptest.NewRequest(http.MethodGet, "http://example.test/connect/?lang=ko", nil)
+	req.AddCookie(&http.Cookie{Name: wizardCookie, Value: "fixture-access"})
+	rec := httptest.NewRecorder()
+	web.ServeHTTP(rec, req)
+	if rec.Body.String() != "/ true" || !strings.Contains(rec.Header().Get("Set-Cookie"), "runquill_language=ko") {
+		t.Fatalf("switching language on a GitHub step returned %q", rec.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodGet, "http://example.test/connect/?lang=en", nil)
+	rec = httptest.NewRecorder()
+	web.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized || web.language != "ko" {
+		t.Fatal("a language link must not work without the session")
+	}
+	page := httptest.NewRecorder()
+	web.render(page, httptest.NewRequest(http.MethodGet, "/", nil))
+	if !strings.Contains(page.Body.String(), `<a class="lang" href="?lang=en" lang="en" hreflang="en">English</a>`) {
+		t.Fatal("every wizard page needs a language link")
+	}
+}
+
+func TestStandaloneSetupPagesLoadTheWizardStylesheet(t *testing.T) {
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = panelSetupPage.Execute(w, struct {
+			Origin, Callback, State, Bootstrap, Form string
+			Korean, InWizard, Manual                 bool
+			Chrome                                   *wizardChrome
+		}{Origin: "https://panel.example", Callback: "https://panel.example/auth/github/callback", State: "s", Form: "/", Manual: true})
+	})
+	finished := make(chan struct{})
+	t.Setenv("SSH_CONNECTION", "203.0.113.9 51234 198.51.100.7 22")
+	output := make(manifestTestOutput, 8)
+	done := make(chan error, 1)
+	go func() {
+		_, err := runSetupBrowser(t.Context(), output, listener, mux, "to test", "", finished)
+		done <- err
+	}()
+	base := "http://" + listener.Addr().String()
+	get := func(path string) *http.Response {
+		t.Helper()
+		res, err := http.Get(base + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	css := get("/wizard.css")
+	data, _ := io.ReadAll(css.Body)
+	css.Body.Close()
+	policy := css.Header.Get("Content-Security-Policy")
+	if css.StatusCode != 200 || !strings.HasPrefix(css.Header.Get("Content-Type"), "text/css") || string(data) != wizardCSS ||
+		!strings.Contains(policy, "default-src 'none'") || !strings.Contains(policy, "style-src 'self'") ||
+		strings.Contains(policy, "unsafe-inline") || strings.Contains(policy, "script-src") {
+		t.Fatalf("standalone stylesheet: HTTP %d, CSP %q", css.StatusCode, policy)
+	}
+	page := get("/")
+	body, _ := io.ReadAll(page.Body)
+	page.Body.Close()
+	if !strings.Contains(string(body), `<link rel="stylesheet" href="/wizard.css">`) || strings.Contains(string(body), "<script") ||
+		!strings.Contains(string(body), `<button type="button" class="copy" hidden>`) {
+		t.Fatal("a standalone page must link the stylesheet, load no script and hide script-only controls")
+	}
+	close(finished)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	var printed strings.Builder
+	for len(output) > 0 {
+		printed.WriteString(<-output)
+	}
+	if !strings.Contains(printed.String(), "@198.51.100.7\n") {
+		t.Fatalf("the forward command should name this server:\n%s", printed.String())
 	}
 }

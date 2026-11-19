@@ -24,15 +24,81 @@ One manager and its persistent SQLite queue limit runner concurrency across repo
 
 ## Install
 
-Use an amd64 or arm64 Linux server with cgroup v2, rootful Docker Engine, Docker Compose, `curl`, and `sha256sum`. Run one manager per group of Docker hosts. The default polling setup works behind NAT with outbound access to GitHub. Use an HTTPS endpoint for webhook delivery.
+Use an amd64 or arm64 Linux server with cgroup v2. Download the installer and run it on that server. It prepares the host, downloads the release and opens the setup wizard:
 
-The installer checks its prerequisites before downloading and names the missing tool, an unavailable Docker Compose v2 plugin, or an unreachable Docker daemon.
+```sh
+curl -fsSLO https://github.com/yakisoba0728/Runquill/releases/latest/download/install.sh
+sh install.sh --dir "$HOME/runquill" --wizard
+```
+
+Run one manager per group of Docker hosts. The default polling setup works behind NAT with outbound access to GitHub. Use an HTTPS endpoint for webhook delivery.
+
+### Prepare the host
+
+Before downloading, the installer checks the host and prints one line per item:
+
+- OS and architecture
+- cgroup v2
+- the tools it uses: `curl`, `sha256sum`, `awk`, `grep`, `sed`, `cmp`, `mktemp` and `df`
+- Docker Engine, the Compose v2 plugin, the daemon and whether it starts at boot
+- whether your user can reach the daemon, and whether Docker is rootless
+- free space where Docker stores data, with a warning below 20 GB
+- HTTPS to github.com and ghcr.io
+
+It also suggests a runner count and per-runner CPU and memory limits for the host.
+
+When something is missing, the installer lists every command it will run and asks once. It uses `sudo` only for those commands, and not at all when you run it as root.
+
+| Missing | What the installer runs |
+| --- | --- |
+| Tools | The distribution's package manager: `apt-get`, `dnf`, `yum`, `zypper` or `apk` |
+| Docker Engine and Compose on Ubuntu or Debian | Docker's apt repository, with its key in `/etc/apt/keyrings/docker.asc` and the source in `/etc/apt/sources.list.d/docker.sources` |
+| Docker Engine and Compose on Fedora, RHEL, CentOS, Rocky Linux or AlmaLinux | Docker's dnf repository in `/etc/yum.repos.d/docker-ce.repo` |
+| Docker Engine and Compose on Alpine | Alpine's `docker` and `docker-cli-compose` packages. Docker's repository does not cover Alpine |
+| Daemon | `systemctl enable --now docker`, or `rc-update` and `rc-service` on OpenRC |
+| Docker access | `usermod -aG docker $USER` |
+
+- **Key check.** Before trusting Docker's signing key, the installer checks that it has Docker's published fingerprint.
+- **Docker group.** Membership gives root-equivalent access to the host. The installer continues the same run with the new group active, so you do not need to log in again. Shells that were already open need a new login before `docker` works without `sudo`.
+- **What it leaves alone.** It never replaces or upgrades a working Docker, and it does not change a rootless or snap Docker. It never opens ports or changes the firewall. On other distributions it links to Docker's install guide instead.
+- **Reruns.** Running it again on a ready host changes nothing and asks nothing. A host without systemd or OpenRC must start `dockerd` itself. The installer says so and stops.
+
+| Flag | Effect |
+| --- | --- |
+| `--yes`, `-y` | Make the listed changes without asking, for unattended installs |
+| `--no-install` | Never change the system. Fail and list what is missing |
+| `--prepare-only` | Prepare the host and stop |
+| `--no-docker` | Skip the Docker checks, for example on a K3s host |
+| `--download-only` | Skip the host checks. Download and verify the release only |
+
+Without a terminal and without `--yes`, the installer changes nothing and prints the command to rerun with `--yes`.
+
+### Prepare the host manually
+
+To prepare the host yourself, install Docker Engine and the Compose plugin with [Docker's guide](https://docs.docker.com/engine/install/). Then start Docker and give your user access:
+
+```sh
+sudo systemctl enable --now docker
+sudo usermod -aG docker "$USER"
+```
+
+Log out and back in. Then `sh install.sh --prepare-only --no-install` checks the host without changing it.
 
 ### Set up in a browser
 
-Run `sh install.sh --wizard` to connect GitHub, configure panel sign-in, deploy the manager, and download the first workflow in one browser session. The wizard supports English and Korean, plus optional Tailscale Serve and Funnel on a Docker Compose host. [Browser setup](docs/browser-setup.md)
+Run `sh install.sh --dir "$HOME/runquill" --wizard` to connect GitHub, configure panel sign-in, deploy the manager, and download the first workflow in one browser session. The wizard supports English and Korean, plus optional Tailscale Serve and Funnel on a Docker Compose host. [Browser setup](docs/browser-setup.md)
+
+The wizard listens only on `127.0.0.1`. Over SSH, the installer chooses the port and prints a command to run on your own computer, for example:
+
+```text
+ssh -L 18080:127.0.0.1:18080 alice@203.0.113.10
+```
+
+Keep that session open and open the printed `http://127.0.0.1:18080/?key=…` URL in your local browser. Use the same port number on both sides. The `key` is a secret for this setup session. If you reach the server under another name or through NAT, use that address in the `ssh` command.
 
 ### Install a public release
+
+To set up from the terminal instead of the browser, leave out `--wizard`:
 
 ```sh
 curl -fsSLO https://github.com/yakisoba0728/Runquill/releases/latest/download/install.sh
@@ -43,7 +109,7 @@ sh install.sh --dir "$HOME/runquill"
 2. Wait for the installer to start Compose and report `Preflight passed.`
 3. [Run your first job](#verify-your-first-job) from a private repository you own.
 
-The installer verifies release checksums and pulls matching manager and runner images. The command above installs into `$HOME/runquill`. Use `--version v0.3.1` to pin a release, or `--download-only` to fetch the binary and deployment files before setup.
+The installer verifies release checksums and pulls matching manager and runner images. The command above installs into `$HOME/runquill`. Use `--version v0.3.2` to pin a release, or `--download-only` to fetch the binary and deployment files before setup.
 
 ### Create and install the GitHub App
 
@@ -417,7 +483,7 @@ curl -fsSLO https://github.com/yakisoba0728/Runquill/releases/latest/download/in
 sh install.sh --upgrade --dir "$HOME/runquill"
 ```
 
-The installer verifies the release checksums and replaces only the release files that changed: the `runquill` binary, `compose.yaml`, `compose.ssh.yaml`, `LICENSE`, and `compose.panel.yaml`, `compose.worker.yaml` and `runquill-k3s.yaml` when the release includes them. It moves the replaced copies into `.previous/`, which holds only the most recent upgrade. Roll back with `cp -p .previous/* .`. `.env`, the GitHub App key, other files and the queue are untouched. `--upgrade` accepts only `--version` and `--dir` and does not check Docker.
+The installer verifies the release checksums and replaces only the release files that changed: the `runquill` binary, `compose.yaml`, `compose.ssh.yaml`, `LICENSE`, and `compose.panel.yaml`, `compose.worker.yaml` and `runquill-k3s.yaml` when the release includes them. It moves the replaced copies into `.previous/`, which holds only the most recent upgrade. Roll back with `cp -p .previous/* .`. `.env`, the GitHub App key, other files and the queue are untouched. `--upgrade` accepts only `--version`, `--dir`, `--yes` and `--no-install`. It runs the host checks too, but because it restarts nothing, it only reports Docker problems and never installs Docker.
 
 The installer does not restart anything. If `.env` names published images, it prints the new `RUNQUILL_MANAGER_IMAGE` and `RUNQUILL_RUNNER_IMAGE` values for you to set, followed by the pull, `docker compose up -d --no-build` and `doctor` commands to run with your usual Compose files. The manager pulls the new runner image onto the `local` host and `ssh://` hosts. On outbound workers, load the new image and upgrade the `runquill worker` binary. On K3s, it prints `kubectl apply -f runquill-k3s.yaml` instead.
 
@@ -514,10 +580,12 @@ Compose does not manage runner containers, cache volumes or the runner image. Ch
 docker ps -a --filter label=io.runquill.runner=1
 docker rm -f $(docker ps -aq --filter label=io.runquill.runner=1)
 docker volume rm $(docker volume ls -q -f label=io.runquill.cache=1)
-docker image rm ghcr.io/yakisoba0728/runquill-runner:v0.3.1
+docker image rm ghcr.io/yakisoba0728/runquill-runner:v0.3.2
 ```
 
 Then delete the installation directory, which holds `.env`, the GitHub App key and any token files. Turn off a Tailscale Funnel or Serve listener you created, and stop `runquill worker` on outbound workers.
+
+The installer's host changes stay in place. To undo them, remove your user from the `docker` group with `sudo gpasswd -d "$USER" docker`. Remove Docker by following [Docker's uninstall steps](https://docs.docker.com/engine/install/ubuntu/#uninstall-docker-engine) for your distribution, including `/etc/apt/keyrings/docker.asc` and `/etc/apt/sources.list.d/docker.sources`, or `/etc/yum.repos.d/docker-ce.repo`.
 
 On K3s, `kubectl delete -f runquill-k3s.yaml` removes both Runquill namespaces with the manager, runner Pods, Secrets and the queue PVC.
 

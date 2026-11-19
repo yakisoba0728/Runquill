@@ -20,6 +20,22 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
+      - name: Check the installer with stubbed commands
+        run: |
+          sh -n install.sh
+          dash -n install.sh
+          if command -v shellcheck >/dev/null; then
+            shellcheck -s sh install.sh .github/scripts/smoke-public-install.sh \
+              .github/scripts/test-install-offline.sh .github/scripts/test-install-host.sh
+          else
+            echo '::warning::shellcheck is not installed on this runner'
+          fi
+          sh .github/scripts/test-install-offline.sh dash
+          sh .github/scripts/test-install-offline.sh bash
+      - name: Prepare a fresh Ubuntu host with the installer
+        if: matrix.os == 'ubuntu-24.04'
+        timeout-minutes: 10
+        run: sh .github/scripts/test-install-host.sh ubuntu:24.04
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: '1.26.x'

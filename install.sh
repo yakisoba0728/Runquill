@@ -14,27 +14,58 @@ upgrade=false
 panel=false
 wizard=false
 panel_url=
+assume_yes=false
+no_install=false
+prepare_only=false
+no_docker=false
+
+# Docker's published signing keys (https://docs.docker.com/engine/install/).
+docker_apt_fingerprint=9DC858229FC7DD38854AE2D88D81803C0EBFCD88
+docker_rpm_fingerprint=060A61C51B558A7F742B77AAC52FEB6B621E9F35
+docker_packages='docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin'
+# Only the offline installer tests set this; it prefixes /etc, /proc, /run and /sys reads.
+sysroot=${RUNQUILL_INSTALL_SYSROOT:-}
 
 usage() {
     cat <<'EOF_USAGE'
-Usage: sh install.sh [--version vX.Y.Z] [--dir PATH] [--webhook-url URL] [--listen-port PORT] [--repository-scope all|selected] [--organization ORG [--runner-group-id ID]] [--download-only] [--wizard] [--panel [--panel-url URL]]
-       sh install.sh --upgrade [--version vX.Y.Z] [--dir PATH]
+Usage: sh install.sh [--dir PATH] [--version vX.Y.Z] [--wizard] [--yes | --no-install] [--no-docker]
+       sh install.sh [--dir PATH] [--version vX.Y.Z] [--webhook-url URL] [--listen-port PORT]
+                     [--repository-scope all|selected] [--organization ORG [--runner-group-id ID]]
+                     [--panel [--panel-url URL]] [--yes | --no-install]
+       sh install.sh --upgrade [--version vX.Y.Z] [--dir PATH] [--yes | --no-install]
+       sh install.sh --prepare-only [--yes | --no-install] [--no-docker]
+       sh install.sh --download-only [--version vX.Y.Z] [--dir PATH]
 
-  --version vX.Y.Z           Release to install (default: latest release).
+Before downloading, the installer checks this host (OS, cgroup v2, tools, Docker
+Engine, Compose, Docker access, disk space, HTTPS to github.com and ghcr.io) and
+offers to fix what is missing. It installs Docker only from Docker's official
+repository, never replaces a working Docker, and lists every command first.
+
   --dir PATH                 Install directory (default: ./runquill).
+  --version vX.Y.Z           Release to install (default: latest release).
+  --wizard                   Download, then finish setup in the browser wizard.
+  -y, --yes                  Make the listed host changes without asking
+                             (for unattended installs).
+  --no-install               Never change the system; fail and list what is missing.
+  --no-docker                Skip the Docker checks (K3s hosts, or Docker managed
+                             elsewhere).
+  --prepare-only             Check and prepare the host, then stop.
+  --download-only            Download and verify the release only; no host checks,
+                             setup or Compose.
   --webhook-url URL          Subscribe the new GitHub App to webhooks at URL.
-  --listen-port PORT         Local port for the GitHub App setup callback.
+  --listen-port PORT         Local port for the setup callback or the wizard.
   --repository-scope SCOPE   Install the App on all or selected repositories.
   --organization ORG         Create the GitHub App under organization ORG.
   --runner-group-id ID       Register runners in this organization runner group.
-  --download-only            Download and verify the release; skip setup and Compose.
-  --wizard                   Download, then finish setup in the browser wizard.
   --panel                    Configure the web panel and start Compose with it.
   --panel-url URL            Browser origin of the panel (requires --panel).
   --upgrade                  Replace the release files of an existing install in
                              --dir after verifying checksums. Replaced files are
                              kept in .previous/. .env, keys and data are untouched.
   -h, --help                 Show this help.
+
+Without --yes or --no-install the installer asks once before changing anything,
+and changes nothing when there is no terminal to ask on.
 EOF_USAGE
 }
 
@@ -46,6 +77,18 @@ fail() {
 require() {
     command -v "$1" >/dev/null 2>&1 || fail "$1 is required but was not found. $2"
 }
+
+# quote prints $1 as one single-quoted shell word.
+quote() {
+    printf "'%s'" "$(printf '%s\n' "$1" | sed "s/'/'\\\\''/g")"
+}
+
+original_args=
+for argument in "$@"; do original_args="$original_args $(quote "$argument")"; done
+case $0 in
+    /*) script_path=$0 ;;
+    *) script_path=$(pwd)/$0 ;;
+esac
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -69,6 +112,10 @@ while [ "$#" -gt 0 ]; do
         --panel) panel=true; shift ;;
         --download-only) download_only=true; shift ;;
         --upgrade) upgrade=true; shift ;;
+        -y|--yes) assume_yes=true; shift ;;
+        --no-install) no_install=true; shift ;;
+        --prepare-only) prepare_only=true; shift ;;
+        --no-docker) no_docker=true; shift ;;
         -h|--help) usage; exit 0 ;;
         *) usage >&2; exit 2 ;;
     esac
@@ -82,6 +129,11 @@ if [ -n "$panel_url" ] && [ "$panel" = false ]; then
     printf '%s\n' '--panel-url requires --panel.' >&2
     exit 2
 fi
+if [ -n "$listen_port" ]; then
+    case $listen_port in
+        *[!0-9]*) printf '%s\n' '--listen-port takes a port number.' >&2; exit 2 ;;
+    esac
+fi
 
 if [ "$wizard" = true ] && { [ "$panel" = true ] || [ -n "$webhook$repository_scope$organization$runner_group_id" ]; }; then
     printf '%s\n' 'Set GitHub, panel, and webhook options inside the wizard.' >&2
@@ -89,32 +141,829 @@ if [ "$wizard" = true ] && { [ "$panel" = true ] || [ -n "$webhook$repository_sc
 fi
 
 if [ "$upgrade" = true ] && { [ "$wizard" = true ] || [ "$panel" = true ] || [ -n "$webhook$listen_port$panel_url$repository_scope$organization$runner_group_id" ]; }; then
-    printf '%s\n' '--upgrade only accepts --version and --dir; it never reruns setup.' >&2
+    printf '%s\n' '--upgrade only accepts --version, --dir, --yes and --no-install; it never reruns setup.' >&2
+    exit 2
+fi
+if [ "$assume_yes" = true ] && [ "$no_install" = true ]; then
+    printf '%s\n' '--yes and --no-install contradict each other. Pick one.' >&2
+    exit 2
+fi
+if [ "$prepare_only" = true ] && { [ "$download_only" = true ] || [ "$upgrade" = true ]; }; then
+    printf '%s\n' '--prepare-only cannot be combined with --download-only or --upgrade.' >&2
+    exit 2
+fi
+if [ "$download_only" = true ] && [ "$upgrade" = true ]; then
+    printf '%s\n' '--download-only cannot be combined with --upgrade.' >&2
     exit 2
 fi
 
-if [ "$(uname -s)" != Linux ]; then
-    printf '%s\n' 'Run the installer on the Linux server that will run Runquill.' >&2
-    exit 1
+# ---------------------------------------------------------------- output
+
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+    esc=$(printf '\033')
+    color_ok="${esc}[32m" color_warn="${esc}[33m" color_fail="${esc}[31m" color_off="${esc}[0m"
+else
+    color_ok='' color_warn='' color_fail='' color_off=''
 fi
-case "$(uname -m)" in
-    x86_64) arch=amd64 ;;
-    aarch64|arm64) arch=arm64 ;;
-    *) printf '%s\n' 'Runquill releases support Linux amd64 and arm64.' >&2; exit 1 ;;
-esac
+
+# item STATUS NAME DETAIL prints one aligned checklist line.
+item() {
+    case $1 in
+        ok) item_color=$color_ok item_label='ok  ' ;;
+        fix) item_color=$color_warn item_label='fix ' ;;
+        warn) item_color=$color_warn item_label='warn' ;;
+        fail) item_color=$color_fail item_label='FAIL' ;;
+        *) item_color='' item_label=$1 ;;
+    esac
+    item_off=
+    if [ -n "$item_color" ]; then item_off=$color_off; fi
+    printf '  %s%s%s  %-14s %s\n' "$item_color" "$item_label" "$item_off" "$2" "$3"
+}
+
+# ---------------------------------------------------------------- host facts
+
+has() { command -v "$1" >/dev/null 2>&1; }
+
+os_value() {
+    if [ -r "$sysroot/etc/os-release" ]; then
+        awk -F= -v key="$1" '$1 == key {
+            value = substr($0, index($0, "=") + 1)
+            gsub(/^["'\'']|["'\'']$/, "", value)
+            print value
+            exit
+        }' "$sysroot/etc/os-release"
+    fi
+}
+
+in_group_list() { # LIST GROUP
+    case " $1 " in *" $2 "*) return 0 ;; esac
+    return 1
+}
+
+have_tty() {
+    [ -t 0 ] && return 0
+    (: </dev/tty) 2>/dev/null
+}
+
+uid=$(id -u)
+user=$(id -un)
+
+# https_status URL prints the HTTP status code, or 000 when HTTPS fails.
+https_status() {
+    https_code=$(curl --proto '=https' --proto-redir '=https' -sS -o /dev/null -I \
+        --connect-timeout 10 --max-time 20 -w '%{http_code}' "$1" 2>/dev/null) || true
+    printf '%s\n' "${https_code:-000}"
+}
+
+# docker_repo_state sets docker_repo (apt/dnf/apk/none), docker_repo_url,
+# docker_repo_note and docker_repo_reason for this distribution.
+docker_repo_state() {
+    docker_repo=none docker_repo_url='' docker_repo_note='' docker_repo_reason=''
+    case $os_id in
+        ubuntu|debian)
+            if ! has apt-get; then docker_repo_reason="apt-get not found on $os_name"; return; fi
+            docker_repo=apt
+            docker_repo_dist=$os_id
+            if [ "$os_id" = ubuntu ]; then
+                docker_repo_suite=$(os_value UBUNTU_CODENAME)
+                [ -n "$docker_repo_suite" ] || docker_repo_suite=$(os_value VERSION_CODENAME)
+            else
+                docker_repo_suite=$(os_value VERSION_CODENAME)
+            fi
+            if [ -z "$docker_repo_suite" ]; then
+                docker_repo=none docker_repo_reason="$os_name has no release codename in /etc/os-release"
+                return
+            fi
+            docker_repo_url=https://download.docker.com/linux/$docker_repo_dist
+            docker_repo_probe=$docker_repo_url/dists/$docker_repo_suite/Release
+            ;;
+        fedora|rhel|centos|rocky|almalinux)
+            if has dnf; then docker_dnf=dnf; elif has yum; then docker_dnf=yum; else
+                docker_repo_reason="dnf/yum not found on $os_name"; return
+            fi
+            docker_repo=dnf
+            case $os_id in
+                fedora) docker_repo_dist=fedora docker_repo_suite=$os_version ;;
+                rhel) docker_repo_dist=rhel docker_repo_suite=${os_version%%.*} ;;
+                *) docker_repo_dist=centos docker_repo_suite=${os_version%%.*} ;;
+            esac
+            docker_repo_url=https://download.docker.com/linux/$docker_repo_dist
+            docker_repo_probe=$docker_repo_url/$docker_repo_suite/
+            ;;
+        alpine)
+            if has apk; then
+                docker_repo=apk
+                docker_repo_note="Docker's repository does not support Alpine, so Alpine's own community packages are used"
+            else
+                docker_repo_reason='apk not found'
+            fi
+            ;;
+        *)
+            docker_repo_reason="automatic Docker install is not available for ${os_name:-this distribution}"
+            ;;
+    esac
+}
+
+# docker_repo_available checks that Docker's repository has this release.
+docker_repo_available() {
+    case $docker_repo in
+        apt|dnf) [ "$(https_status "$docker_repo_probe")" = 200 ] ;;
+        *) return 0 ;;
+    esac
+}
+
+docker_repo_configured() {
+    case $docker_repo in
+        apt) grep -rqs 'download\.docker\.com' "$sysroot/etc/apt/sources.list" "$sysroot/etc/apt/sources.list.d" ;;
+        dnf) grep -rqs 'download\.docker\.com' "$sysroot/etc/yum.repos.d" ;;
+        *) return 1 ;;
+    esac
+}
+
+docker_from_docker_repo() {
+    if has dpkg-query; then
+        dpkg-query -W -f='${Status}' docker-ce 2>/dev/null | grep -q 'install ok installed'
+    elif has rpm; then
+        rpm -q docker-ce >/dev/null 2>&1
+    else
+        return 1
+    fi
+}
+
+tool_package() { # TOOL prints the package that provides it for $pkg_manager
+    case $1 in
+        curl) case $pkg_manager in apt-get) printf 'curl ca-certificates' ;; *) printf curl ;; esac ;;
+        sha256sum|mktemp|df|stat|nproc) printf coreutils ;;
+        awk) printf gawk ;;
+        cmp) printf diffutils ;;
+        gpg) case $pkg_manager in apt-get) printf gpg ;; dnf|yum) printf gnupg2 ;; zypper) printf gpg2 ;; *) printf gnupg ;; esac ;;
+        *) printf '%s' "$1" ;;
+    esac
+}
+
+port_listening() { # PORT
+    for port_table in "$sysroot/proc/net/tcp" "$sysroot/proc/net/tcp6"; do
+        [ -r "$port_table" ] || continue
+        if awk -v want="$1" '
+            function hex(s,   i, n) {
+                n = 0
+                for (i = 1; i <= length(s); i++) n = n * 16 + index("0123456789ABCDEF", toupper(substr(s, i, 1))) - 1
+                return n
+            }
+            NR > 1 && $4 == "0A" { n = split($2, part, ":"); if (hex(part[n]) == want) found = 1 }
+            END { exit !found }' "$port_table"; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# ---------------------------------------------------------------- preflight
+
+add_line() { # VAR TEXT appends one line to a newline-separated list
+    eval "add_line_old=\${$1}"
+    if [ -n "$add_line_old" ]; then
+        eval "$1=\${$1}\$newline\$2"
+    else
+        eval "$1=\$2"
+    fi
+}
+newline='
+'
+
+as_root_text() {
+    if [ "$uid" -eq 0 ]; then printf '%s' "$*"; else printf 'sudo %s' "$*"; fi
+}
+
+plan_cmd() { add_line plan "    $(as_root_text "$@")"; }
+
+preflight() {
+    plan='' blockers='' manual='' notes='' docker_plan=''
+    fix_tools='' fix_docker=false fix_compose=false fix_start=false fix_enable=false
+    fix_group=false activate_group=false docker_root=''
+    mode_docker=true
+    if [ "$no_docker" = true ]; then mode_docker=false; fi
+    docker_soft=false
+    if [ "$upgrade" = true ]; then docker_soft=true; fi
+
+    printf 'Checking this host\n'
+
+    # System and architecture.
+    kernel=$(uname -s)
+    machine=$(uname -m)
+    os_id=$(os_value ID)
+    os_version=$(os_value VERSION_ID)
+    os_name=$(os_value PRETTY_NAME)
+    [ -n "$os_name" ] || os_name=${os_id:-unknown Linux}
+    case $machine in x86_64|amd64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; *) arch= ;; esac
+    if [ "$kernel" != Linux ]; then
+        item fail System "$kernel $machine is not supported"
+        add_line blockers "Runquill runs on Linux amd64 or arm64 servers. Run the installer on that server, not on $kernel."
+        return
+    fi
+    if [ -z "$arch" ]; then
+        item fail System "$os_name, Linux $machine"
+        add_line blockers "Runquill releases exist only for Linux amd64 (x86_64) and arm64 (aarch64), not $machine."
+        return
+    fi
+    item ok System "$os_name, Linux $arch"
+
+    if has apt-get; then pkg_manager=apt-get
+    elif has dnf; then pkg_manager=dnf
+    elif has yum; then pkg_manager=yum
+    elif has zypper; then pkg_manager=zypper
+    elif has apk; then pkg_manager=apk
+    else pkg_manager=
+    fi
+
+    can_root=true root_reason=''
+    if [ "$uid" -ne 0 ]; then
+        if ! has sudo; then
+            can_root=false root_reason='this needs root, and sudo is not installed. Rerun as root, or install sudo and rerun.'
+        elif ! sudo -n true 2>/dev/null && ! have_tty; then
+            can_root=false root_reason='sudo needs a password and there is no terminal to ask for it. Run the installer from an interactive shell, or allow passwordless sudo.'
+        fi
+    fi
+
+    # cgroup v2.
+    cgroup_fs=$(stat -fc %T "$sysroot/sys/fs/cgroup" 2>/dev/null || true)
+    # BusyBox stat prints UNKNOWN for cgroup2; only a cgroup v2 root has cgroup.controllers.
+    if [ -f "$sysroot/sys/fs/cgroup/cgroup.controllers" ]; then cgroup_fs=cgroup2fs; fi
+    if [ "$cgroup_fs" = cgroup2fs ]; then
+        item ok cgroup v2
+    elif [ "$upgrade" = true ]; then
+        item warn cgroup "v1 or unknown ($cgroup_fs); Runquill runners need cgroup v2"
+    else
+        item fail cgroup "v1 or unknown (${cgroup_fs:-not mounted})"
+        add_line blockers 'Runquill needs cgroup v2. Boot with systemd.unified_cgroup_hierarchy=1 (or upgrade to a distribution release that uses cgroup v2), then rerun.'
+    fi
+
+    # Tools the installer itself uses.
+    missing_tools=
+    for tool in curl sha256sum awk grep sed cmp mktemp df; do
+        has "$tool" || missing_tools="$missing_tools $tool"
+    done
+
+    # Docker.
+    docker_repo_state
+    docker_present=false
+    if has docker; then docker_present=true; fi
+    if [ "$mode_docker" = true ] && [ "$docker_present" = false ] && has k3s; then
+        mode_docker=false
+        item skip Docker 'not installed; K3s found, so the Docker checks are skipped (install Docker yourself to use the Docker backend)'
+    fi
+    if [ "$mode_docker" = false ]; then
+        [ "$no_docker" = false ] || item skip Docker 'skipped (--no-docker)'
+    elif [ "$docker_soft" = true ]; then
+        preflight_docker_report
+    else
+        preflight_docker
+    fi
+    if [ "$fix_docker" = true ] && [ "$docker_repo" != apk ] && ! has gpg; then
+        missing_tools="$missing_tools gpg"
+    fi
+
+    if [ -n "$missing_tools" ]; then
+        tool_packages=
+        for tool in $missing_tools; do
+            for package in $(tool_package "$tool"); do
+                in_group_list "$tool_packages" "$package" || tool_packages="$tool_packages $package"
+            done
+        done
+        tool_packages=${tool_packages# }
+        if [ -z "$pkg_manager" ]; then
+            item fail Tools "missing:$missing_tools"
+            add_line blockers "Install these tools with your package manager, then rerun:$missing_tools (packages: $tool_packages)."
+        elif [ "$can_root" = false ]; then
+            item fail Tools "missing:$missing_tools"
+            add_line blockers "Installing$missing_tools: $root_reason"
+        else
+            item fix Tools "missing:$missing_tools; install $tool_packages with $pkg_manager"
+            fix_tools=$tool_packages
+            add_line plan "  Install$missing_tools:"
+            case $pkg_manager in
+                apt-get)
+                    plan_cmd env DEBIAN_FRONTEND=noninteractive apt-get update
+                    plan_cmd env DEBIAN_FRONTEND=noninteractive apt-get install -y "$fix_tools" ;;
+                apk) plan_cmd apk add --no-cache "$fix_tools" ;;
+                zypper) plan_cmd zypper --non-interactive install "$fix_tools" ;;
+                *) plan_cmd "$pkg_manager" install -y "$fix_tools" ;;
+            esac
+        fi
+    else
+        item ok Tools 'curl sha256sum awk grep sed cmp mktemp df'
+    fi
+    if [ -n "$docker_plan" ]; then add_line plan "$docker_plan"; fi
+
+    # Disk space where Docker keeps images and containers.
+    disk_dir=$docker_root
+    if [ -z "$disk_dir" ]; then
+        for disk_dir in /var/lib/docker /var/lib /; do [ -d "$disk_dir" ] && break; done
+    fi
+    disk_gb=$(df -Pk "$disk_dir" 2>/dev/null | awk 'NR == 2 { print int($4 / 1048576) }') || true
+    if [ -z "$disk_gb" ]; then
+        item warn Disk "could not read free space in $disk_dir"
+    elif [ "$disk_gb" -lt 20 ]; then
+        item warn Disk "$disk_gb GB free in $disk_dir; runner images and job workspaces need about 20 GB"
+        add_line notes "Free up space in $disk_dir (or move Docker's data-root) before running many jobs."
+    else
+        item ok Disk "$disk_gb GB free in $disk_dir"
+    fi
+
+    # Outbound HTTPS.
+    if ! has curl; then
+        item wait Network 'checked after curl is installed'
+    else
+        unreachable=
+        for host in github.com ghcr.io; do
+            case $host in ghcr.io) probe=https://ghcr.io/v2/ ;; *) probe=https://$host/ ;; esac
+            [ "$(https_status "$probe")" != 000 ] || unreachable="$unreachable $host"
+        done
+        if [ -z "$unreachable" ]; then
+            item ok Network 'HTTPS to github.com and ghcr.io'
+        else
+            item fail Network "no HTTPS connection to$unreachable"
+            add_line blockers "Allow outbound HTTPS (port 443) to$unreachable. Behind a proxy, export HTTPS_PROXY before running the installer."
+        fi
+    fi
+
+    host_size
+}
+
+preflight_docker_report() {
+    docker_plan=
+    if [ "$docker_present" = false ]; then
+        item warn Docker 'not installed; --upgrade does not need it, but Compose does'
+        return
+    fi
+    if docker info >/dev/null 2>&1; then
+        docker_root=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || true)
+        item ok Docker 'daemon reachable'
+    else
+        item warn Docker "daemon not reachable as $user; restarting Compose needs it"
+    fi
+}
+
+preflight_docker() {
+    docker_plan=
+    group_now=$(id -Gn)
+    group_db=$(id -Gn "$user" 2>/dev/null || printf '%s' "$group_now")
+    systemd=false
+    if [ -d "$sysroot/run/systemd/system" ] && has systemctl; then systemd=true; fi
+    openrc=false
+    if [ "$systemd" = false ] && [ -e "$sysroot/run/openrc/softlevel" ] && has rc-service; then openrc=true; fi
+
+    snap=false
+    if [ "$docker_present" = true ]; then
+        docker_path=$(command -v docker)
+        case $docker_path in /snap/*) snap=true ;; esac
+        case $(readlink -f "$docker_path" 2>/dev/null || true) in /snap/*|*/snap/*) snap=true ;; esac
+    fi
+    rootless_host=false
+    case ${DOCKER_HOST:-} in *"/run/user/"*|*"/.docker/run/"*) rootless_host=true ;; esac
+
+    # Engine.
+    if [ "$docker_present" = false ]; then
+        if [ "$docker_repo" = none ]; then
+            item fail 'Docker Engine' "not installed; $docker_repo_reason"
+            add_line blockers "Install Docker Engine by following https://docs.docker.com/engine/install/ , then rerun."
+        elif [ "$can_root" = false ]; then
+            item fail 'Docker Engine' 'not installed'
+            add_line blockers "Installing Docker Engine: $root_reason"
+        elif has curl && ! docker_repo_available; then
+            item fail 'Docker Engine' "not installed; Docker's repository has no packages for $os_name"
+            add_line blockers "Docker's repository does not offer $os_name ($docker_repo_probe). Follow https://docs.docker.com/engine/install/ , then rerun."
+        else
+            fix_docker=true
+            case $docker_repo in
+                apt)
+                    item fix 'Docker Engine' "not installed; install from Docker's apt repository ($docker_repo_suite)"
+                    docker_plan="  Install Docker Engine and the Compose plugin from $docker_repo_url:"
+                    if docker_repo_configured; then
+                        docker_plan="$docker_plan$newline    (Docker's apt repository is already configured; it is reused)"
+                    else
+                        docker_plan="$docker_plan$newline    curl -fsSL $docker_repo_url/gpg   # then check the key fingerprint is $docker_apt_fingerprint"
+                        docker_plan="$docker_plan$newline    $(as_root_text install -m 0755 -d /etc/apt/keyrings)"
+                        docker_plan="$docker_plan$newline    $(as_root_text install -m 0644 KEY /etc/apt/keyrings/docker.asc)"
+                        docker_plan="$docker_plan$newline    $(as_root_text install -m 0644 SOURCES /etc/apt/sources.list.d/docker.sources)   # Suites: $docker_repo_suite, Signed-By: /etc/apt/keyrings/docker.asc"
+                    fi
+                    docker_plan="$docker_plan$newline    $(as_root_text env DEBIAN_FRONTEND=noninteractive apt-get update)"
+                    docker_plan="$docker_plan$newline    $(as_root_text env DEBIAN_FRONTEND=noninteractive apt-get install -y "$docker_packages")"
+                    ;;
+                dnf)
+                    item fix 'Docker Engine' "not installed; install from Docker's $docker_repo_dist repository"
+                    docker_plan="  Install Docker Engine and the Compose plugin from $docker_repo_url:"
+                    if docker_repo_configured; then
+                        docker_plan="$docker_plan$newline    (Docker's repository is already configured; it is reused)"
+                    else
+                        docker_plan="$docker_plan$newline    curl -fsSL $docker_repo_url/gpg   # then check the key fingerprint is $docker_rpm_fingerprint"
+                        docker_plan="$docker_plan$newline    $(as_root_text rpm --import KEY)"
+                        docker_plan="$docker_plan$newline    curl -fsSL $docker_repo_url/docker-ce.repo"
+                        docker_plan="$docker_plan$newline    $(as_root_text install -m 0644 REPO /etc/yum.repos.d/docker-ce.repo)"
+                    fi
+                    docker_plan="$docker_plan$newline    $(as_root_text "$docker_dnf" install -y "$docker_packages")"
+                    ;;
+                apk)
+                    item fix 'Docker Engine' "not installed; install Alpine's docker packages"
+                    docker_plan="  Install Docker Engine and Compose ($docker_repo_note):"
+                    docker_plan="$docker_plan$newline    $(as_root_text apk add --no-cache docker docker-cli-compose)"
+                    ;;
+            esac
+        fi
+    elif [ "$snap" = true ]; then
+        item warn 'Docker Engine' "snap package ($docker_path)"
+    else
+        item ok 'Docker Engine' "$(docker --version 2>/dev/null | sed 's/^Docker version //')"
+    fi
+
+    # Compose v2.
+    if [ "$fix_docker" = true ]; then
+        item fix 'Compose v2' 'installed with Docker Engine'
+    elif [ "$docker_present" = false ]; then
+        item fail 'Compose v2' 'needs Docker Engine'
+    elif docker compose version >/dev/null 2>&1; then
+        item ok 'Compose v2' "$(docker compose version --short 2>/dev/null || true)"
+    elif [ "$snap" = true ]; then
+        item fail 'Compose v2' 'missing from the snap Docker'
+        add_line blockers 'Snap-installed Docker is not changed automatically. Remove it (sudo snap remove docker) and rerun to install Docker from its official repository, or add the Compose v2 plugin yourself.'
+    elif docker_from_docker_repo && { [ "$docker_repo" = apt ] || [ "$docker_repo" = dnf ]; } && [ "$can_root" = true ]; then
+        fix_compose=true
+        item fix 'Compose v2' 'missing; install docker-compose-plugin'
+        if [ "$docker_repo" = apt ]; then
+            add_line docker_plan "  Install the Compose plugin:$newline    $(as_root_text env DEBIAN_FRONTEND=noninteractive apt-get install -y docker-compose-plugin)"
+        else
+            add_line docker_plan "  Install the Compose plugin:$newline    $(as_root_text "$docker_dnf" install -y docker-compose-plugin)"
+        fi
+    elif [ "$docker_repo" = apk ] && [ "$can_root" = true ]; then
+        fix_compose=true
+        item fix 'Compose v2' 'missing; install docker-cli-compose'
+        add_line docker_plan "  Install the Compose plugin:$newline    $(as_root_text apk add --no-cache docker-cli-compose)"
+    else
+        item fail 'Compose v2' 'missing'
+        add_line blockers 'Docker Compose v2 is missing and this Docker was not installed from Docker'\''s repository, so it is not changed automatically. Install the Compose plugin: https://docs.docker.com/compose/install/linux/'
+    fi
+
+    # Daemon and access.
+    daemon=unknown
+    docker_error=
+    if [ "$docker_present" = true ]; then
+        if docker_error=$(docker info 2>&1 >/dev/null); then
+            daemon=reachable
+        elif printf '%s' "$docker_error" | grep -qi 'permission denied'; then
+            daemon=denied
+        else
+            daemon=down
+        fi
+    fi
+    if [ "$daemon" = reachable ]; then
+        docker_root=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || true)
+        if docker info --format '{{json .SecurityOptions}}' 2>/dev/null | grep -q rootless || [ "$rootless_host" = true ]; then
+            item fail 'Docker daemon' 'rootless'
+            add_line blockers "This Docker daemon runs rootless, but Runquill's default runners are privileged containers that need rootful Docker. The installer does not change it. Use the system daemon instead: unset DOCKER_HOST, run 'docker context use default', and make sure the rootful docker service is installed and running (https://docs.docker.com/engine/install/). Or route jobs to a pool with privileged: false."
+            return
+        fi
+        item ok 'Docker daemon' "running, data in ${docker_root:-/var/lib/docker}"
+    elif [ "$rootless_host" = true ]; then
+        item fail 'Docker daemon' "not reachable at DOCKER_HOST=${DOCKER_HOST:-}"
+        add_line blockers "DOCKER_HOST points at a rootless daemon. Runquill needs the rootful system daemon: unset DOCKER_HOST and rerun."
+        return
+    elif [ "$daemon" = denied ]; then
+        item ok 'Docker daemon' 'running (socket exists)'
+    elif [ "$daemon" = down ] || [ "$fix_docker" = true ]; then
+        if [ "$snap" = true ]; then
+            item fail 'Docker daemon' 'not running (snap)'
+            add_line blockers 'Start the snap Docker yourself (sudo snap start docker) and rerun; snap-installed Docker is not changed automatically.'
+        elif [ "$systemd" = true ] && [ "$can_root" = true ]; then
+            fix_start=true
+            item fix 'Docker daemon' 'start and enable at boot with systemctl'
+            add_line docker_plan "  Start Docker now and at every boot:$newline    $(as_root_text systemctl enable --now docker)"
+        elif [ "$openrc" = true ] && [ "$can_root" = true ]; then
+            fix_start=true
+            item fix 'Docker daemon' 'start and enable at boot with OpenRC'
+            add_line docker_plan "  Start Docker now and at every boot:$newline    $(as_root_text rc-update add docker default)$newline    $(as_root_text rc-service docker start)"
+        elif [ "$systemd" = false ] && [ "$openrc" = false ]; then
+            item warn 'Docker daemon' 'not running; this host has no systemd, so it is not started automatically'
+            add_line manual "Start the Docker daemon with this host's init system (or run 'sudo dockerd &' for a quick test), make it start at boot, then rerun the installer."
+        else
+            item fail 'Docker daemon' 'not running'
+            add_line blockers "Starting Docker: $root_reason"
+        fi
+    fi
+    if [ "$fix_start" = false ] && [ "$systemd" = true ] && [ "$daemon" != unknown ] && [ "$snap" = false ]; then
+        if systemctl is-enabled docker.service >/dev/null 2>&1 || systemctl is-enabled docker.socket >/dev/null 2>&1; then
+            item ok 'Start at boot' 'docker.service enabled'
+        elif [ "$can_root" = true ]; then
+            fix_enable=true
+            item fix 'Start at boot' 'enable docker.service'
+            add_line docker_plan "  Start Docker at every boot:$newline    $(as_root_text systemctl enable docker)"
+        else
+            item warn 'Start at boot' "docker.service is not enabled ($root_reason)"
+        fi
+    elif [ "$fix_start" = false ] && [ "$systemd" = false ] && [ "$daemon" = reachable ]; then
+        item warn 'Start at boot' 'no systemd; make sure your init system starts dockerd at boot'
+    fi
+
+    if [ "$uid" -eq 0 ]; then
+        item ok 'Docker access' 'running as root'
+    elif [ "$daemon" = reachable ]; then
+        item ok 'Docker access' "$user can use the daemon"
+    elif in_group_list "$group_now" docker; then
+        if [ "$daemon" = denied ]; then
+            item fail 'Docker access' "$user is in the docker group but the socket refuses access"
+            add_line blockers "Check the owner and mode of /var/run/docker.sock (expected root:docker, 660): $docker_error"
+        else
+            item ok 'Docker access' "$user is in the docker group"
+        fi
+    elif in_group_list "$group_db" docker; then
+        activate_group=true
+        item ok 'Docker access' "$user is in the docker group; this run continues with it active"
+    elif [ "$snap" = true ]; then
+        item fail 'Docker access' "$user cannot use the snap Docker"
+        add_line blockers "Add $user to the docker group yourself or run the installer as root; snap-installed Docker is not changed automatically."
+    elif [ "$can_root" = false ]; then
+        item fail 'Docker access' "$user cannot use the daemon"
+        add_line blockers "Adding $user to the docker group: $root_reason"
+    else
+        fix_group=true activate_group=true
+        item fix 'Docker access' "add $user to the docker group (root-equivalent access)"
+        if [ "$docker_repo" = apk ] || ! has usermod; then
+            group_cmd="addgroup $user docker"
+        else
+            group_cmd="usermod -aG docker $user"
+        fi
+        add_line docker_plan "  Let $user use Docker without sudo. Members of the docker group can control the$newline  daemon and so have root-equivalent access to this host:$newline    $(as_root_text "$group_cmd")"
+    fi
+}
+
+host_size() {
+    cpus=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || printf 1)
+    mem_kb=$(awk '$1 == "MemTotal:" { print $2 }' "$sysroot/proc/meminfo" 2>/dev/null || true)
+    [ -n "$mem_kb" ] || return 0
+    size=$(awk -v c="$cpus" -v m="$mem_kb" 'BEGIN {
+        mib = int(m / 1024)
+        free_cpu = c - 2; if (free_cpu < 1) free_cpu = 1
+        free_mib = mib - 4096; if (free_mib < 1024) free_mib = int(mib / 2)
+        n = int(free_cpu / 2); if (int(free_mib / 4096) < n) n = int(free_mib / 4096)
+        if (n > 8) n = 8; if (n < 1) n = 1
+        printf "%d %.1f %d %d", n, int(free_cpu * 10 / n) / 10, int(free_mib / n), int(mib / 1024 + 0.5)
+    }')
+    # shellcheck disable=SC2086 # four numbers
+    set -- $size
+    suggest_runners=$1 suggest_cpus=$2 suggest_mib=$3
+    if [ "$1" -eq 1 ]; then size_runners='1 runner at a time'; else size_runners="$1 concurrent runners"; fi
+    item info 'Host size' "$cpus CPUs, $4 GB RAM: suggest $size_runners, $2 CPUs and $3 MiB each"
+}
+
+print_size_hint() {
+    [ -n "${suggest_runners:-}" ] || return 0
+    printf 'Suggested limits for this host: RUNQUILL_MAX_RUNNERS=%s, and about %s CPUs and %s MiB per\n' "$suggest_runners" "$suggest_cpus" "$suggest_mib"
+    printf 'runner (a pool'\''s cpus and memory_mib). Set them in .env after setup: %s#add-manager-settings\n' "$repo"
+}
+
+# ---------------------------------------------------------------- applying
+
+applied=
+apply_step=
+note_done() { add_line applied "  $1"; }
+
+run_root() {
+    if [ "$uid" -eq 0 ]; then
+        printf '  + %s\n' "$*"
+        "$@"
+    else
+        printf '  + sudo %s\n' "$*"
+        sudo "$@"
+    fi
+}
+
+on_exit() {
+    exit_status=$?
+    if [ -n "${prep_tmp:-}" ]; then rm -rf -- "$prep_tmp"; fi
+    if [ -n "${scratch:-}" ]; then rm -rf -- "$scratch"; fi
+    if [ "$exit_status" -ne 0 ] && [ -n "$apply_step" ]; then
+        printf '\nrunquill install: failed while: %s\n' "$apply_step" >&2
+        if [ -n "$applied" ]; then printf 'Already changed on this host:\n%s\n' "$applied" >&2; else printf 'Nothing on this host was changed.\n' >&2; fi
+        printf 'Not done: this step and everything after it. Fix the error above and rerun the installer;\nsteps that already succeeded are detected and skipped.\n' >&2
+    fi
+}
+trap on_exit EXIT
+trap 'exit 130' INT TERM
+
+fetch_verified_key() { # URL FINGERPRINT OUT
+    curl --proto '=https' --proto-redir '=https' -fsSL "$1" -o "$3"
+    key_info=$(GNUPGHOME=$prep_tmp/gnupg gpg --batch --show-keys --with-colons "$3" 2>/dev/null) || key_info=
+    key_pubs=$(printf '%s\n' "$key_info" | awk -F: '$1 == "pub" { n++ } END { print n + 0 }')
+    key_fpr=$(printf '%s\n' "$key_info" | awk -F: '$1 == "pub" { want = 1; next } want && $1 == "fpr" { print $10; exit }')
+    if [ "$key_pubs" -ne 1 ] || [ "$key_fpr" != "$2" ]; then
+        fail "The key from $1 has fingerprint '${key_fpr:-none}', not Docker's published $2. Nothing from it was trusted."
+    fi
+    printf '  verified key %s (fingerprint %s)\n' "$1" "$key_fpr"
+}
+
+# Package lists and group_cmd are split into words on purpose.
+# shellcheck disable=SC2086
+apply_plan() {
+    prep_tmp=$(mktemp -d "${TMPDIR:-/tmp}/runquill-prepare.XXXXXX")
+    mkdir -m 700 "$prep_tmp/gnupg"
+    if [ -n "$fix_tools" ]; then
+        apply_step="install$missing_tools"
+        case $pkg_manager in
+            apt-get)
+                run_root env DEBIAN_FRONTEND=noninteractive apt-get update
+                run_root env DEBIAN_FRONTEND=noninteractive apt-get install -y $fix_tools ;;
+            apk) run_root apk add --no-cache $fix_tools ;;
+            zypper) run_root zypper --non-interactive install $fix_tools ;;
+            *) run_root "$pkg_manager" install -y $fix_tools ;;
+        esac
+        note_done "installed $fix_tools"
+    fi
+    if [ "$fix_docker" = true ]; then
+        apply_step="install Docker Engine"
+        case $docker_repo in
+            apt)
+                if ! docker_repo_configured; then
+                    docker_repo_available || fail "Docker's repository does not offer $os_name ($docker_repo_probe). Follow https://docs.docker.com/engine/install/"
+                    fetch_verified_key "$docker_repo_url/gpg" "$docker_apt_fingerprint" "$prep_tmp/docker.asc"
+                    printf 'Types: deb\nURIs: %s\nSuites: %s\nComponents: stable\nArchitectures: %s\nSigned-By: /etc/apt/keyrings/docker.asc\n' \
+                        "$docker_repo_url" "$docker_repo_suite" "$(dpkg --print-architecture)" >"$prep_tmp/docker.sources"
+                    run_root install -m 0755 -d /etc/apt/keyrings
+                    run_root install -m 0644 "$prep_tmp/docker.asc" /etc/apt/keyrings/docker.asc
+                    note_done 'added Docker'\''s signing key as /etc/apt/keyrings/docker.asc'
+                    run_root install -m 0644 "$prep_tmp/docker.sources" /etc/apt/sources.list.d/docker.sources
+                    note_done 'added Docker'\''s apt repository in /etc/apt/sources.list.d/docker.sources'
+                fi
+                run_root env DEBIAN_FRONTEND=noninteractive apt-get update
+                run_root env DEBIAN_FRONTEND=noninteractive apt-get install -y $docker_packages
+                ;;
+            dnf)
+                if ! docker_repo_configured; then
+                    docker_repo_available || fail "Docker's repository does not offer $os_name ($docker_repo_probe). Follow https://docs.docker.com/engine/install/"
+                    fetch_verified_key "$docker_repo_url/gpg" "$docker_rpm_fingerprint" "$prep_tmp/docker.gpg"
+                    curl --proto '=https' --proto-redir '=https' -fsSL "$docker_repo_url/docker-ce.repo" -o "$prep_tmp/docker-ce.repo"
+                    run_root rpm --import "$prep_tmp/docker.gpg"
+                    note_done 'imported Docker'\''s signing key into rpm'
+                    run_root install -m 0644 "$prep_tmp/docker-ce.repo" /etc/yum.repos.d/docker-ce.repo
+                    note_done 'added Docker'\''s repository in /etc/yum.repos.d/docker-ce.repo'
+                fi
+                run_root "$docker_dnf" install -y $docker_packages
+                ;;
+            apk)
+                run_root apk add --no-cache docker docker-cli-compose
+                ;;
+        esac
+        note_done 'installed Docker Engine and the Compose plugin'
+    fi
+    if [ "$fix_compose" = true ]; then
+        apply_step='install the Compose plugin'
+        case $docker_repo in
+            apt) run_root env DEBIAN_FRONTEND=noninteractive apt-get install -y docker-compose-plugin ;;
+            dnf) run_root "$docker_dnf" install -y docker-compose-plugin ;;
+            apk) run_root apk add --no-cache docker-cli-compose ;;
+        esac
+        note_done 'installed the Compose plugin'
+    fi
+    if [ "$fix_start" = true ]; then
+        apply_step='start the Docker daemon'
+        if [ "$systemd" = true ]; then
+            run_root systemctl enable --now docker
+        else
+            run_root rc-update add docker default
+            run_root rc-service docker start
+        fi
+        note_done 'started Docker and enabled it at boot'
+    elif [ "$fix_enable" = true ]; then
+        apply_step='enable Docker at boot'
+        run_root systemctl enable docker
+        note_done 'enabled Docker at boot'
+    fi
+    if [ "$fix_group" = true ]; then
+        apply_step="add $user to the docker group"
+        if ! getent group docker >/dev/null 2>&1 && ! grep -q '^docker:' /etc/group; then
+            run_root groupadd docker
+        fi
+        run_root $group_cmd
+        note_done "added $user to the docker group"
+        RUNQUILL_INSTALL_GROUP_ADDED=1
+        export RUNQUILL_INSTALL_GROUP_ADDED
+    fi
+    apply_step=
+}
+
+# continue_with_docker_group re-runs this installer, with the same arguments,
+# in a process that has the docker group, so no new login is needed.
+# shellcheck disable=SC2120 # it sets its own positional parameters
+continue_with_docker_group() {
+    if [ -n "${RUNQUILL_INSTALL_REEXEC:-}" ] || [ ! -r "$script_path" ]; then return 0; fi
+    RUNQUILL_INSTALL_REEXEC=1
+    export RUNQUILL_INSTALL_REEXEC
+    if has sg; then
+        printf '%s\n' 'Continuing with the docker group active (sg docker) ...'
+        trap - EXIT
+        on_exit
+        exec sg docker -c "exec /bin/sh $(quote "$script_path")$original_args"
+    fi
+    if [ "$uid" -ne 0 ] && has sudo; then
+        printf '%s\n' "Continuing with the docker group active (sudo -u $user) ..."
+        trap - EXIT
+        on_exit
+        eval "set -- $original_args"
+        exec sudo -u "$user" env RUNQUILL_INSTALL_REEXEC=1 \
+            RUNQUILL_INSTALL_GROUP_ADDED="${RUNQUILL_INSTALL_GROUP_ADDED:-}" \
+            HOME="${HOME:-}" PATH="$PATH" NO_COLOR="${NO_COLOR:-}" TMPDIR="${TMPDIR:-/tmp}" \
+            SSH_CONNECTION="${SSH_CONNECTION:-}" DOCKER_HOST="${DOCKER_HOST:-}" \
+            /bin/sh "$script_path" "$@"
+    fi
+}
+
+relogin_note() {
+    if [ -n "${RUNQUILL_INSTALL_GROUP_ADDED:-}" ]; then
+        printf '%s\n' "Note: $user was added to the docker group. Shells opened before now need a new login (or 'newgrp docker') before docker works without sudo."
+    fi
+}
+
+prepare_host() {
+    preflight
+    if [ -n "$blockers" ]; then
+        printf '\nThe installer cannot continue:\n' >&2
+        printf '%s\n' "$blockers" | sed 's/^/  - /' >&2
+        if [ -n "$plan" ]; then printf 'Nothing on this host was changed.\n' >&2; fi
+        exit 1
+    fi
+    if [ -n "$plan" ]; then
+        printf '\nTo prepare this host the installer will run:\n%s\n' "$plan"
+        if [ "$no_install" = true ]; then
+            fail 'Nothing was changed (--no-install). Make the changes above yourself, or rerun without --no-install.'
+        elif [ "$assume_yes" = false ]; then
+            if [ -t 0 ]; then
+                printf 'Make these changes? [y/N] '
+                answer=
+                read -r answer || answer=
+                case $answer in
+                    y|Y|yes|YES|Yes) ;;
+                    *) fail 'Nothing was changed. Make the changes above yourself, or rerun and answer y.' ;;
+                esac
+            else
+                printf '\nNothing was changed: there is no terminal to ask for consent.\n' >&2
+                printf 'To allow these changes, rerun:\n  sh %s%s --yes\n' "$(quote "$0")" "$original_args" >&2
+                exit 1
+            fi
+        fi
+        printf '\n'
+        apply_plan
+    fi
+    if [ "$activate_group" = true ]; then
+        continue_with_docker_group
+    fi
+    if [ -n "$plan" ]; then
+        printf '\nChecking again\n'
+        preflight
+        if [ -n "$blockers$plan" ]; then
+            printf '\nThe host is still not ready:\n' >&2
+            if [ -n "$blockers" ]; then printf '%s\n' "$blockers" | sed 's/^/  - /' >&2; fi
+            if [ -n "$plan" ]; then printf '%s\n' "$plan" >&2; fi
+            if [ "$activate_group" = true ]; then
+                printf '  - Log out and back in (so the docker group applies), then rerun the installer.\n' >&2
+            fi
+            exit 1
+        fi
+    fi
+    if [ -n "$manual" ]; then
+        printf '\nOne more step is needed:\n' >&2
+        printf '%s\n' "$manual" | sed 's/^/  - /' >&2
+        exit 1
+    fi
+    if [ "$activate_group" = true ] && [ "$uid" -ne 0 ] && ! docker info >/dev/null 2>&1; then
+        fail "$user still cannot use Docker in this session. Log out and back in (so the docker group applies), then rerun the installer."
+    fi
+    if [ -n "$notes" ]; then printf '%s\n' "$notes"; fi
+    printf 'Host is ready.\n\n'
+}
+
+# ---------------------------------------------------------------- main
+
+if [ "$download_only" = true ]; then
+    if [ "$(uname -s)" != Linux ]; then
+        printf '%s\n' 'Run the installer on the Linux server that will run Runquill.' >&2
+        exit 1
+    fi
+    case "$(uname -m)" in
+        x86_64) arch=amd64 ;;
+        aarch64|arm64) arch=arm64 ;;
+        *) printf '%s\n' 'Runquill releases support Linux amd64 and arm64.' >&2; exit 1 ;;
+    esac
+else
+    prepare_host
+    if [ "$prepare_only" = true ]; then
+        relogin_note
+        exit 0
+    fi
+fi
 
 require curl 'Install curl with your package manager.'
 require sha256sum 'Install GNU coreutils (or BusyBox) to verify checksums.'
 for tool in awk cmp grep mktemp; do
     require "$tool" 'Install it with your package manager.'
 done
-if [ "$download_only" = false ] && [ "$wizard" = false ] && [ "$upgrade" = false ]; then
-    require docker 'Install Docker Engine: https://docs.docker.com/engine/install/'
-    docker compose version >/dev/null 2>&1 ||
-        fail 'Docker Compose v2 is not available. Install the docker-compose-plugin package.'
-    docker info >/dev/null 2>&1 ||
-        fail 'The Docker daemon is not reachable. Start Docker, or run as a user allowed to use it (for example, a member of the docker group).'
-fi
 if [ -z "$tag" ]; then
     latest=$(curl --proto '=https' --proto-redir '=https' -fsSL -o /dev/null -w '%{url_effective}' "$repo/releases/latest")
     tag=${latest##*/}
@@ -134,7 +983,6 @@ umask 077
 mkdir -p -- "$directory"
 cd -- "$directory"
 scratch=$(mktemp -d .runquill-install.XXXXXX)
-trap 'rm -rf -- "$scratch"' EXIT
 binary=runquill-linux-$arch
 url="$repo/releases/download/$tag"
 files='compose.yaml compose.ssh.yaml LICENSE'
@@ -241,9 +1089,35 @@ if [ "$wizard" = true ]; then
         printf '%s\n' 'This release does not support browser setup. Select a newer release.' >&2
         exit 1
     fi
+    # The wizard shows its own capacity recommendation for this host.
+    relogin_note
     set -- wizard
+    if [ -n "${SSH_CONNECTION:-}" ]; then
+        # The wizard only accepts the exact origin http://127.0.0.1:PORT, so the
+        # forwarded local port must equal the remote one.
+        if [ -z "$listen_port" ]; then
+            for candidate in 18080 18081 18082 18083 18084 18085 18086 18087 18088 18089; do
+                if ! port_listening "$candidate"; then listen_port=$candidate; break; fi
+            done
+        fi
+        # shellcheck disable=SC2086 # SSH_CONNECTION is four space-separated fields
+        ssh_fields=$(set -- $SSH_CONNECTION; printf '%s %s' "${3:-}" "${4:-22}")
+        ssh_server=${ssh_fields% *}
+        ssh_port=${ssh_fields#* }
+        if [ -n "$listen_port" ] && [ -n "$ssh_server" ]; then
+            ssh_command="ssh -L $listen_port:127.0.0.1:$listen_port"
+            if [ "$ssh_port" != 22 ]; then ssh_command="$ssh_command -p $ssh_port"; fi
+            ssh_command="$ssh_command $user@$ssh_server"
+            printf '\nYou are connected over SSH. On your own computer, open a new terminal and run:\n\n'
+            printf '    %s\n\n' "$ssh_command"
+            printf '%s\n' "Keep it open, then open the URL below in a browser on that computer." \
+                "If you normally connect with another host name (for example through NAT or a jump host), use that instead of $ssh_server." \
+                'The key in the URL is a secret for this setup session; do not share it.' ''
+        fi
+    fi
     if [ -n "$listen_port" ]; then set -- "$@" --listen-port "$listen_port"; fi
-    ./runquill "$@"
+    # The wizard prints the same forwarding command itself unless the installer already did.
+    RUNQUILL_SSH_HINT_SHOWN=${ssh_command:+1} ./runquill "$@"
     exit
 fi
 
@@ -287,3 +1161,5 @@ docker compose "$@" pull manager
 docker compose "$@" up -d --no-build
 docker compose "$@" exec -T manager runquill doctor
 printf 'First job guide: %s/blob/%s/README.md#verify-your-first-job\n' "$repo" "$tag"
+print_size_hint
+relogin_note

@@ -8,11 +8,11 @@ Releases publish five variants of the runner image for amd64 and arm64.
 
 | Tag | Base | Catalogue name |
 | --- | --- | --- |
-| `ghcr.io/yakisoba0728/runquill-runner:v0.3.1` | Ubuntu 24.04, the upstream GitHub Actions runner image | `ubuntu24.04` |
-| `ghcr.io/yakisoba0728/runquill-runner:v0.3.1-ubuntu22.04` | Ubuntu 22.04 | `ubuntu22.04` |
-| `ghcr.io/yakisoba0728/runquill-runner:v0.3.1-ubuntu26.04` | Ubuntu 26.04 | `ubuntu26.04` |
-| `ghcr.io/yakisoba0728/runquill-runner:v0.3.1-debian12` | Debian 12 | `debian12` |
-| `ghcr.io/yakisoba0728/runquill-runner:v0.3.1-debian13` | Debian 13 | `debian13` |
+| `ghcr.io/yakisoba0728/runquill-runner:v0.3.2` | Ubuntu 24.04, the upstream GitHub Actions runner image | `ubuntu24.04` |
+| `ghcr.io/yakisoba0728/runquill-runner:v0.3.2-ubuntu22.04` | Ubuntu 22.04 | `ubuntu22.04` |
+| `ghcr.io/yakisoba0728/runquill-runner:v0.3.2-ubuntu26.04` | Ubuntu 26.04 | `ubuntu26.04` |
+| `ghcr.io/yakisoba0728/runquill-runner:v0.3.2-debian12` | Debian 12 | `debian12` |
+| `ghcr.io/yakisoba0728/runquill-runner:v0.3.2-debian13` | Debian 13 | `debian13` |
 
 All variants carry the same digest-pinned Actions runner and Docker binaries and a `runner` user with UID 1001, so each works in privileged pools, in pools with `privileged: false` and in K3s `plain` mode. To build one from source, pass `--build-arg RUNQUILL_RUNNER_OS=NAME` to `docker build runner`. CI builds every variant and checks its runner user and versions. Only the default variant runs the nested Docker test.
 
@@ -33,7 +33,7 @@ The `release` entries exist in release builds: the published manager image that 
 `RUNQUILL_RUNNER_IMAGES` is a JSON object of `NAME: image reference`. It adds entries and replaces built-in entries with the same name.
 
 ```dotenv
-RUNQUILL_RUNNER_IMAGES='{"ubuntu22.04":"ghcr.io/yakisoba0728/runquill-runner:v0.3.1-ubuntu22.04","ubuntu26.04":"ghcr.io/yakisoba0728/runquill-runner:v0.3.1-ubuntu26.04","debian12":"ghcr.io/yakisoba0728/runquill-runner:v0.3.1-debian12","debian13":"ghcr.io/yakisoba0728/runquill-runner:v0.3.1-debian13"}'
+RUNQUILL_RUNNER_IMAGES='{"ubuntu22.04":"ghcr.io/yakisoba0728/runquill-runner:v0.3.2-ubuntu22.04","ubuntu26.04":"ghcr.io/yakisoba0728/runquill-runner:v0.3.2-ubuntu26.04","debian12":"ghcr.io/yakisoba0728/runquill-runner:v0.3.2-debian12","debian13":"ghcr.io/yakisoba0728/runquill-runner:v0.3.2-debian13"}'
 ```
 
 - A name has 1 to 40 lowercase letters, digits, dots or hyphens and starts with a letter or digit. The object may hold up to 64 names.

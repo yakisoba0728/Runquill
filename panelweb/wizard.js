@@ -20,17 +20,67 @@ document.addEventListener("DOMContentLoaded", () => {
     if (field) field.hidden = false;
   }
 
+  // Copy buttons for commands and addresses. They stay hidden without this script.
+  const copyStatus = document.getElementById("copy-status");
+  for (const button of document.querySelectorAll(".value > .copy")) {
+    const code = button.parentElement.querySelector("code");
+    if (!code || !copyStatus) continue;
+    const label = copyStatus.dataset.copy || "Copy";
+    button.textContent = label;
+    button.setAttribute("aria-label", `${label}: ${code.textContent}`);
+    button.hidden = false;
+    let reset = 0;
+    button.addEventListener("click", async () => {
+      let message = copyStatus.dataset.copied || "Copied";
+      try {
+        await navigator.clipboard.writeText(code.textContent);
+        button.dataset.done = "";
+        button.textContent = message;
+      } catch {
+        // Without clipboard access (for example over plain HTTP on another host), select the text instead.
+        const range = document.createRange();
+        range.selectNodeContents(code);
+        const selection = getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+        message = copyStatus.dataset.manual || "Selected";
+      }
+      copyStatus.textContent = message;
+      clearTimeout(reset);
+      reset = setTimeout(() => {
+        delete button.dataset.done;
+        button.textContent = label;
+        copyStatus.textContent = "";
+      }, 2000);
+    });
+  }
+
   const backend = document.querySelector("[name=backend]");
   if (backend) {
-    const contextField = document.querySelector("[data-k3s]");
-    const contextInput = contextField.querySelector("input");
-    const updateContext = () => {
+    const k3sOnly = document.querySelectorAll("[data-k3s]");
+    const dockerOnly = document.querySelectorAll("[data-docker]");
+    const contextInput = document.querySelector("[name=context]");
+    const blocked = document.querySelector("[data-docker-blocked]");
+    const start = document.querySelector("[data-start]");
+    const updateBackend = () => {
       const k3s = backend.value === "k3s";
-      contextField.hidden = !k3s;
+      for (const element of k3sOnly) element.hidden = !k3s;
+      for (const element of dockerOnly) element.hidden = k3s;
       contextInput.required = k3s;
+      // Docker that this user cannot reach would fail at deployment; the server refuses it too.
+      if (start) {
+        if (blocked && !k3s) start.setAttribute("aria-disabled", "true");
+        else start.removeAttribute("aria-disabled");
+      }
     };
-    backend.addEventListener("change", updateContext);
-    updateContext();
+    backend.addEventListener("change", updateBackend);
+    updateBackend();
+    start?.form.addEventListener("submit", (event) => {
+      if (start.getAttribute("aria-disabled") !== "true") return;
+      event.preventDefault();
+      blocked.setAttribute("tabindex", "-1");
+      blocked.focus();
+    });
     for (const field of document.querySelectorAll("[aria-invalid=true]")) {
       const clear = () => {
         field.removeAttribute("aria-invalid");
@@ -66,9 +116,10 @@ document.addEventListener("DOMContentLoaded", () => {
   let stopped = false;
 
   function updateStage(next) {
-    if (activity && Object.hasOwn(sentences, next)) {
+    const sentence = activity?.querySelector("[data-activity]") || activity;
+    if (sentence && Object.hasOwn(sentences, next)) {
       const label = sentences[next][korean ? 0 : 1];
-      if (activity.textContent !== label) activity.textContent = label;
+      if (sentence.textContent !== label) sentence.textContent = label;
     }
     if (!stages || phase !== "deploying") return;
     const items = [...stages.querySelectorAll("li[data-stage]")];

@@ -21,7 +21,7 @@ export function sample(name) {
     name, pool: name === "local" ? "default" : "build", status: reserved ? "OFFLINE" : "UP", slot_limit: limit,
     occupied_slots: occupied, reserved_slots: reserved, image_status: reserved ? undefined : "ready", ...extra,
   });
-  const runnerImage = "ghcr.io/yakisoba0728/runquill-runner:v0.3.1";
+  const runnerImage = "ghcr.io/yakisoba0728/runquill-runner:v0.3.2";
   const job = (id, repository, status, runner_host, extra = {}) => ({
     id, repository: "garden-lab/" + repository, status, runner_host,
     pool: runner_host === "builder-west" ? "build" : "default",

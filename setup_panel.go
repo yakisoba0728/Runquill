@@ -23,71 +23,63 @@ const defaultSetupPanelURL = "http://127.0.0.1:8081"
 
 var setupOAuthValue = regexp.MustCompile("^[A-Za-z0-9._-]{1,256}$")
 
-var panelSetupPage = template.Must(template.New("panel-setup").Parse(`<!doctype html>
+var panelSetupPage = template.Must(template.Must(template.New("panel-setup").Parse(wizardChromeTemplates)).Parse(`<!doctype html>
 <html lang="{{if .Korean}}ko{{else}}en{{end}}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <title>Runquill · {{if .Korean}}패널 로그인 설정{{else}}Panel setup{{end}}</title>
-  {{- if .InWizard}}
   <link rel="stylesheet" href="/wizard.css">
+  {{- if .InWizard}}
   <script src="/wizard.js"></script>
   {{- end}}
 </head>
 <body>
-{{- if .InWizard}}
-<header class="topbar">
-  <span class="brand">runquill</span>
-  <span class="topbar-title">{{if .Korean}}설치 마법사{{else}}Setup wizard{{end}}</span>
-  <div class="topbar-controls">
-    <a href="/">{{if .Korean}}설치 상태{{else}}Setup status{{end}}</a>
-    <label data-theme-field hidden><span class="visually-hidden">{{if .Korean}}화면 테마{{else}}Appearance{{end}}</span>
-      <select data-theme-control><option value="system">{{if .Korean}}시스템{{else}}System{{end}}</option><option value="light">{{if .Korean}}밝게{{else}}Light{{end}}</option><option value="dark">{{if .Korean}}어둡게{{else}}Dark{{end}}</option></select>
-    </label>
-  </div>
-</header>
-{{- end}}
-<main{{if .InWizard}} class="wizard"{{end}}>
-  {{- if .InWizard}}
-  <ol class="steps" aria-label="{{if .Korean}}설치 단계{{else}}Setup steps{{end}}">
-    <li data-state="ok">{{if .Korean}}설치 옵션{{else}}Options{{end}}<span class="visually-hidden"> ({{if .Korean}}완료{{else}}done{{end}})</span></li>
-    <li data-state="current" aria-current="step">{{if .Korean}}GitHub 연결{{else}}GitHub{{end}} <span class="detail">· {{if .Korean}}패널 로그인{{else}}panel sign-in{{end}}</span></li>
-    <li data-state="pending">{{if .Korean}}배포{{else}}Deploy{{end}}<span class="visually-hidden"> ({{if .Korean}}대기{{else}}pending{{end}})</span></li>
-    <li data-state="pending">{{if .Korean}}첫 작업{{else}}First job{{end}}<span class="visually-hidden"> ({{if .Korean}}대기{{else}}pending{{end}})</span></li>
-  </ol>
-  {{- end}}
-  <h1>{{if .Korean}}Runquill 패널 로그인 설정{{else}}Set up the Runquill panel{{end}}</h1>
-  {{- if .Manual}}
-  <p>{{if .Korean}}패널 로그인에 쓸 GitHub OAuth App을 아래 주소로 등록하세요.{{else}}Register a GitHub OAuth App for panel sign-in with the addresses below.{{end}} <a href="https://github.com/settings/applications/new" target="_blank" rel="noopener noreferrer">{{if .Korean}}GitHub OAuth App 등록 열기{{else}}Open OAuth App registration{{end}}</a></p>
-  <dl class="kv">
-    <div><dt>{{if .Korean}}홈페이지 URL{{else}}Homepage URL{{end}}</dt><dd><code>{{.Origin}}</code></dd></div>
-    <div><dt>{{if .Korean}}인증 콜백 URL{{else}}Authorization callback URL{{end}}</dt><dd><code>{{.Callback}}</code></dd></div>
-  </dl>
-  <p>{{if .Korean}}앱 설정에서 클라이언트 시크릿을 생성한 뒤 클라이언트 ID와 시크릿을 아래에 입력하세요.{{else}}In the OAuth App settings, generate a client secret, then enter its credentials below.{{end}}</p>
-  {{- else}}
-  <p>{{if .Korean}}GitHub App을 연결했습니다. 이 Runquill 패널의 첫 관리자가 될 개인 GitHub 계정의 숫자 ID를 입력하세요.{{else}}The GitHub App is connected. Enter the numeric ID of the individual GitHub account that will administer this Runquill panel.{{end}}</p>
-  {{- end}}
-  <form method="post" action="{{.Form}}">
-    <input type="hidden" name="state" value="{{.State}}">
+<div class="frame{{if not .InWizard}} standalone{{end}}">
+  {{- template "rail" .Chrome}}
+  <main class="content" id="content" tabindex="-1">
+    <div class="intro">
+      <h1>{{if .Korean}}Runquill 패널 로그인 설정{{else}}Set up the Runquill panel{{end}}</h1>
+      {{- if .Manual}}
+      <p class="lead">{{if .Korean}}패널 로그인에 쓸 GitHub OAuth App을 아래 주소로 등록하세요.{{else}}Register a GitHub OAuth App for panel sign-in with the addresses below.{{end}}</p>
+      {{- else}}
+      <p class="lead">{{if .Korean}}GitHub App을 연결했습니다. 이 Runquill 패널의 첫 관리자가 될 개인 GitHub 계정의 숫자 ID를 입력하세요.{{else}}The GitHub App is connected. Enter the numeric ID of the individual GitHub account that will administer this Runquill panel.{{end}}</p>
+      {{- end}}
+    </div>
     {{- if .Manual}}
-    <div class="field">
-      <label for="panel-client-id">{{if .Korean}}클라이언트 ID{{else}}Client ID{{end}}</label>
-      <input id="panel-client-id" name="client_id" required maxlength="256" autocomplete="off" spellcheck="false">
-    </div>
-    <div class="field">
-      <label for="panel-client-secret">{{if .Korean}}클라이언트 시크릿{{else}}Client secret{{end}}</label>
-      <input id="panel-client-secret" name="client_secret" type="password" required maxlength="256" autocomplete="off">
-    </div>
+    <section class="group" aria-labelledby="oauth-title">
+      <h2 id="oauth-title">{{if .Korean}}OAuth App 등록{{else}}OAuth App registration{{end}}</h2>
+      <dl class="values">
+        <div><dt>{{if .Korean}}홈페이지 URL{{else}}Homepage URL{{end}}</dt><dd>{{template "value" .Origin}}</dd></div>
+        <div><dt>{{if .Korean}}인증 콜백 URL{{else}}Authorization callback URL{{end}}</dt><dd>{{template "value" .Callback}}</dd></div>
+      </dl>
+      <p><a href="https://github.com/settings/applications/new" target="_blank" rel="noopener noreferrer">{{if .Korean}}GitHub OAuth App 등록 열기{{else}}Open OAuth App registration{{end}}</a></p>
+      <p class="hint">{{if .Korean}}앱 설정에서 클라이언트 시크릿을 생성한 뒤 클라이언트 ID와 시크릿을 아래에 입력하세요.{{else}}In the OAuth App settings, generate a client secret, then enter its credentials below.{{end}}</p>
+    </section>
     {{- end}}
-    <div class="field">
-      <label for="panel-bootstrap-id">{{if .Korean}}첫 관리자의 GitHub 숫자 ID{{else}}First administrator's numeric GitHub user ID{{end}}</label>
-      <input id="panel-bootstrap-id" name="bootstrap_id" value="{{.Bootstrap}}" inputmode="numeric" pattern="[0-9]+" maxlength="19" required aria-describedby="panel-bootstrap-help">
-      <p class="hint" id="panel-bootstrap-help">{{if .Korean}}https://api.github.com/users/&lt;로그인&gt; 응답의 id 값입니다.{{else}}The id value in the response from https://api.github.com/users/&lt;login&gt;.{{end}}</p>
-    </div>
-    <div class="actions"><button type="submit" class="button primary">{{if .Korean}}패널 설정 저장{{else}}Save panel configuration{{end}}</button></div>
-  </form>
-</main>
+    <form method="post" action="{{.Form}}">
+      <input type="hidden" name="state" value="{{.State}}">
+      {{- if .Manual}}
+      <div class="field">
+        <label for="panel-client-id">{{if .Korean}}클라이언트 ID{{else}}Client ID{{end}}</label>
+        <input id="panel-client-id" name="client_id" required maxlength="256" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="field">
+        <label for="panel-client-secret">{{if .Korean}}클라이언트 시크릿{{else}}Client secret{{end}}</label>
+        <input id="panel-client-secret" name="client_secret" type="password" required maxlength="256" autocomplete="off">
+      </div>
+      {{- end}}
+      <div class="field">
+        <label for="panel-bootstrap-id">{{if .Korean}}첫 관리자의 GitHub 숫자 ID{{else}}First administrator's numeric GitHub user ID{{end}}</label>
+        <input id="panel-bootstrap-id" name="bootstrap_id" value="{{.Bootstrap}}" inputmode="numeric" pattern="[0-9]+" maxlength="19" required aria-describedby="panel-bootstrap-help">
+        <p class="hint" id="panel-bootstrap-help">{{if .Korean}}https://api.github.com/users/&lt;로그인&gt; 응답의 id 값입니다.{{else}}The id value in the response from https://api.github.com/users/&lt;login&gt;.{{end}}</p>
+      </div>
+      <div class="actions"><button type="submit" class="button primary">{{if .Korean}}패널 설정 저장{{else}}Save panel configuration{{end}}</button>
+        {{- if .InWizard}}<p class="next">{{if .Korean}}저장하면 배포 단계로 넘어갑니다.{{else}}Saving moves on to the deployment step.{{end}}</p>{{end}}</div>
+    </form>
+  </main>
+</div>
 </body>
 </html>`))
 
@@ -201,10 +193,12 @@ func readPanelSetup(ctx context.Context, out io.Writer, port int, credentials pa
 	}
 	defer listener.Close()
 	localURL := "http://" + listener.Addr().String()
-	page := struct {
+	type panelPage struct {
 		Origin, Callback, State, Bootstrap, Form string
 		Korean, InWizard, Manual                 bool
-	}{Origin: credentials.origin, Callback: credentials.callbackURL(), State: rand.Text(), Form: "/", Korean: wizardKorean(ctx), InWizard: currentWizard(ctx) != nil, Manual: credentials.clientID == ""}
+		Chrome                                   *wizardChrome
+	}
+	page := panelPage{Origin: credentials.origin, Callback: credentials.callbackURL(), State: rand.Text(), Form: "/", Korean: wizardKorean(ctx), InWizard: currentWizard(ctx) != nil, Manual: credentials.clientID == ""}
 	if web := currentWizard(ctx); web != nil {
 		localURL, page.Form = web.origin, "/oauth/"
 	}
@@ -217,7 +211,9 @@ func readPanelSetup(ctx context.Context, out io.Writer, port int, credentials pa
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Referrer-Policy", "same-origin")
-		_ = panelSetupPage.Execute(w, page)
+		view := page // the language can change between visits
+		view.Korean, view.Chrome = wizardKorean(ctx), wizardPageChrome(ctx, "/oauth")
+		_ = panelSetupPage.Execute(w, view)
 	})
 	mux.HandleFunc("POST /{$}", func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
