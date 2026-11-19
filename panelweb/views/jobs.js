@@ -100,9 +100,9 @@ export default {
           : job.repository },
         { label: "Job", className: "id", cell: (job) => ["#" + job.id, job.runner_label ? h("span", { class: "sub" }, job.runner_label) : null] },
         { label: "Outcome", className: "wrap", cell: (job) => {
-          const reason = job.failure || (job.outcome === "waiting" ? job.retry_reason : "");
+          const reason = job.failure || job.diagnostic?.message || (job.outcome === "waiting" ? job.retry_reason : "");
           return [state(outcomeState(job)),
-            reason ? h("span", { class: "sub" }, tr(job.failure ? "Reason: {reason}" : "Last retry: {reason}", { reason: serverText(reason) })) : null,
+            reason ? h("span", { class: "sub" }, tr(job.failure || job.diagnostic ? "Reason: {reason}" : "Last retry: {reason}", { reason: serverText(reason) })) : null,
             job.retry_at ? h("span", { class: "sub" }, tr("Retry time {time}", { time: format.time(job.retry_at) })) : null];
         } },
         { label: "Pool", cell: (job) => [job.pool ? poolName(job.pool) : "—", runnerOS(job)] },

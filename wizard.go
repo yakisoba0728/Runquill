@@ -45,7 +45,6 @@ type setupWizard struct {
 	serveFailed      bool
 	funnelFailed     bool
 	kubeContext      string
-	kubeAccepted     bool
 	checkCompose     bool
 	skipTailscale    bool
 	sshConnection    string

@@ -54,18 +54,20 @@ type panelCompleted struct {
 }
 
 type panelState struct {
-	mu              sync.RWMutex
-	snapshot        panelSnapshot
-	backend         string
-	repositoryScope string
-	operations      *operations
-	elastic         *elasticState
+	mu               sync.RWMutex
+	snapshot         panelSnapshot
+	backend          string
+	repositoryScope  string
+	operations       *operations
+	elastic          *elasticState
+	maxPerRepository int
 }
 
 func newPanel(cfg config) *panelState {
 	return &panelState{
-		repositoryScope: cfg.repositoryScope,
-		snapshot:        panelSnapshot{Polling: cfg.pollInterval > 0, Webhook: cfg.secret != ""},
+		repositoryScope:  cfg.repositoryScope,
+		maxPerRepository: cfg.maxPerRepository,
+		snapshot:         panelSnapshot{Polling: cfg.pollInterval > 0, Webhook: cfg.secret != ""},
 	}
 }
 
@@ -109,10 +111,12 @@ func (p *panelState) capture(ctx context.Context, q *queue, hosts []hostCapacity
 		return
 	}
 	report := summarizeStatus(jobs, hosts, unassigned, limit, now)
-	report.configure(p.backend, p.repositoryScope, pools, jobs, hosts)
+	placement := jobPlacementDiagnostics{repoCap: p.maxPerRepository}
 	if p.operations != nil {
-		report.describeImages(p.operations.current.Load().runners.images, jobs)
+		runners := p.operations.current.Load().runners
+		placement.images, placement.runtime = runners.images, runners.runtime
 	}
+	report.configure(p.backend, p.repositoryScope, pools, jobs, hosts, placement)
 	inventory := panelRunnerInventory(hosts, report.Jobs)
 	if probeErr != nil {
 		report.DockerError = "Runner host discovery failed. Check the manager logs."
@@ -142,7 +146,7 @@ func readPanelCompleted(ctx context.Context, q *queue, now time.Time, pools work
         SELECT job_id, repository, route, changed_at,
         coalesce(runner_cleaned_host, ''), runner_cleaned_at, coalesce(github_created_at, 0),
         coalesce(discovered_at, 0), coalesce(discovery_source, ''), coalesce(provisioned_at, 0),
-        coalesce(github_started_at, 0)
+        coalesce(github_started_at, 0), `+jobLaunchTimingColumns+`
         FROM jobs JOIN relevant USING (job_id)
         ORDER BY runner_cleaned_at DESC, sequence DESC`)
 	if err != nil {
@@ -155,7 +159,8 @@ func readPanelCompleted(ctx context.Context, q *queue, now time.Time, pools work
 		var j job
 		var cleanedAt int64
 		if err := rows.Scan(&j.id, &j.repository, &j.route, &j.changedAt, &j.runnerHost, &cleanedAt,
-			&j.githubCreatedAt, &j.discoveredAt, &j.discoverySource, &j.provisionedAt, &j.githubStartedAt); err != nil {
+			&j.githubCreatedAt, &j.discoveredAt, &j.discoverySource, &j.provisionedAt, &j.githubStartedAt,
+			&j.jitRequestedMS, &j.jitRegisteredMS, &j.runnerLaunchMS); err != nil {
 			return nil, nil, err
 		}
 		j.phase = completed

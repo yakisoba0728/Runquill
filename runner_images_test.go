@@ -540,8 +540,7 @@ func TestRunnerImageVisibility(t *testing.T) {
 	jobs := []job{{id: 1, repository: "owner/a", route: "runquill-1-1-os__ubuntu2204__a"},
 		{id: 2, repository: "owner/a", route: "runquill-1-1-pool__big__b"}}
 	report := summarizeStatus(jobs, nil, 0, 2, time.Now())
-	report.configure("docker", "", pools, jobs, nil)
-	report.describeImages(images, jobs)
+	report.configure("docker", "", pools, jobs, nil, jobPlacementDiagnostics{images: images})
 	if report.Jobs[0].RunnerOS != "ubuntu2204" || report.Jobs[0].RunnerImage != "ghcr.io/o/runquill-runner:v1.2.3-ubuntu22.04" ||
 		report.Jobs[1].RunnerOS != "" || report.Jobs[1].RunnerImage != "runner:big" {
 		t.Fatalf("jobs %+v", report.Jobs)

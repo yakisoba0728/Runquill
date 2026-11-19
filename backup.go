@@ -20,6 +20,12 @@ const (
 )
 
 const queueBackupMetadata = `CREATE TABLE runquill_backup (owner TEXT NOT NULL, app_id TEXT NOT NULL)`
+const queueBackupOptionalJobColumns = "jit_requested_ms jit_registered_ms runner_launch_ms"
+
+var (
+	errQueueBackupIdentity          = errors.New("queue backup belongs to another GitHub owner or app")
+	errBackupVerificationPassphrase = errors.New("could not load the backup passphrase for verification")
+)
 
 type queueBackupIdentity struct {
 	owner, appID string
@@ -34,6 +40,7 @@ var queueBackupTables = []struct {
 	{"docker_hosts", "host cordoned untracked_slots", 2},
 	{"repository_polls", "installation_id repository_id checked_at full_at active_at last_error", 6},
 	{"operation_settings", "id revision policy", 3},
+	{"worker_authorities", "host engine token_digest", 3},
 }
 
 func runQueueBackup(ctx context.Context, out io.Writer, command string, args []string) error {
@@ -266,12 +273,16 @@ func copyQueueFile(ctx context.Context, source, target string, identity queueBac
 		return errors.New("back up an active Runquill queue; this file has another format")
 	}
 
-	// Copy a single read snapshot of the queue. Other schemas can contain access credentials.
+	// Copy a single read snapshot of the allowlisted queue data. Do not copy enrollment codes or other credentials.
 	for _, table := range queueBackupTables {
 		columns := strings.Fields(table.columns)
 		required := table.baseColumns
 		if artifactID == queueFencedID {
 			required = len(columns)
+		}
+		if table.name == "jobs" {
+			// Earlier version 1 backups have no stage timing columns.
+			columns = append(columns, strings.Fields(queueBackupOptionalJobColumns)...)
 		}
 		if err := copyQueueTable(ctx, tx, table.name, columns, required, artifactID == queueFencedID); err != nil {
 			return fmt.Errorf("copy queue table %s: %w", table.name, err)
@@ -301,7 +312,7 @@ func copyQueueFile(ctx context.Context, source, target string, identity queueBac
 func copyQueueTable(ctx context.Context, tx *sql.Tx, name string, columns []string, required int, fullSchema bool) error {
 	var kind string
 	err := tx.QueryRowContext(ctx, "SELECT type FROM pragma_table_list(?) WHERE schema='source' AND name=?", name, name).Scan(&kind)
-	if errors.Is(err, sql.ErrNoRows) && (name == "operation_settings" || name != "jobs" && !fullSchema) {
+	if errors.Is(err, sql.ErrNoRows) && (name == "operation_settings" || name == "worker_authorities" || name != "jobs" && !fullSchema) {
 		return nil
 	}
 	if err != nil {
@@ -390,6 +401,30 @@ func verifyQueueBackup(ctx context.Context, path string, identity queueBackupIde
 	return nil
 }
 
+func verifyLocalBackup(ctx context.Context, path string) error {
+	identity, err := currentQueueBackupIdentity()
+	if err != nil {
+		return err
+	}
+	if strings.HasSuffix(path, ".sealed") {
+		passphrase, err := backupPassphrase(os.Getenv, "")
+		if err != nil || checkSealPassphrase(passphrase) != nil {
+			return errBackupVerificationPassphrase
+		}
+		dir, err := os.MkdirTemp("", "runquill-verify-backup-")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(dir)
+		plain := filepath.Join(dir, "queue.sqlite3")
+		if err := unsealFileTo(ctx, path, plain, passphrase); err != nil {
+			return err
+		}
+		path = plain
+	}
+	return verifyQueueBackup(ctx, path, identity)
+}
+
 func currentQueueBackupIdentity() (queueBackupIdentity, error) {
 	id := queueBackupIdentity{
 		owner: strings.ToLower(strings.TrimSpace(os.Getenv("RUNQUILL_OWNER"))),
@@ -407,7 +442,7 @@ func checkQueueBackupIdentity(ctx context.Context, tx *sql.Tx, database string, 
 		return fmt.Errorf("read queue backup identity: %w", err)
 	}
 	if owner != expected.owner || appID != expected.appID {
-		return errors.New("queue backup belongs to another GitHub owner or app")
+		return errQueueBackupIdentity
 	}
 	return nil
 }

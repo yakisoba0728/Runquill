@@ -18,6 +18,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -84,7 +85,7 @@ type workerClaim struct {
 }
 
 type remoteWorker struct {
-	authority workerAuthority
+	authority atomic.Pointer[workerAuthority]
 	mu        sync.Mutex
 	wake      chan struct{}
 	session   string
@@ -98,6 +99,11 @@ type workerFleet struct {
 	hosts   map[string]*remoteWorker
 	db      *sql.DB
 	proxyIP netip.Addr
+
+	enrollmentURL string
+	enrollmentMu  sync.Mutex
+	operations    *operations
+	configured    []docker
 }
 
 func loadWorkerFleet(hosts []docker, authFile string) (*workerFleet, error) {
@@ -110,29 +116,31 @@ func loadWorkerFleet(hosts []docker, authFile string) (*workerFleet, error) {
 	if len(want) == 0 {
 		return nil, nil
 	}
-	if authFile == "" {
-		return nil, errors.New("set RUNQUILL_WORKER_AUTH_FILE for agent:// Docker hosts")
-	}
-	file, err := os.Open(authFile)
-	if err != nil {
-		return nil, fmt.Errorf("open worker auth file: %w", err)
-	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0022 != 0 || info.Size() > 64<<10 {
-		return nil, errors.New("worker auth file must be a regular file under 64 KiB without group or world write access")
-	}
 	authorities := make(map[string]workerAuthority)
-	if err := decodeWorkerJSON(io.LimitReader(file, (64<<10)+1), &authorities); err != nil {
-		return nil, errors.New("worker auth file must be a JSON object mapping names to engine_id and token_sha256")
+	if authFile != "" {
+		file, err := os.Open(authFile)
+		if err != nil {
+			return nil, fmt.Errorf("open worker auth file: %w", err)
+		}
+		defer file.Close()
+		info, err := file.Stat()
+		if err != nil {
+			return nil, err
+		}
+		if !info.Mode().IsRegular() || info.Mode().Perm()&0022 != 0 || info.Size() > 64<<10 {
+			return nil, errors.New("worker auth file must be a regular file under 64 KiB without group or world write access")
+		}
+		if err := decodeWorkerJSON(io.LimitReader(file, (64<<10)+1), &authorities); err != nil {
+			return nil, errors.New("worker auth file must be a JSON object mapping names to engine_id and token_sha256")
+		}
 	}
-	if len(authorities) != len(want) {
-		return nil, errors.New("worker auth file must cover exactly the configured agent:// hosts")
+	fleet := &workerFleet{hosts: make(map[string]*remoteWorker, len(want)), configured: hosts}
+	if raw := os.Getenv("RUNQUILL_WORKER_ENROLLMENT_URL"); raw != "" {
+		if _, err := workerEndpoint(raw, "validate"); err != nil {
+			return nil, fmt.Errorf("RUNQUILL_WORKER_ENROLLMENT_URL: %w", err)
+		}
+		fleet.enrollmentURL = raw
 	}
-	fleet := &workerFleet{hosts: make(map[string]*remoteWorker, len(authorities))}
 	if raw := os.Getenv("RUNQUILL_WORKER_PROXY_IP"); raw != "" {
 		ip, err := netip.ParseAddr(raw)
 		if err != nil || ip.Zone() != "" || ip.IsUnspecified() {
@@ -141,6 +149,9 @@ func loadWorkerFleet(hosts []docker, authFile string) (*workerFleet, error) {
 		fleet.proxyIP = ip.Unmap()
 	}
 	engines, digests := make(map[string]bool), make(map[string]bool)
+	for name := range want {
+		fleet.hosts[name] = &remoteWorker{wake: make(chan struct{}, 1)}
+	}
 	for name, a := range authorities {
 		if !want[name] {
 			return nil, errors.New("worker auth file names must match the configured agent:// hosts")
@@ -152,7 +163,7 @@ func loadWorkerFleet(hosts []docker, authFile string) (*workerFleet, error) {
 			return nil, errors.New("worker hosts must use distinct Docker engines and credentials")
 		}
 		engines[a.Engine], digests[a.Digest] = true, true
-		fleet.hosts[name] = &remoteWorker{authority: a, wake: make(chan struct{}, 1)}
+		fleet.hosts[name].authority.Store(&a)
 	}
 	return fleet, nil
 }
@@ -164,6 +175,9 @@ func (f *workerFleet) attach(ctx context.Context, db *sql.DB) error {
 	// A previous manager could have been stopped while a worker was starting a runner.
 	if _, err := db.ExecContext(ctx, "DELETE FROM worker_observations"); err != nil {
 		return fmt.Errorf("reset worker observations: %w", err)
+	}
+	if err := f.loadEnrolledWorkers(ctx, db); err != nil {
+		return err
 	}
 	f.db = db
 	return nil
@@ -212,6 +226,9 @@ func (f *workerFleet) route(fallback http.Handler) http.Handler {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+workerRoute, f.poll)
+	if f.enrollmentURL != "" {
+		mux.HandleFunc("POST "+workerEnrollmentRoute, f.enroll)
+	}
 	mux.Handle("/", fallback)
 	return mux
 }
@@ -229,8 +246,8 @@ func (f *workerFleet) poll(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
-	digest := sha256.Sum256([]byte(token))
-	if subtle.ConstantTimeCompare([]byte(hex.EncodeToString(digest[:])), []byte(host.authority.Digest)) != 1 {
+	authority := host.authority.Load()
+	if authority == nil || subtle.ConstantTimeCompare([]byte(workerDigest(token)), []byte(authority.Digest)) != 1 {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
@@ -239,7 +256,7 @@ func (f *workerFleet) poll(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	if report.Engine != host.authority.Engine {
+	if report.Engine != authority.Engine {
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
@@ -369,7 +386,7 @@ func (f *workerFleet) storeObservation(ctx context.Context, name string, h *remo
 	_, err = f.db.ExecContext(ctx, `INSERT INTO worker_observations (host, engine, observed_at, observation)
       VALUES (?, ?, ?, ?) ON CONFLICT(host) DO UPDATE SET
       engine = excluded.engine, observed_at = excluded.observed_at, observation = excluded.observation`,
-		name, h.authority.Engine, h.seen.Unix(), string(data))
+		name, h.authority.Load().Engine, h.seen.Unix(), string(data))
 	return err
 }
 
@@ -445,6 +462,17 @@ func (f *workerFleet) snapshot(ctx context.Context, target docker) dockerHostSna
 	name := target.agentName()
 	h := f.hosts[name]
 	result := dockerHostSnapshot{Name: target.label(), Pool: target.pool}
+	authority, err := f.workerAuthority(ctx, name)
+	if err != nil {
+		result.Err = err
+		return result
+	}
+	if authority == nil {
+		result.UnregisteredWorker, result.EnrollmentAvailable = true, f.enrollmentURL != ""
+		result.Err = errors.New("worker is not registered")
+		return result
+	}
+	result.WorkerEngineID = authority.Engine
 	var seen time.Time
 	var observation workerObservation
 	if f.db != nil {
@@ -461,7 +489,7 @@ func (f *workerFleet) snapshot(ctx context.Context, target docker) dockerHostSna
 		if err == nil {
 			defer db.Close()
 			err = db.QueryRowContext(ctx, `SELECT observed_at, observation FROM worker_observations
-                WHERE host = ? AND engine = ?`, name, h.authority.Engine).Scan(&recorded, &raw)
+				WHERE host = ? AND engine = ?`, name, authority.Engine).Scan(&recorded, &raw)
 		}
 		if err == nil && json.Unmarshal([]byte(raw), &observation) == nil {
 			seen = time.Unix(recorded, 0)

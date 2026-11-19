@@ -328,7 +328,9 @@ func TestMCPToolsReadPanelData(t *testing.T) {
 	add(1, "owner/app", "phase = 2, runner_cleaned_at = ?, runner_cleaned_host = 'local', provisioned_at = ?", now.Unix(), now.Add(-50*time.Minute).Unix())
 	add(2, "owner/app", "phase = 2, failure = 'not started within 24 hours'")
 	add(3, "owner/lib", "retry_at = ?, retry_reason = 'provision runner: boom'", now.Add(time.Hour).Unix())
-	add(4, "owner/app", "runner_name = 'runquill-4-x', runner_host = 'local'")
+	add(4, "owner/app", `runner_name = 'runquill-4-x', runner_host = 'local',
+        jit_requested_ms = ?, jit_registered_ms = ?, runner_launch_ms = ?`,
+		now.Add(-5*time.Second).UnixMilli(), now.Add(-4900*time.Millisecond).UnixMilli(), now.Add(-4*time.Second).UnixMilli())
 	add(5, "owner/app", "")
 	hosts := []hostCapacity{
 		{dockerHostSnapshot: dockerHostSnapshot{Name: "local", Containers: map[string]string{"runquill-4-x": "running"}}, Limit: 2, Occupied: 1},
@@ -365,6 +367,10 @@ func TestMCPToolsReadPanelData(t *testing.T) {
 	f.toolOK("list_jobs", map[string]any{"limit": 2}, &page)
 	if len(page.Jobs) != 2 || page.Jobs[0].ID != 5 || page.Jobs[1].ID != 4 || page.Next == 0 {
 		t.Fatalf("first page: %+v", page)
+	}
+	if row := page.Jobs[1]; row.Diagnostic == nil || row.Diagnostic.Code != "waiting_for_github" ||
+		row.Timing == nil || row.Timing.JITMillis == nil || *row.Timing.JITMillis != 100 {
+		t.Fatalf("active job stage and reason missing: %+v", row)
 	}
 	f.toolOK("list_jobs", map[string]any{"limit": 2, "before": page.Next}, &page)
 	if len(page.Jobs) != 2 || page.Jobs[0].ID != 3 {

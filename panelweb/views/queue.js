@@ -22,14 +22,14 @@ function groups(snapshot) {
   };
 }
 
-// A job that waits for a runner image says so in retry_reason without a retry
-// time; that is more specific than the scheduler's generic explanation.
-const imageWait = "waiting for runner image ";
-
 function reason(job) {
-  const text = job.status === "RETRY" || job.retry_reason?.startsWith(imageWait)
-    ? job.retry_reason || job.diagnostic?.message : job.diagnostic?.message || job.retry_reason;
+  const text = job.diagnostic?.message || job.retry_reason;
   return text ? serverText(text) : "";
+}
+
+function durationMillis(value) {
+  if (!Number.isFinite(value)) return "—";
+  return value < 1000 ? tr("{n}ms", { n: value }) : format.duration(value / 1000);
 }
 
 function render() {
@@ -108,15 +108,28 @@ function renderDetail(job, target) {
   facts.set("image", job.runner_image ? h("span", { class: "mono" }, job.runner_image) : "—");
   facts.show("retry", !!job.retry_at);
   if (job.retry_at) facts.set("retry", format.time(job.retry_at));
-  const timings = createKv([["discovery", "Discovery time"], ["queue", "Queue time"], ["startup", "Startup time"]], { label: "Job timings" });
-  timings.set("discovery", format.duration(job.timing?.creation_to_discovery_seconds));
-  timings.set("queue", format.duration(job.timing?.runquill_queue_seconds));
-  timings.set("startup", format.duration(job.timing?.provision_to_start_seconds));
+  const timing = job.timing || {};
+  const stages = [["discovery", "Discovery time", format.duration(timing.creation_to_discovery_seconds)]];
+  if (timing.jit_requested_at) {
+    stages.push(
+      ["queue", "Scheduler wait", durationMillis(timing.scheduler_wait_millis)],
+      ["jit", "JIT registration", durationMillis(timing.jit_registration_millis)],
+      ["runtime", "Runtime launch", durationMillis(timing.runtime_launch_millis)],
+      ["assignment", "GitHub assignment", format.duration(timing.launch_to_github_start_seconds)],
+    );
+  } else {
+    stages.push(["queue", "Queue time", format.duration(timing.runquill_queue_seconds)],
+      ["startup", "Startup time", format.duration(timing.provision_to_start_seconds)]);
+  }
+  const timings = createKv(stages.map(([key, label]) => [key, label]), { label: "Job timings" });
+  for (const [key, , value] of stages) timings.set(key, value);
   const events = [
-    ["created", "Created on GitHub", job.timing?.github_created_at],
-    ["discovered", "Discovered", job.timing?.discovered_at],
-    ["provisioned", "Runner provisioned", job.timing?.provisioned_at],
-    ["started", "Job started on GitHub", job.timing?.github_started_at],
+    ["created", "Created on GitHub", timing.github_created_at],
+    ["discovered", "Discovered", timing.discovered_at],
+    ["jit", "JIT requested", timing.jit_requested_at],
+    ["provisioned", "Runner provisioned", timing.jit_registered_at || timing.provisioned_at],
+    ["runtime", "Runtime accepted launch", timing.runner_launch_at],
+    ["started", "Job started on GitHub", timing.github_started_at],
     ["finished", "Completion observed", job.finished_at],
     ["cleaned", "Runner cleaned up", job.cleaned_at],
   ].filter(([, , at]) => at);

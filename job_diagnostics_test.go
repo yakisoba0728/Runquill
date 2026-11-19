@@ -17,13 +17,14 @@ func TestStatusExplainsEligibleCapacity(t *testing.T) {
 	ready := hostCapacity{dockerHostSnapshot: dockerHostSnapshot{
 		Name: "host-a", Pool: "build", Containers: map[string]string{},
 	}, Limit: 1}
-	paused, offline, unavailable, busy, other := ready, ready, ready, ready, ready
+	paused, offline, unavailable, busy, other, imagePending := ready, ready, ready, ready, ready, ready
 	paused.Cordoned = true
 	offline.Containers = nil
 	offline.Occupied = 2
 	unavailable.Err = errors.New("internal provider data")
 	busy.Occupied = 1
 	other.Pool = "test"
+	imagePending.ImageWait = "waiting for image"
 
 	for _, tc := range []struct {
 		hosts []hostCapacity
@@ -36,18 +37,41 @@ func TestStatusExplainsEligibleCapacity(t *testing.T) {
 		{[]hostCapacity{offline, other}, 2, "workers_offline"},
 		{[]hostCapacity{unavailable, offline}, 2, "workers_unavailable"},
 		{[]hostCapacity{busy, other}, 2, "workers_full"},
+		{[]hostCapacity{imagePending}, 2, "runner_image_pending"},
 		{[]hostCapacity{ready, offline}, 2, "fleet_full"},
 		{[]hostCapacity{ready, other}, 2, "waiting_scheduler"},
 	} {
 		t.Run(tc.code, func(t *testing.T) {
 			j := job{id: 12, repository: "owner/repo", route: "runquill-28-1-pool__build__compile"}
 			report := summarizeStatus([]job{j}, tc.hosts, 0, tc.limit, time.Now())
-			report.configure("docker", scopeSelected, workerPools{"build": {}}, []job{j}, tc.hosts)
+			report.configure("docker", scopeSelected, workerPools{"build": {}}, []job{j}, tc.hosts, jobPlacementDiagnostics{})
 			row := report.Jobs[0]
 			if row.Diagnostic == nil || row.Diagnostic.Code != tc.code || strings.Contains(row.Diagnostic.Message, "provider data") {
 				t.Fatalf("job diagnostic = %+v, want %v", row.Diagnostic, tc.code)
 			}
 		})
+	}
+}
+
+func TestStatusUsesRepositoryCapAndReportsItsReasonInHistory(t *testing.T) {
+	host := hostCapacity{dockerHostSnapshot: dockerHostSnapshot{
+		Name: "host-a", Containers: map[string]string{"test-runner": "running"}, Pool: "build",
+	}, Limit: 2, Occupied: 1}
+	jobs := []job{
+		{id: 1, repository: "owner/project", runnerName: "test-runner", route: "runquill-28-1-pool__build__test", phase: inProgress},
+		{id: 2, repository: "owner/project", route: "runquill-29-1-pool__build__test"},
+		{id: 3, repository: "owner/other", route: "runquill-30-1-pool__build__test"},
+	}
+	report := summarizeStatus(jobs, []hostCapacity{host}, 0, 2, time.Now())
+	report.configure("docker", scopeSelected, workerPools{"build": {MaxPerRepository: 1}}, jobs, []hostCapacity{host}, jobPlacementDiagnostics{repoCap: 2})
+	waiting := report.Jobs[1].Diagnostic
+	if waiting == nil || waiting.Code != "repository_cap" || report.Jobs[2].Diagnostic.Code != "waiting_scheduler" {
+		t.Fatalf("job reasons = %+v, %+v", waiting, report.Jobs[2].Diagnostic)
+	}
+	page := panelHistoryPageResponse{Jobs: []panelHistoryJob{{ID: 2, Outcome: "waiting"}, {ID: 3, Outcome: "finished"}}}
+	page.addLiveDiagnostics(&report)
+	if page.Jobs[0].Diagnostic != waiting || page.Jobs[1].Diagnostic != nil {
+		t.Fatalf("history diagnostics = %+v", page.Jobs)
 	}
 }
 

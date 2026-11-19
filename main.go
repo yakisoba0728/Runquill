@@ -330,6 +330,7 @@ func run(ctx context.Context) error {
 	if fleet, ok := runners.runtime.(*dockerFleet); ok {
 		workerAgents = fleet.workers
 		if workerAgents != nil {
+			workerAgents.operations = ops
 			if err := workerAgents.attach(ctx, q.DB); err != nil {
 				return err
 			}

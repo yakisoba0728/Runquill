@@ -131,11 +131,11 @@ Protect that directory like the GitHub App key. Outbound workers pull nothing fo
 
 ## Tool cache
 
-In a pool with `cache: true`, each runner mounts the repository's cache volume `runquill-cache-<repository ID>` at `/home/runner/.cache` and also gets `RUNNER_TOOL_CACHE=/home/runner/.cache/tools`. The Actions runner hands that directory to `actions/setup-*` actions, so the toolchains they download stay in the repository's volume and later jobs of the same repository on the same host can find them instead of downloading them again.
+In a pool with `cache: true`, each runner mounts the repository's existing `runquill-cache-<repository ID>` volume at `/home/runner/.cache` for package and build-tool caches. A separate volume at `/home/runner/.cache/tools` scopes `RUNNER_TOOL_CACHE` to that repository and the runner's actual image ID and platform. Jobs on the same host reuse downloaded `actions/setup-*` tools when those values match. Jobs can read and modify their mounted caches. Moving a tag to a new image ID starts a fresh tool cache.
 
-The volume belongs to the repository on one host, not to an OS variant. If one repository runs jobs on several variants on the same host, they share the tool cache, and a `setup-*` action may reuse a toolchain downloaded under another OS variant. Use separate hosts for the variants if that matters.
+After upgrading, the first job for each image starts with an empty tool cache. The old shared tool files stay in the repository volume under the new mount, and other repository cache files remain available. The cache works on `local`, `ssh://`, and outbound `agent://` workers. Upgrade outbound workers to enable the new tool cache layout on each worker.
 
-The tool cache directory has been checked to persist per repository, but not yet with a real `actions/setup-*` job.
+The Docker integration test exercises cache reuse and isolation with a toolchain marker. A real `actions/setup-*` job is still a separate verification step.
 
 ## Cleanup of unused images and cache volumes
 
@@ -152,7 +152,7 @@ A retention is a Go duration such as `720h` or a whole number of days such as `3
 
 Only two kinds of object are ever removed:
 
-- a cache volume labelled `io.runquill.cache=1` and named `runquill-cache-<digits>`, mounted by no container and unused for the retention;
+- a cache volume labelled `io.runquill.cache=1` and named `runquill-cache-<digits>` or `runquill-cache-<digits>-tools-<hash>`, mounted by no container and unused for the retention;
 - an image that Runquill's puller pulled on that host and that still has the image ID it pulled, which no configuration uses, no container uses and nobody has started a runner from for the retention.
 
 Never removed:
@@ -180,6 +180,6 @@ docker compose exec manager runquill gc --unused --older-than 7d
 
 ## Feature status
 
-Exercised on a developer machine with real Docker: pulls from a registry, the cleanup against real images and volumes, all five OS variants started as runners, and the tool cache directory persisting per repository.
+Exercised on a developer machine with real Docker: pulls from a registry, cleanup against real images and volumes, and all five OS variants started as runners. The Docker smoke test alternates between Ubuntu 24.04 and Debian 13 for the same repository, checks that each image reuses only its own tool cache, and verifies that the package cache stays shared. It runs in both plain and privileged mode.
 
 Not yet exercised: a real `actions/setup-*` job using the tool cache, on-demand pulls on `ssh://` hosts, private registries and outbound `agent://` workers with `os__` selectors.

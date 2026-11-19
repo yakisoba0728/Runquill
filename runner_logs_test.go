@@ -158,6 +158,28 @@ func TestRunnerLogsFailuresLimitsAndRedaction(t *testing.T) {
 	f.expect(f.call(http.MethodGet, path, "", "operator", false), http.StatusTooManyRequests)
 }
 
+func TestRunnerLogsFollowCommandExit(t *testing.T) {
+	path := "/api/runners/runquill-1-abcdef012345/logs?follow=1"
+	for _, tc := range []struct {
+		name, shell, body string
+		status            int
+	}{
+		{"empty failure", "exit 1", "Could not read the runner logs.\n", http.StatusBadGateway},
+		{"empty success", "exit 0", "", http.StatusOK},
+		{"failure after output", "echo hello; exit 1", "hello\n", http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLogFixture(t)
+			f.shell = tc.shell
+			rec := f.call(http.MethodGet, path, "", "operator", false)
+			f.expect(rec, tc.status)
+			if body := rec.Body.String(); body != tc.body {
+				t.Fatalf("body = %q, want %q", body, tc.body)
+			}
+		})
+	}
+}
+
 func TestRunnerLogsFollowKillsDockerOnDisconnect(t *testing.T) {
 	f := newLogFixture(t)
 	// The grandchild stands in for the ssh helper docker spawns for ssh:// hosts.

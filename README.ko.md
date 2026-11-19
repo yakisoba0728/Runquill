@@ -281,7 +281,7 @@ RUNQUILL_WORKER_POOLS='{"lint":{"hosts":["local"],"privileged":false,"cache":tru
 ```
 
 - `privileged`의 기본값은 `true`이며, 러너마다 `--privileged`와 내부 Docker 데몬을 사용합니다. `false`로 설정하면 러너를 UID 1001로 실행하고 모든 capability를 제거하며 `no-new-privileges`를 적용합니다. 이 풀의 작업은 `docker`, 서비스 컨테이너, 작업 컨테이너, `sudo`를 사용할 수 없습니다. 이런 풀에 사용자 지정 `image`를 쓰려면 `/home/runner`를 소유한 UID 1001 러너 사용자가 이미지에 있어야 합니다.
-- `cache: true`는 `runquill-cache-<저장소 ID>`라는 Docker 이름 있는 볼륨을 `/home/runner/.cache`에 마운트합니다. 같은 호스트에서 실행되는 같은 저장소의 이후 작업이 내용을 재사용하고, 동시에 실행되는 작업도 같은 볼륨을 공유합니다. 풀에서 실행되는 해당 저장소의 모든 작업이 캐시를 읽고 바꿀 수 있으므로 완전히 새 파일시스템에서 시작하지 않습니다. 러너의 `RUNNER_TOOL_CACHE`도 이 볼륨 안을 가리키므로 `actions/setup-*`가 받은 도구도 남습니다. 볼륨은 호스트마다 따로 생기며, 30일 동안 어떤 러너도 쓰지 않은 볼륨은 매니저가 삭제합니다([정리](docs/runner-images.md#cleanup-of-unused-images-and-cache-volumes)). 목록은 `docker volume ls -f label=io.runquill.cache=1`로 확인합니다. 이 캐시는 [Docker 빌드 레이어 캐시](#다음-작업에서-docker-빌드-레이어-재사용)와 별개입니다.
+- `cache: true`는 `runquill-cache-<저장소 ID>`라는 Docker 볼륨을 `/home/runner/.cache`에 마운트합니다. 같은 호스트의 같은 저장소 작업은 패키지와 빌드 도구 캐시를 공유합니다. `RUNNER_TOOL_CACHE` 경로인 `/home/runner/.cache/tools`에는 저장소, 이미지 ID, 플랫폼별 볼륨을 따로 마운트하므로 `actions/setup-*`가 받은 도구는 같은 이미지를 쓰는 작업에서 재사용합니다. 각 호스트는 자체 볼륨을 유지합니다. 로컬과 SSH 호스트에서는 매니저가 30일 동안 러너가 쓰지 않은 볼륨을 삭제합니다. 목록은 `docker volume ls -f label=io.runquill.cache=1`로 확인합니다. [도구 캐시와 정리](docs/runner-images.md#tool-cache) · [Docker 빌드 레이어 캐시](#다음-작업에서-docker-빌드-레이어-재사용)
 - `max_per_repository`는 해당 풀에서 저장소 하나가 사용할 수 있는 러너 수를 제한하며, 그 풀에서는 `RUNQUILL_MAX_PER_REPOSITORY`보다 우선합니다. 둘 다 없으면 저장소 하나가 빈 슬롯을 모두 쓸 수 있습니다.
 - `images`는 풀의 작업이 `os__NAME__`으로 고를 수 있는 [러너 OS](#러너-os-선택) 이름 목록입니다. 생략하면 모든 이름을 허용합니다.
 
@@ -519,7 +519,7 @@ docker compose cp manager:/data/queue-backup.sqlite3 ./queue-backup.sqlite3
 
 관리자는 패널에서도 같은 백업을 내려받을 수 있습니다. 다운로드 진행률이 표시되고, 큰 대기열은 최대 30분까지 걸릴 수 있으며, 백업 파일이 준비된 뒤에는 다른 패널 작업을 막지 않습니다.
 
-백업은 버전 정보와 함께 소유자만 읽고 쓸 수 있는 새 파일에 저장합니다. 대기 작업, 러너 리스, 워커 정비 상태, 저장소 조회 기록, 패널에서 저장한 운영 설정이 포함됩니다. 저장소와 작업 정보가 들어 있으므로 비공개로 보관합니다. GitHub App PEM, 배포 설정, OAuth 비밀값은 별도로 백업합니다. 패널 사용자, 세션, 토큰, 감사 기록은 제외됩니다. 복구 후 패널을 사용하려면 `RUNQUILL_PANEL_BOOTSTRAP_ID`에 첫 관리자의 숫자 GitHub 계정 ID를 설정하고 팀 등록과 토큰 발급을 다시 진행합니다.
+백업은 버전 정보와 함께 소유자만 읽고 쓸 수 있는 새 파일에 저장합니다. 대기 작업, 러너 리스, 워커 정비 상태, 저장소 조회 기록, 패널에서 저장한 운영 설정, 등록된 워커의 식별 정보와 토큰 해시가 포함됩니다. 저장소와 작업 정보가 들어 있으므로 비공개로 보관합니다. GitHub App PEM, 배포 설정, OAuth 비밀값은 별도로 백업합니다. 패널 사용자, 세션, 토큰, 감사 기록은 제외됩니다. 복구 후 패널을 사용하려면 `RUNQUILL_PANEL_BOOTSTRAP_ID`에 첫 관리자의 숫자 GitHub 계정 ID를 설정하고 팀 등록과 토큰 발급을 다시 진행합니다.
 
 기존 매니저를 중지하고 원본 큐를 보관합니다. 백업할 때 사용한 `RUNQUILL_OWNER`와 `RUNQUILL_APP_ID`로 새 큐를 준비합니다.
 
@@ -541,7 +541,7 @@ SSH 워커나 패널을 사용한다면 기존 Compose 파일 조합을 그대�
 
 ### 백업 예약, 암호화, 업로드
 
-`RUNQUILL_BACKUP_INTERVAL`과 `RUNQUILL_BACKUP_DIR`을 설정하면 백업을 자동으로 만들고, `RUNQUILL_BACKUP_PASSPHRASE` 또는 `RUNQUILL_BACKUP_PASSPHRASE_FILE`을 설정하면 암호화합니다. `runquill backup --seal`로 같은 형식의 암호화 백업을 직접 만들 수 있고, `runquill restore --from`에 암호를 주면 복구합니다. `RUNQUILL_BACKUP_S3_*` 변수를 설정하면 매니저가 백업을 S3 호환 버킷에도 복사하며 `runquill restore --from-s3`로 복구합니다. `RUNQUILL_BACKUP_S3_ALLOW_PLAINTEXT=true`가 없으면 암호화하지 않은 백업은 올리지 않습니다. 실제 버킷으로는 아직 검증하지 않았습니다. [백업 가이드](docs/backups.md)
+`RUNQUILL_BACKUP_INTERVAL`과 `RUNQUILL_BACKUP_DIR`을 설정하면 백업을 자동으로 만들고, `RUNQUILL_BACKUP_PASSPHRASE` 또는 `RUNQUILL_BACKUP_PASSPHRASE_FILE`을 설정하면 암호화합니다. 관리자는 패널의 **최신 백업 검증**에서 가장 최근 로컬 백업을 확인할 수 있습니다. `runquill backup --seal`로 같은 형식의 암호화 백업을 직접 만들 수 있고, `runquill restore --from`에 암호를 주면 복구합니다. `RUNQUILL_BACKUP_S3_*` 변수를 설정하면 매니저가 백업을 S3 호환 버킷에도 복사하며 `runquill restore --from-s3`로 복구합니다. `RUNQUILL_BACKUP_S3_ALLOW_PLAINTEXT=true`가 없으면 암호화하지 않은 백업은 올리지 않습니다. [백업 가이드](docs/backups.md)
 
 ### 제거
 
@@ -573,7 +573,6 @@ k3s에서는 `kubectl delete -f runquill-k3s.yaml`로 Runquill 네임스페이�
 이 문서의 기능은 Go 테스트로 확인하며, CI의 중첩 Docker 테스트와 K3s 수명 주기 점검은 실제 컨테이너를 실행합니다. 다음 기능은 구현되어 있지만 가짜 서버나 기록된 출력으로만 테스트했고, 실제 환경에서는 아직 실행하지 않았습니다.
 
 - Podman과 rootless 컨테이너 엔진
-- 실제 S3 버킷으로의 업로드와 복구
 - 실제 GitHub 저장소를 대상으로 한 워크플로 이전
 - 실제 MCP 클라이언트에서 사용하는 MCP 엔드포인트와 `runquill mcp`
 - K3s, SSH, 아웃바운드 워커에서의 스케줄러 병렬 처리(`RUNQUILL_SCHEDULER_WORKERS`)
@@ -585,6 +584,8 @@ k3s에서는 `kubectl delete -f runquill-k3s.yaml`로 Runquill 네임스페이�
 - 아웃바운드 `agent://` 워커에서의 러너 OS 선택(`os__NAME__`)
 
 러너 이미지 자동 받기와 실제 Docker에서의 정리, 다섯 가지 OS 변형의 러너 실행, 저장소별 도구 캐시 디렉터리 유지는 개발자 컴퓨터의 실제 Docker로 확인했지만 운영 환경에서는 아직 확인하지 않았습니다.
+
+암호화된 예약 백업의 업로드와 복구는 인증을 켠 로컬 SeaweedFS에서 확인했습니다. [S3 검증 테스트](docs/backups.md#upload-to-s3-compatible-storage)
 
 이 기능에서 문제를 발견하면 이슈로 알려주세요.
 

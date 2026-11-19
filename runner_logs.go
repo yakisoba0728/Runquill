@@ -238,6 +238,10 @@ func (l *runnerLogs) stream(ctx context.Context, w http.ResponseWriter, args []s
 	waitErr := cmd.Wait()
 	if follow {
 		if !output.started {
+			if waitErr != nil && ctx.Err() == nil {
+				http.Error(w, "Could not read the runner logs.", http.StatusBadGateway)
+				return errors.Join(waitErr, ignoreRunnerLogLimit(copyErr))
+			}
 			output.header()
 		}
 		// Disconnects and the duration cap are normal ends of a follow.

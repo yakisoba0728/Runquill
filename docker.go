@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -34,10 +35,26 @@ func runnerCacheRepository(ctx context.Context) (int64, error) {
 	return id, nil
 }
 
-// runnerCacheVolume names the per-repository cache volume from the numeric repository ID only.
+// runnerCacheVolume is the repository's shared package and build-tool cache.
 func runnerCacheVolume(ctx context.Context) (string, error) {
 	id, err := runnerCacheRepository(ctx)
 	return "runquill-cache-" + strconv.FormatInt(id, 10), err
+}
+
+const runnerCacheImageFormat = "{{.Id}}|{{.Os}}|{{.Architecture}}"
+
+func (d docker) toolCache(ctx context.Context, repositoryVolume string) (image, volume string, err error) {
+	output, err := d.command(ctx, nil, "image", "inspect", d.image, "--format", runnerCacheImageFormat)
+	if err != nil {
+		return "", "", fmt.Errorf("inspect runner image for tool cache: %w", err)
+	}
+	fields := strings.Split(strings.TrimSpace(output), "|")
+	if len(fields) != 3 || !validHex32(strings.TrimPrefix(fields[0], "sha256:")) || fields[1] == "" || fields[2] == "" {
+		return "", "", errors.New("runner tool cache requires an image ID and platform")
+	}
+	key := sha256.Sum256([]byte(strings.TrimPrefix(fields[0], "sha256:") + "\x00" + fields[1] + "\x00" + fields[2]))
+	// Start by immutable ID so a tag change cannot pick an image that uses another cache.
+	return fields[0], fmt.Sprintf("%s-tools-%x", repositoryVolume, key), nil
 }
 
 func runnerOccupiesSlot(state string) bool {
@@ -133,14 +150,14 @@ func (d docker) containers(ctx context.Context) (map[string]string, error) {
 
 // runnerCreate is the engine argv and credential layout for one runner, built without side effects.
 type runnerCreate struct {
-	volume   []string // run first when the engine cannot label a volume from --mount
+	volumes  [][]string // run first when the engine cannot label a volume from --mount
 	create   []string
 	jitPath  string
 	jitOwner int
 	dirs     []string
 }
 
-func (d docker) createPlan(engine *containerEngine, name, cacheVolume string, unprivileged bool) runnerCreate {
+func (d docker) createPlan(engine *containerEngine, name, cacheVolume, toolVolume string, unprivileged bool) runnerCreate {
 	plan := runnerCreate{jitPath: "run/runquill-jit"}
 	args := []string{"create", "--name", name, "--label", runnerLabel, "--pull", "never", "--init", "--cgroupns", "private"}
 	args = append(args, engine.logArgs...)
@@ -164,14 +181,26 @@ func (d docker) createPlan(engine *containerEngine, name, cacheVolume string, un
 	}
 	if cacheVolume != "" {
 		// Named volumes survive "rm -v", so the cache outlives each ephemeral runner.
-		mount := "type=volume,src=" + cacheVolume + ",dst=" + runnerCachePath
-		if engine.mountLabelsVolume {
-			mount += ",volume-label=io.runquill.cache=1"
-		} else {
-			plan.volume = []string{"volume", "create", "--ignore", "--label", "io.runquill.cache=1", cacheVolume}
+		for _, cache := range []struct {
+			name, path string
+			noCopy     bool
+		}{{cacheVolume, runnerCachePath, false}, {toolVolume, runnerToolCache, true}} {
+			mount := "type=volume,src=" + cache.name + ",dst=" + cache.path
+			if engine.mountLabelsVolume {
+				mount += ",volume-label=" + cacheVolumeLabel
+				if cache.noCopy {
+					mount += ",volume-nocopy"
+				}
+			} else {
+				create := []string{"volume", "create", "--ignore", "--label", cacheVolumeLabel}
+				if cache.noCopy {
+					create = append(create, "--opt", "nocopy")
+				}
+				plan.volumes = append(plan.volumes, append(create, cache.name))
+			}
+			args = append(args, "--mount", mount)
 		}
-		// The runner reads RUNNER_TOOL_CACHE for its tool directory, so setup-* toolchains stay in this repository's volume.
-		args = append(args, "--mount", mount, "--env", "RUNNER_TOOL_CACHE="+runnerToolCache)
+		args = append(args, "--env", "RUNNER_TOOL_CACHE="+runnerToolCache)
 		// A new volume's root is owned by root; both directories are created for UID 1001.
 		plan.dirs = append(plan.dirs, runnerCachePath[1:]+"/", runnerToolCache[1:]+"/")
 	}
@@ -188,19 +217,23 @@ func (d docker) start(ctx context.Context, name, jit string) error {
 	if err != nil {
 		return err
 	}
-	var volume string
+	imageRef := d.image
+	var volume, toolVolume string
 	if d.cache {
 		if volume, err = runnerCacheVolume(ctx); err != nil {
 			return err
 		}
-	}
-	plan := d.createPlan(engine, name, volume, unprivileged)
-	if plan.volume != nil {
-		if _, err := d.command(ctx, nil, plan.volume...); err != nil {
+		if d.image, toolVolume, err = d.toolCache(ctx, volume); err != nil {
 			return err
 		}
 	}
-	noteRunnerAssets(d.label(), plan.create, volume)
+	plan := d.createPlan(engine, name, volume, toolVolume, unprivileged)
+	for _, create := range plan.volumes {
+		if _, err := d.command(ctx, nil, create...); err != nil {
+			return err
+		}
+	}
+	noteRunnerAssets(d.label(), imageRef, volume, toolVolume)
 	if _, err := d.command(ctx, nil, plan.create...); err != nil {
 		return err
 	}

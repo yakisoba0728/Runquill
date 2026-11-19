@@ -25,7 +25,8 @@ import (
 // image or cache volume, and whether Runquill's own puller pulled the image.
 // Only two kinds of object are ever removed:
 //   - a cache volume with the io.runquill.cache=1 label whose name is
-//     runquill-cache-<digits>, mounted by no container, and unused for the retention;
+//     runquill-cache-<digits> or runquill-cache-<digits>-tools-<hash>, mounted by no
+//     container, and unused for the retention;
 //   - an image Runquill pulled itself on that host (with the image ID it pulled),
 //     not configured, used by no container, and unused for the retention.
 //
@@ -49,7 +50,7 @@ const (
 	assetRemoveTimeout   = 2 * time.Minute
 )
 
-var cacheVolumeName = regexp.MustCompile(`^runquill-cache-[0-9]+$`)
+var cacheVolumeName = regexp.MustCompile(`^runquill-cache-[0-9]+(-tools-[a-f0-9]{64})?$`)
 
 // assetPolicy is the retention per kind; zero disables that kind.
 type assetPolicy struct {
@@ -221,17 +222,19 @@ func newAssetRecorder(db *sql.DB, now func() time.Time) *assetRecorder {
 // runnerAssets is the process recorder; nil (CLI commands, worker agents) records nothing.
 var runnerAssets atomic.Pointer[assetRecorder]
 
-// noteRunnerAssets records that a runner is being created with the image (create's last argument) and cache volume.
-func noteRunnerAssets(host string, create []string, volume string) {
+// noteRunnerAssets records the selected image reference and cache volumes.
+func noteRunnerAssets(host, image string, volumes ...string) {
 	r := runnerAssets.Load()
 	if r == nil {
 		return
 	}
-	if len(create) > 0 && create[len(create)-1] != "" {
-		r.use(assetKey{host, assetKindImage, create[len(create)-1]})
+	if image != "" {
+		r.use(assetKey{host, assetKindImage, image})
 	}
-	if volume != "" {
-		r.use(assetKey{host, assetKindCache, volume})
+	for _, volume := range volumes {
+		if volume != "" {
+			r.use(assetKey{host, assetKindCache, volume})
+		}
 	}
 }
 

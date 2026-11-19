@@ -7,7 +7,11 @@ import (
 	"testing"
 )
 
-const fleetTestWorker = "ssh://builder@worker.example.com"
+const (
+	fleetTestWorker       = "ssh://builder@worker.example.com"
+	cacheFixtureImageID   = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	cacheAlternateImageID = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+)
 
 func testDockerFleet(t *testing.T) (*dockerFleet, string) {
 	t.Helper()
@@ -38,7 +42,14 @@ case "$1" in
       printf 'worker-existing\tpaused\n'
     fi
     ;;
-  image) if [ "$state" = missing-image ]; then exit 1; fi ;;
+  image)
+    if [ "$state" = missing-image ]; then exit 1; fi
+    if [ "${5:-}" = '`+runnerCacheImageFormat+`' ]; then
+      id=${FLEET_TEST_CACHE_ID:-`+cacheFixtureImageID+`}
+      if [ "$3" = runner:debian12 ]; then id=`+cacheAlternateImageID+`; fi
+      printf '%s|linux|%s\n' "$id" "${FLEET_TEST_CACHE_ARCH:-amd64}"
+    fi
+    ;;
   cp) cat >"$FLEET_TEST_LOG.tar" ;;
 esac
 `), 0700); err != nil {
@@ -84,6 +95,58 @@ func TestDockerFleetPlacesAndRemovesRunnersOnTheirHost(t *testing.T) {
 		if !strings.Contains(string(log), want) {
 			t.Errorf("missing %q in Docker calls:\n%s", want, log)
 		}
+	}
+}
+
+func TestDockerFleetScopesToolCacheToEffectiveImage(t *testing.T) {
+	fleet, logPath := testDockerFleet(t)
+	if _, err := fleet.configurePools(`{"default":{"cache":true}}`); err != nil {
+		t.Fatal(err)
+	}
+	start := func(name, image, id, arch string, repo int64) string {
+		t.Helper()
+		t.Setenv("FLEET_TEST_CACHE_ARCH", arch)
+		t.Setenv("FLEET_TEST_CACHE_ID", id)
+		ctx := withRunnerRepository(t.Context(), repo)
+		if image != "" {
+			ctx = withRunnerImage(ctx, image)
+		}
+		if err := fleet.startOn(ctx, fleetTestWorker, name, "test-jit"); err != nil {
+			t.Fatal(err)
+		}
+		log, err := os.ReadFile(logPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for line := range strings.SplitSeq(string(log), "\n") {
+			if !strings.HasPrefix(line, fleetTestWorker+" create --name "+name+" ") {
+				continue
+			}
+			found, _, _ := strings.Cut(strings.TrimSpace(line), " --env RUNNER_TOOL_CACHE=")
+			if !strings.HasSuffix(line, " "+id) || found == line {
+				t.Fatalf("runner was not pinned to %q with a tool cache: %s", id, line)
+			}
+			for mount := range strings.SplitSeq(found, " --mount type=volume,src=") {
+				volume, rest, _ := strings.Cut(mount, ",")
+				if strings.HasPrefix(rest, "dst="+runnerToolCache+",") && cacheVolumeName.MatchString(volume) {
+					return volume
+				}
+			}
+			t.Fatalf("could not find tool cache mount in %s", line)
+		}
+		t.Fatalf("could not find runner %s in recorded Docker calls", name)
+		return ""
+	}
+	base := start("default", "", cacheFixtureImageID, "amd64", 41)
+	if sameImage := start("alias", "runner:alias", cacheFixtureImageID, "amd64", 41); sameImage != base {
+		t.Fatalf("aliases of the same image received different tool caches: %s and %s", base, sameImage)
+	}
+	selected := start("selected", "runner:debian12", cacheAlternateImageID, "amd64", 41)
+	if selected == base || start("retagged", "", cacheAlternateImageID, "amd64", 41) != selected {
+		t.Fatal("tool cache was split by tag or shared between different image IDs")
+	}
+	if start("arm", "", cacheFixtureImageID, "arm64", 41) == base || start("other-repo", "", cacheFixtureImageID, "amd64", 42) == base {
+		t.Fatal("tool cache crossed its platform or repository boundary")
 	}
 }
 

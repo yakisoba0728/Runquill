@@ -295,8 +295,20 @@ func runJobsList(ctx context.Context, c *apiClient, o *remoteOptions, _ []string
 		if job.WaitSeconds != nil {
 			wait = remoteDuration(time.Duration(*job.WaitSeconds) * time.Second)
 		}
+		detail := cmp.Or(job.Failure, job.RetryReason)
+		if job.Diagnostic != nil {
+			detail = cmp.Or(job.Failure, job.Diagnostic.Message, job.RetryReason)
+		}
+		if job.Timing != nil && job.Timing.JITRequestedAt != nil {
+			if timing := job.Timing.text(); timing != "" {
+				if detail != "" {
+					detail += " · "
+				}
+				detail += timing
+			}
+		}
 		fmt.Fprintf(table, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", job.ID, cell(job.Repository), cell(job.Outcome), cell(job.Pool),
-			cell(job.Host), remoteAgo(job.QueuedAt), wait, cell(cmp.Or(job.Failure, job.RetryReason)))
+			cell(job.Host), remoteAgo(job.QueuedAt), wait, cell(detail))
 	}
 	if err := table.Flush(); err != nil {
 		return err

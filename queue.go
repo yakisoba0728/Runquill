@@ -35,6 +35,8 @@ type job struct {
 	retryReason                      string
 	githubCreatedAt, discoveredAt    int64
 	provisionedAt, githubStartedAt   int64
+	jitRequestedMS, jitRegisteredMS  int64
+	runnerLaunchMS                   int64
 	discoverySource                  string
 	failure                          string
 }
@@ -43,6 +45,8 @@ type queue struct {
 	*sql.DB
 	lock *os.File
 }
+
+const jobLaunchTimingColumns = "coalesce(jit_requested_ms, 0), coalesce(jit_registered_ms, 0), coalesce(runner_launch_ms, 0)"
 
 // Keep the existing SQLite schema so an upgrade can resume pending jobs and runner leases.
 const schema = `
@@ -117,6 +121,9 @@ func lockQueue(path string) (*os.File, error) {
 }
 
 func (q *queue) migrate() error {
+	if _, err := q.Exec(workerAuthoritySchema); err != nil {
+		return err
+	}
 	for _, column := range []struct{ name, definition string }{
 		{"retry_reason", "TEXT NOT NULL DEFAULT ''"},
 		{"runner_host", "TEXT"},
@@ -128,6 +135,9 @@ func (q *queue) migrate() error {
 		{"runner_cleaned_at", "INTEGER"},
 		{"runner_cleaned_host", "TEXT"},
 		{"failure", "TEXT"},
+		{"jit_requested_ms", "INTEGER"},
+		{"jit_registered_ms", "INTEGER"},
+		{"runner_launch_ms", "INTEGER"},
 	} {
 		present, err := hasJobColumn(context.Background(), q.DB, column.name)
 		if err != nil {

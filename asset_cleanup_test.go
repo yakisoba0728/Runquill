@@ -361,23 +361,22 @@ func installTestRecorder(t *testing.T, db *sql.DB, now func() time.Time) *assetR
 	return r
 }
 
-func TestRunnerStartRecordsImageAndCacheVolume(t *testing.T) {
+func TestRunnerStartRecordsImageAndCacheVolumes(t *testing.T) {
 	q := testQueue(t)
 	if err := migrateAssets(t.Context(), q.DB); err != nil {
 		t.Fatal(err)
 	}
-	noteRunnerAssets("local", []string{"create", "img"}, "runquill-cache-1") // no recorder: nothing happens
+	noteRunnerAssets("local", "img", "runquill-cache-1") // no recorder: nothing happens
 	r := installTestRecorder(t, q.DB, nil)
-	engine, _ := selectContainerEngine("docker")
-	d := docker{image: "ghcr.io/o/runner:2", host: "ssh://build", cache: true}
-	plan := d.createPlan(engine, "runquill-1-abcdefabcdef", "runquill-cache-7", false)
-	noteRunnerAssets(d.label(), plan.create, "runquill-cache-7")
+	tool := "runquill-cache-7-tools-" + strings.Repeat("a", 64)
+	noteRunnerAssets("ssh://build", "ghcr.io/o/runner:2", "runquill-cache-7", tool)
 	if err := r.flush(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	rows, _ := readAssetRows(t.Context(), q.DB, "ssh://build")
-	if len(rows) != 2 || rows[assetKey{"ssh://build", assetKindImage, "ghcr.io/o/runner:2"}].pulled ||
-		rows[assetKey{"ssh://build", assetKindCache, "runquill-cache-7"}].firstSeen.IsZero() {
+	if len(rows) != 3 || rows[assetKey{"ssh://build", assetKindImage, "ghcr.io/o/runner:2"}].pulled ||
+		rows[assetKey{"ssh://build", assetKindCache, "runquill-cache-7"}].firstSeen.IsZero() ||
+		rows[assetKey{"ssh://build", assetKindCache, tool}].firstSeen.IsZero() {
 		t.Fatalf("rows %v", rows)
 	}
 }
@@ -405,18 +404,26 @@ func TestPullerRecordsPulledImage(t *testing.T) {
 
 func TestAssetCleanupRemovesOnlyUnusedRunquillAssets(t *testing.T) {
 	day := 24 * time.Hour
+	tool := oldVolume + "-tools-" + strings.Repeat("a", 64)
 	for _, test := range []struct {
 		name  string
 		setup func(t *testing.T, f *assetFixture)
 		want  []string
 	}{
 		{"baseline", func(*testing.T, *assetFixture) {}, []string{"cache:" + oldVolume, "image:" + oldImage}},
+		{"old tool volume", func(t *testing.T, f *assetFixture) {
+			f.engine.host("local").volumes[tool] = "1"
+			f.row(t, "local", assetKindCache, tool, f.now.Add(-60*day), false, "")
+		}, []string{"cache:" + oldVolume, "cache:" + tool, "image:" + oldImage}},
+		{"new tool volume with no record", func(_ *testing.T, f *assetFixture) {
+			f.engine.host("local").volumes[tool] = "1"
+		}, []string{"cache:" + oldVolume, "image:" + oldImage}},
 		{"cache label missing", func(_ *testing.T, f *assetFixture) { f.engine.host("local").volumes[oldVolume] = "" }, []string{"image:" + oldImage}},
 		{"cache label other value", func(_ *testing.T, f *assetFixture) { f.engine.host("local").volumes[oldVolume] = "0" }, []string{"image:" + oldImage}},
 		{"name pattern mismatch", func(t *testing.T, f *assetFixture) {
 			h := f.engine.host("local")
 			delete(h.volumes, oldVolume)
-			for _, name := range []string{"runquill-cache-", "runquill-cache-4x", "runquill-cache-42-old", "my-runquill-cache-42", "runquill-cache-owner/repo"} {
+			for _, name := range []string{"runquill-cache-", "runquill-cache-4x", "runquill-cache-42-old", "runquill-cache-42-tools-abcd", "my-runquill-cache-42", "runquill-cache-owner/repo"} {
 				h.volumes[name] = "1"
 				f.row(t, "local", assetKindCache, name, f.now.Add(-60*day), false, "")
 			}

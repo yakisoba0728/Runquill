@@ -2,7 +2,25 @@
 
 A worker polls the Runquill manager over HTTPS and runs jobs on its own Docker engine. It needs outbound access to the manager and GitHub. Each worker requires Linux amd64 or arm64, rootful Docker with cgroup v2, a locally preloaded Runquill runner image, and the Runquill executable. Use a dedicated engine for trusted workflows, as with the Docker backend.
 
-## Register a worker
+## Register from the panel
+
+Preconfigure a slot for the worker and set the manager origin that serves `/worker/v1/*` over HTTPS. This can differ from the panel origin. Keep the existing `local` and `ssh://` targets if you use them.
+
+```dotenv
+RUNQUILL_DOCKER_HOSTS=local,agent://worker-a
+RUNQUILL_DOCKER_HOST_LIMITS=agent://worker-a=1
+RUNQUILL_WORKER_ENROLLMENT_URL=https://workers.example.com
+```
+
+For Compose, apply `compose.yaml` and `compose.panel.yaml`, plus any overlays used by your current installation. The worker auth overlay is needed for `workers.json` registrations. Configure the trusted proxy as described under [Connect](#connect).
+
+As a panel administrator, open **Hosts & pools**, choose **Enroll worker** on the slot, and run the displayed command on the worker. The command registers its Docker engine, creates a private token file in the current directory, and starts the worker using the image configured for that host. Preload that image before starting. The code expires after ten minutes, works once, and is replaced if you issue a new one. Share it only with the operator of the selected machine.
+
+Keep the token file and use the displayed restart command from the same directory in your service manager. If the enrollment request loses its reply, the restart command can still connect with the saved token if the manager accepted the code. A configured slot awaiting its first credentials stays unavailable without reserving unused capacity.
+
+Worker credentials are checked against their Docker engine. The manager stores token hashes with the queue, and queue backups include those bindings. Pending enrollment codes are excluded from backups. Keep worker token files separately. Removing `RUNQUILL_WORKER_ENROLLMENT_URL` disables code issuance while registered workers keep using their existing credentials.
+
+## Register manually
 
 On the worker, create a private token file and obtain the Docker engine ID and token digest. Send the engine ID and digest to the manager administrator.
 
@@ -55,6 +73,8 @@ Run the same Runquill release on the worker as on the manager. A worker in a poo
 
 Use `runquill status` or the panel to view the worker. Existing reserve, slot, pool, and cordon behavior applies. After a disconnect, Runquill waits for fresh inventory before acting on that worker's previous runner leases. A restarted worker can take over its previous session after up to 45 seconds. After a clean job, the manager removes the worker-owned container by its verified Docker ID.
 
+The Docker integration test exercises panel code issuance, CLI enrollment, signed fixture webhooks, job execution in a real container, and removal. It uses a local GitHub API fixture and runs on both Linux architectures in CI.
+
 ## Rotation and replacement
 
-Cordon `agent://worker-a` and wait for its jobs to drain before rotating credentials or replacing the engine. Stop the worker, generate a fresh token, update the manager's digest and restart the manager, then restart and uncordon the worker. Keep the same name and engine ID for token rotation. For an engine replacement, update the engine ID after draining. If a worker is permanently decommissioned with unresolved leases, those leases remain reserved until the manager can reconcile that worker. Review `runquill gc --dry-run` before deleting any unfamiliar runner locally. `runquill gc --remove-orphans` skips outbound workers.
+Cordon `agent://worker-a` and wait for its jobs to drain before rotating credentials or replacing the engine. Stop the worker, generate a fresh token, update the manager's digest in `workers.json` and restart the manager, then restart and uncordon the worker. A manual credential for a panel-enrolled host replaces its saved binding on manager restart. Keep the same name and engine ID for token rotation. For an engine replacement, update the engine ID after draining. If a worker is permanently decommissioned with unresolved leases, those leases remain reserved until the manager can reconcile that worker. Review `runquill gc --dry-run` before deleting any unfamiliar runner locally. `runquill gc --remove-orphans` skips outbound workers.

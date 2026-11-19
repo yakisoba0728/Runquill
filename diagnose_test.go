@@ -98,7 +98,7 @@ func TestDiagnoseReportsQueuedJobsFromGitHubAndLocalEvidence(t *testing.T) {
 		"Last repository poll: scan: GitHub returned HTTP 429",
 		"Job 1 (run 10): invalid Runquill labels",
 		"Job 2 (run 10): label is valid and the job is absent from the local queue. The last repository poll failed",
-		"Job 3 (run 10): waiting for capacity (manager runner limit reached)",
+		"Job 3 (run 10): The fleet has reached its runner slot limit. Running and reserved slots both count.",
 		"Job 4 (run 10): uses labels outside Runquill",
 	} {
 		if !strings.Contains(out.String(), want) {

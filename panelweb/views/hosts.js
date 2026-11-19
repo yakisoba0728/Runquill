@@ -29,12 +29,71 @@ function pools(hosts) {
   return [...result.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
+function workerEnrollment(ctx) {
+  const instructions = h("p");
+  const command = h("input", { type: "text", readOnly: true, "aria-label": tr("Enrollment command") });
+  const restart = h("input", { type: "text", readOnly: true, "aria-label": tr("Worker start command") });
+  const output = statusLine();
+  const copy = (input, label) => button(label, async () => {
+    try {
+      await navigator.clipboard.writeText(input.value);
+      message(output, tr("Command copied."), "ok");
+    } catch {
+      input.focus();
+      input.select();
+      message(output, tr("Copy the selected command."));
+    }
+  });
+  const element = h("div", { class: "secret", hidden: true },
+    instructions, command, copy(command, "Copy enrollment command"),
+    h("p", {}, tr("After enrollment, use this command to restart the worker.")),
+    restart, copy(restart, "Copy start command"), button("Hide commands", clear), output);
+  let issuing = false;
+
+  function clear() {
+    command.value = "";
+    restart.value = "";
+    instructions.textContent = "";
+    message(output, "");
+    element.hidden = true;
+  }
+
+  async function issue(host, control) {
+    if (issuing) return;
+    issuing = true;
+    control.disabled = true;
+    clear();
+    try {
+      const name = host.name.slice("agent://".length);
+      const result = await ctx.api.post("./api/hosts/" + encodeURIComponent(name) + "/enrollment");
+      if (!element.isConnected) return;
+      instructions.replaceChildren(...fill("Run this command on {host} before {time}.", {
+        host: h("code", {}, host.name),
+        time: time(result.expires_at, "time"),
+      }));
+      command.value = result.command;
+      restart.value = result.start_command;
+      element.hidden = false;
+      command.focus();
+      command.select();
+    } catch (error) {
+      if (element.isConnected && error.status !== 401) ctx.toast(errorText(error), "failed");
+    } finally {
+      issuing = false;
+      control.disabled = false;
+    }
+  }
+
+  return { element, issue, clear };
+}
+
 export default {
   id: "hosts",
   title: "Hosts & pools",
 
   mount(root, ctx) {
     const target = linkTarget("hosts", "host");
+    const enrollment = ctx.can("admin") ? workerEnrollment(ctx) : null;
     const hostColumns = [
       { label: "Host", className: "id long", cell: (host) => [host.name, host.error ? h("span", { class: "sub" }, serverText(host.error)) : null] },
       { label: "Pool", cell: (host) => poolName(host.pool) },
@@ -61,7 +120,11 @@ export default {
           await ctx.refresh();
           control.disabled = false;
         }, { small: true, "aria-label": tr("{action} on {host}", { action: tr(label), host: host.name }) });
-        return h("div", { class: "row-actions" }, control);
+        const enroll = enrollment && host.enrollment_available && host.name.startsWith("agent://")
+          ? button("Enroll worker", () => void enrollment.issue(host, enroll), { small: true,
+            "aria-label": tr("{action} on {host}", { action: tr("Enroll worker"), host: host.name }) })
+          : null;
+        return h("div", { class: "row-actions" }, control, enroll);
       } });
     }
     const hosts = createTable({ label: "Worker inventory", key: (host) => host.name, columns: hostColumns, highlighted: target.key });
@@ -81,12 +144,12 @@ export default {
         }) },
       ],
     });
-    const hostBlock = block("Hosts", {}, hosts.element);
+    const hostBlock = block("Hosts", {}, enrollment?.element, hosts.element);
     const elastic = elasticSection(ctx);
     root.append(pageHead("Hosts & pools"), hostBlock,
       block("Worker pools", { note: "Host capacity before the fleet slot limit applies." }, poolTable.element),
       elastic.element);
-    parts = { ctx, target, hosts, poolTable, hostHeading: hostBlock.querySelector("h2"), elastic };
+    parts = { ctx, target, hosts, poolTable, hostHeading: hostBlock.querySelector("h2"), elastic, enrollment };
   },
 
   params(search) {
@@ -125,6 +188,7 @@ export default {
 
   unmount() {
     parts?.elastic.stop();
+    parts?.enrollment?.clear();
     parts = null;
   },
 };

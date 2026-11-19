@@ -1,6 +1,6 @@
 # Scheduled, sealed and S3 backups
 
-A queue backup is a consistent SQLite copy of jobs, runner leases, host maintenance state, repository scan history and operational settings. It excludes panel users, sessions, tokens, audit records and [usage statistics](panel.md#usage-statistics). The basic `runquill backup` and `runquill restore` flow is in [Back up and recover the queue](../README.md#back-up-and-recover-the-queue). This guide adds encryption, a schedule and offsite copies.
+A queue backup is a consistent SQLite copy of jobs, runner leases, host maintenance state, repository scan history and operational settings. It includes enrolled outbound workers' host and engine IDs and token digests. It excludes worker enrollment codes and observations, panel users, sessions, tokens, audit records and [usage statistics](panel.md#usage-statistics). The basic `runquill backup` and `runquill restore` flow is in [Back up and recover the queue](../README.md#back-up-and-recover-the-queue). This guide adds encryption, a schedule and offsite copies.
 
 ## Sealed backups
 
@@ -24,6 +24,8 @@ The manager takes a backup one minute after start and then once per interval whe
 
 Files are named `runquill-queue-YYYYMMDDTHHMMSSZ.sqlite3`, with `.sealed` appended when sealed. Each one is checked against the manager's `RUNQUILL_OWNER` and `RUNQUILL_APP_ID` before it is published, and only files with this name pattern are pruned. Invalid settings stop the manager at startup. A failed run is logged, shown on the panel's **Backups** screen and retried at the next interval.
 
+On **Backups**, an administrator can use **Verify latest backup** to check the most recent retained local copy. The manager authenticates a sealed copy with its configured passphrase and checks the SQLite format, integrity and GitHub App identity. The check keeps the original file and active queue intact. The panel shows the file, time and result from the latest verification since startup. Completed and failed checks are recorded as `queue.backup.verify` attempts in the audit log.
+
 ## Upload to S3-compatible storage
 
 Add these variables to copy each scheduled backup to a bucket.
@@ -45,7 +47,7 @@ Runquill refuses to upload an unsealed backup. With a schedule and a bucket conf
 
 `runquill backup --upload --seal` makes and uploads a single backup with the same settings. Add `--output FILE` to keep a local copy too.
 
-The S3 client has been tested against a local fake S3 server only. It has not yet been exercised against AWS S3 or another real bucket, so try a restore before you rely on it.
+The scheduled sealed upload and restore path has also been tested against an authenticated local SeaweedFS S3 service. To test your own S3-compatible service, set the S3 connection variables above for a test bucket and run `RUNQUILL_TEST_BACKUP_S3=1 go test -run '^TestLiveS3BackupRestore$' -v`. The smoke test writes one synthetic backup under a unique subprefix, restores and checks its queue, and deletes only that test object. It needs permission to put, read and delete that object.
 
 ## Compose
 

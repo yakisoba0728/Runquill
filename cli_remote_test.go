@@ -290,6 +290,14 @@ func TestRemoteJobsListAgainstPanel(t *testing.T) {
 	if code != 0 || len(rows(stdout)) != 2 || !strings.Contains(stderr, "More jobs match") {
 		t.Fatalf("jobs list --limit 1: code %d, %q\n%s", code, stderr, stdout)
 	}
+	at := f.now.Add(-time.Hour).UnixMilli()
+	if _, err := f.q.Exec(`UPDATE jobs SET jit_requested_ms = ?, jit_registered_ms = ?, runner_launch_ms = ? WHERE job_id = 7`, at, at+250, at+750); err != nil {
+		t.Fatal(err)
+	}
+	_, code, stdout, stderr = runRemote(t, "jobs", "list", "--repo", "owner/app")
+	if code != 0 || stderr != "" || !strings.Contains(stdout, "JIT registration 250ms") || !strings.Contains(stdout, "runtime launch 500ms") {
+		t.Fatalf("jobs list with launch stages: code %d, stderr %q\n%s", code, stderr, stdout)
+	}
 }
 
 func TestRemoteHostCordonAgainstPanel(t *testing.T) {

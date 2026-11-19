@@ -243,3 +243,31 @@ func TestStatusReportsObservedJobStagesWithoutOverwritingDiscovery(t *testing.T)
 		t.Fatalf("unexpected timing: %+v", timing)
 	}
 }
+
+func TestStageTimingsDistinguishRegistrationRuntimeAndAssignment(t *testing.T) {
+	j := job{
+		githubCreatedAt: 10, discoveredAt: 12, provisionedAt: 14, githubStartedAt: 19,
+		jitRequestedMS: 13600, jitRegisteredMS: 14100, runnerLaunchMS: 15250,
+	}
+	timing := jobTiming(j, time.Unix(20, 0))
+	for _, check := range []struct {
+		value *int64
+		want  int64
+	}{
+		{timing.DiscoverySeconds, 2}, {timing.SchedulerMillis, 1600}, {timing.JITMillis, 500},
+		{timing.RuntimeMillis, 1150}, {timing.GitHubAssignSeconds, 4}, {timing.AssignmentSeconds, 5},
+	} {
+		if check.value == nil || *check.value != check.want {
+			t.Fatalf("timing %+v does not preserve %d for stage %v", timing, check.want, check.value)
+		}
+	}
+	j.jitRequestedMS, j.jitRegisteredMS, j.runnerLaunchMS = 0, 0, 0
+	legacy := jobTiming(j, time.Unix(20, 0))
+	if legacy.JITMillis != nil || legacy.RuntimeMillis != nil || legacy.GitHubAssignSeconds != nil || legacy.AssignmentSeconds == nil {
+		t.Fatalf("legacy timing fabricated unavailable stages: %+v", legacy)
+	}
+	claimed := jobTiming(job{jitRequestedMS: 13600}, time.Unix(20, 0))
+	if claimed == nil || claimed.JITRequestedAt == nil || claimed.JITRequestedAt.UnixMilli() != 13600 || claimed.JITMillis != nil {
+		t.Fatalf("timing did not retain a JIT attempt on an older job: %+v", claimed)
+	}
+}

@@ -263,6 +263,10 @@ components:
           format: int64
         url:
           type: string
+        diagnostic:
+          $ref: '#/components/schemas/JobDiagnostic'
+        timing:
+          $ref: '#/components/schemas/JobTiming'
     JobHistoryPage:
       type: object
       required: [jobs]
@@ -378,6 +382,9 @@ components:
           type: string
           enum: [ready, pulling, missing, failed]
           description: Runner image readiness on a local or SSH host while RUNQUILL_IMAGE_PULL is missing or always.
+        enrollment_available:
+          type: boolean
+          description: An administrator can issue a one-time code for this configured outbound worker.
     StatusJob:
       type: object
       required: [id, repository, status]
@@ -443,6 +450,28 @@ components:
           type: integer
           format: int64
         provision_to_start_seconds:
+          type: integer
+          format: int64
+        jit_requested_at:
+          type: string
+          format: date-time
+        jit_registered_at:
+          type: string
+          format: date-time
+        runner_launch_at:
+          type: string
+          format: date-time
+          description: When the runtime confirmed its launch request (Pod creation for Kubernetes).
+        scheduler_wait_millis:
+          type: integer
+          format: int64
+        jit_registration_millis:
+          type: integer
+          format: int64
+        runtime_launch_millis:
+          type: integer
+          format: int64
+        launch_to_github_start_seconds:
           type: integer
           format: int64
     JobDiagnostic:
@@ -954,6 +983,24 @@ components:
           $ref: '#/components/schemas/BackupRemote'
         last:
           $ref: '#/components/schemas/BackupRun'
+        verification:
+          $ref: '#/components/schemas/BackupVerification'
+    BackupVerification:
+      type: object
+      required: [name, checked_at, ok]
+      properties:
+        name:
+          type: string
+          description: File name of the local scheduled backup that was checked.
+        checked_at:
+          type: string
+          format: date-time
+        ok:
+          type: boolean
+          description: True if the backup passed the authentication, SQLite integrity and GitHub identity checks.
+        error:
+          type: string
+          description: A non-sensitive reason when verification failed.
     BackupRemote:
       type: object
       description: S3-compatible upload settings, reported only when scheduled. No credentials are included.
@@ -1861,6 +1908,53 @@ paths:
             text/plain:
               schema:
                 $ref: '#/components/schemas/Error'
+  /api/hosts/{name}/enrollment:
+    post:
+      operationId: createWorkerEnrollment
+      tags: [hosts]
+      summary: Issues a one-time enrollment command for a preconfigured outbound worker. Audited as worker.enrollment.create.
+      x-runquill-permission: admin
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: The configured outbound worker name without the agent scheme.
+          schema:
+            type: string
+      responses:
+        '201':
+          description: 'Copy the returned enrollment command to the worker. Issuing a new code replaces the previous one.'
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [command, start_command, expires_at]
+                properties:
+                  command:
+                    type: string
+                    description: One-line shell command containing a single-use code.
+                  start_command:
+                    type: string
+                    description: Command to start the worker again using its saved token file.
+                  expires_at:
+                    type: string
+                    format: date-time
+        '400':
+          description: The name is not a configured outbound worker.
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/AccessUnavailable'
   /snapshot:
     get:
       operationId: getSnapshot
@@ -2243,7 +2337,7 @@ paths:
     get:
       operationId: getBackupStatus
       tags: [backups]
-      summary: Scheduled backup settings and the latest run. No passphrase, key or endpoint credential is included.
+      summary: Scheduled backup settings, the latest run and the latest manual verification since startup.
       x-runquill-permission: admin
       security:
         - sessionCookie: []
@@ -2260,6 +2354,35 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '503':
           $ref: '#/components/responses/AccessUnavailable'
+  /api/backups/verify:
+    post:
+      operationId: verifyBackup
+      tags: [backups]
+      summary: Checks the newest retained local scheduled backup without restoring or changing it. Audited as queue.backup.verify.
+      x-runquill-permission: admin
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: Verification completed. A damaged or mismatched backup returns ok false.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupVerification'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/Busy'
+        '503':
+          description: Backup directory, verification setup or audit storage is unavailable.
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
   /mcp:
     post:
       operationId: callMCP

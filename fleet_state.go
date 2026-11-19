@@ -105,7 +105,7 @@ func fleetCapacity(snapshots []dockerHostSnapshot, states map[string]hostState, 
 					host.Occupied++
 				}
 			}
-		} else if state.untrackedSlots.Valid {
+		} else if state.untrackedSlots.Valid || host.UnregisteredWorker {
 			host.Occupied = leasesOnHost[host.Name] + int(state.untrackedSlots.Int64)
 		} else {
 			// An engine we have never reached may already be running containers.

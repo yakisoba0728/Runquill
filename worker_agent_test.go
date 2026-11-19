@@ -68,7 +68,12 @@ cd "$WORKER_TEST_DIR"
 printf '%s\n' "$*" >> commands
 case "$1" in
     info) echo worker-engine ;;
-    image) echo image-present ;;
+    image)
+        if [ "${5:-}" = '`+runnerCacheImageFormat+`' ]; then
+            printf '%s\n' '`+cacheFixtureImageID+`|linux|amd64'
+        else
+            echo image-present
+        fi ;;
     ps)
         [ -f runner ] || exit 0
         case "$*" in
@@ -282,7 +287,9 @@ func TestOutboundWorkerCarriesPoolRuntimeOptions(t *testing.T) {
 	}
 	log, err := os.ReadFile(filepath.Join(dir, "commands"))
 	if err != nil || !strings.Contains(string(log), "--user 1001:1001") || strings.Contains(string(log), "--privileged") ||
-		!strings.Contains(string(log), "type=volume,src=runquill-cache-42,dst=/home/runner/.cache") {
+		!strings.Contains(string(log), "type=volume,src=runquill-cache-42,dst=/home/runner/.cache") ||
+		!strings.Contains(string(log), "type=volume,src=runquill-cache-42-tools-") ||
+		!strings.Contains(string(log), "--env RUNNER_TOOL_CACHE=/home/runner/.cache/tools "+cacheFixtureImageID) {
 		t.Fatalf("worker ignored pool runtime options: %s (%v)", log, err)
 	}
 	for _, task := range []workerTask{

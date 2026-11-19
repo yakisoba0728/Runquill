@@ -72,6 +72,9 @@ func (a *panelAccess) register(mux *http.ServeMux, panel *panelState) {
 	mux.HandleFunc("POST /api/backup", a.require("admin", a.downloadBackup))
 	mux.HandleFunc("POST /api/diagnose", a.require("admin", panelDiagnose))
 	if panel.operations != nil {
+		mux.HandleFunc("POST /api/hosts/{name}/enrollment", a.require("admin", func(w http.ResponseWriter, r *http.Request, user panelIdentity) {
+			a.createWorkerEnrollment(w, r, user, panel.operations)
+		}))
 		mux.HandleFunc("GET /api/settings", a.require("admin", panel.operationSettings))
 		mux.HandleFunc("PUT /api/settings", a.require("admin", func(w http.ResponseWriter, r *http.Request, user panelIdentity) {
 			a.saveOperationSettings(w, r, user, panel)

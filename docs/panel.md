@@ -27,6 +27,8 @@ The sidebar shows counts of queued jobs, running runners and offline hosts.
 - **Team & tokens** manages API tokens for every user and team members for administrators.
 - **Settings** edits the fleet limit, polling interval, runner image, Docker workers and pools, including the runner OS names each pool allows, and applies them without a restart. It lists the [runner image catalogue](runner-images.md#the-runner-image-catalogue) read-only.
 
+Queue diagnostics use the same reason codes in the snapshot, the job history API, the CLI and read-only MCP. They distinguish worker availability, repository caps, image preparation and assignment. New jobs also record when Runquill requested JIT registration, GitHub returned it, and the worker runtime accepted the launch. Kubernetes accepts a launch when it creates the Pod. Time between then and GitHub reporting a start can include Pod scheduling and image pulls. Jobs from older releases show the timestamps Runquill recorded at the time.
+
 ## Roles and tokens
 
 | Action | Viewer | Operator | Admin |

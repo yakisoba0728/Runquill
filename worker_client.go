@@ -33,6 +33,9 @@ type workerClient struct {
 }
 
 func workerCommand(ctx context.Context, args []string) error {
+	if len(args) > 0 && args[0] == "enroll" {
+		return workerEnrollCommand(ctx, args[1:])
+	}
 	flags := flag.NewFlagSet("runquill worker", flag.ContinueOnError)
 	name := flags.String("name", os.Getenv("RUNQUILL_WORKER_NAME"), "configured agent host name")
 	manager := flags.String("manager", os.Getenv("RUNQUILL_WORKER_URL"), "manager HTTPS origin")
@@ -71,12 +74,16 @@ func workerCommand(ctx context.Context, args []string) error {
 		return err
 	}
 	client := &workerClient{endpoint: endpoint, token: token, engine: engine, session: rand.Text(), target: target,
-		client: &http.Client{Timeout: 12 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		}},
+		client: workerHTTPClient(),
 	}
 	slog.Info("worker started", "host", workerHostPrefix+*name)
 	return client.run(ctx)
+}
+
+func workerHTTPClient() *http.Client {
+	return &http.Client{Timeout: 12 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
 }
 
 func workerEndpoint(raw, name string) (string, error) {

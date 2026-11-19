@@ -27,11 +27,14 @@ type dockerFleet struct {
 }
 
 type dockerHostSnapshot struct {
-	Name              string
-	Pool              string
-	Containers        map[string]string
-	RunnerDiagnostics map[string]jobDiagnostic
-	Err               error
+	Name                string
+	Pool                string
+	Containers          map[string]string
+	RunnerDiagnostics   map[string]jobDiagnostic
+	Err                 error
+	WorkerEngineID      string
+	UnregisteredWorker  bool
+	EnrollmentAvailable bool
 	// The image fields are set while Runquill pulls images; ImageWait says why the host cannot start runners yet.
 	Image, ImageStatus, ImageWait string
 }
@@ -106,14 +109,18 @@ func (f *dockerFleet) prepare(ctx context.Context) error {
 			var id string
 			var err error
 			if name := host.agentName(); name != "" {
-				id = f.workers.hosts[name].authority.Engine
+				var authority *workerAuthority
+				authority, err = f.workers.workerAuthority(ctx, name)
+				if authority != nil {
+					id = authority.Engine
+				}
 			} else {
 				id, err = host.engineID(ctx)
 			}
 			if err != nil {
 				return err
 			}
-			if engines[id] {
+			if id != "" && engines[id] {
 				return errors.New("each configured Docker host must identify a distinct engine")
 			}
 			engines[id] = true
@@ -173,9 +180,9 @@ func (f *dockerFleet) snapshot(ctx context.Context) ([]dockerHostSnapshot, error
 			ctx, cancel := context.WithTimeout(ctx, dockerHostProbeTimeout)
 			defer cancel()
 			result := &hosts[i]
-			if name := host.agentName(); name != "" {
-				engineIDs[i] = f.workers.hosts[name].authority.Engine
+			if host.agentName() != "" {
 				*result = f.workers.snapshot(ctx, host)
+				engineIDs[i] = result.WorkerEngineID
 				return
 			}
 			result.Name, result.Pool = host.label(), host.pool

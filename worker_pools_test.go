@@ -136,21 +136,28 @@ func TestWorkerPoolsSetPrivilegeAndRepositoryCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if count := strings.Count(string(data), runnerCacheImageFormat); count != 3 {
+		t.Fatalf("expected one image identity lookup per cached launch, got %d:\n%s", count, data)
+	}
 	var cached7, cached8, privileged, privilegedCached bool
 	for line := range strings.SplitSeq(string(data), "\n") {
 		unprivileged := !strings.Contains(line, "--privileged") &&
 			strings.Contains(line, "--user 1001:1001 --security-opt no-new-privileges --cap-drop ALL --env RUNQUILL_RUNNER_MODE=plain --env RUNQUILL_JIT_FILE=/run/runquill/jit")
-		mount := "--mount type=volume,src=runquill-cache-%d,dst=/home/runner/.cache,volume-label=io.runquill.cache=1 --env RUNNER_TOOL_CACHE=/home/runner/.cache/tools"
+		mounted := func(repository int) bool {
+			return strings.Contains(line, fmt.Sprintf("--mount type=volume,src=runquill-cache-%d,dst=/home/runner/.cache,volume-label=io.runquill.cache=1", repository)) &&
+				strings.Contains(line, fmt.Sprintf("--mount type=volume,src=runquill-cache-%d-tools-", repository)) &&
+				strings.Contains(line, ",dst=/home/runner/.cache/tools,volume-label=io.runquill.cache=1,volume-nocopy --env RUNNER_TOOL_CACHE=/home/runner/.cache/tools "+cacheFixtureImageID)
+		}
 		switch {
 		case strings.Contains(line, "create --name cached-7"):
-			cached7 = unprivileged && strings.Contains(line, fmt.Sprintf(mount, 7))
+			cached7 = unprivileged && mounted(7)
 		case strings.Contains(line, "create --name cached-8"):
-			cached8 = unprivileged && strings.Contains(line, fmt.Sprintf(mount, 8)) && !strings.Contains(line, "runquill-cache-7")
+			cached8 = unprivileged && mounted(8) && !strings.Contains(line, "runquill-cache-7")
 		case strings.Contains(line, "create --name default-runner"):
 			privileged = strings.Contains(line, "--privileged") && !strings.Contains(line, "--mount") && !strings.Contains(line, "--user") &&
 				!strings.Contains(line, "RUNNER_TOOL_CACHE")
 		case strings.Contains(line, "create --name privileged-cached"):
-			privilegedCached = strings.Contains(line, "--privileged") && strings.Contains(line, fmt.Sprintf(mount, 7)) && !strings.Contains(line, "--user")
+			privilegedCached = strings.Contains(line, "--privileged") && mounted(7) && !strings.Contains(line, "--user")
 		case strings.Contains(line, "create --name uncached"):
 			t.Errorf("created a runner without its cache scope: %s", line)
 		}

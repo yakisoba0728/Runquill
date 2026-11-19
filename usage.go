@@ -15,14 +15,14 @@ import (
 
 // Usage statistics outlive the seven-day jobs table through a daily rollup.
 //
-// A job is folded into usage_daily exactly once, when it is final: completed
-// with its runner lease released, which is also the only state the scheduler
-// deletes. usage_rolled is the ledger of folded job IDs, so a crash between
-// ticks, a restart or a later change to the job row cannot count it twice; its
-// rows are pruned once the job itself is gone. usage_meta.floor is only a scan
-// hint: every job at or below it is final and folded, or deleted. Sequence
-// numbers are reused after the newest rows are deleted, so floor_job remembers
-// whose sequence the floor was and a mismatch restarts the scan.
+// A job is folded into usage_daily exactly once, when it is completed and its
+// runner lease has been released. The scheduler keeps completed jobs until
+// usage_rolled records them. This ledger prevents a crash, restart or later
+// change to a job from counting it twice. Ledger rows are pruned after their
+// jobs are deleted. usage_meta.floor is a scan hint: every job at or below it
+// is already folded or deleted. Sequence numbers are reused after the newest
+// rows are deleted, so floor_job records the job at the floor and a mismatch
+// restarts the scan.
 //
 // Rollup rows are kept for usageRetentionDays UTC days.
 const (

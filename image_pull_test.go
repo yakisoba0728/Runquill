@@ -399,7 +399,7 @@ esac
 	if row := report.Hosts[0]; row.Status != "UNAVAILABLE" || row.Error != want || row.ImageStatus != "missing" {
 		t.Fatalf("status row %+v", row)
 	}
-	if d := report.explainWaiting("", capacity); d.Code != "workers_unavailable" {
+	if d := report.explainWaiting(statusJob{}, capacity, nil); d.Code != "runner_image_pending" {
 		t.Fatalf("diagnostic %+v", d)
 	}
 }

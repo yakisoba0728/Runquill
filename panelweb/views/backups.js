@@ -1,7 +1,3 @@
-// Backups: the scheduled backup configuration and its latest run from
-// GET /api/backups/status, plus the on-demand queue backup download
-// (POST /api/backup). Admins only. There is no
-// restore here: restoring is a manager command, not a browser action.
 import { serverText, tr } from "../i18n.js";
 import {
   block, button, errorText, fill, format, h, intro, kv, loadStyle, message, pageHead, saveFile, state, statusLine, time,
@@ -79,11 +75,45 @@ function render(status) {
     ? kv(lastRows(status), { wide: true, label: "Last scheduled run" })
     : h("p", { class: "muted" }, tr("No scheduled run yet.")));
   p.enable.replaceChildren(...(status.scheduled ? [] : [enableNote()]));
+  p.verificationBlock.hidden = !status.scheduled;
+  renderVerification(p, status.verification);
+}
+
+function renderVerification(current, verification) {
+  current.verification.replaceChildren(verification ? kv([
+    ["Result", verification.ok ? state("DONE", "Verified") : state("FAILED", "Verification failed")],
+    ["File", h("span", { class: "mono" }, verification.name)],
+    ["Checked at", time(verification.checked_at, "date")],
+    verification.error && ["Error", h("span", { class: "error-text" }, serverText(verification.error))],
+  ], { wide: true, label: "Last backup verification" }) : h("p", { class: "muted" }, tr("No backup verification has run yet.")));
+}
+
+async function verifyBackup() {
+  const current = parts;
+  if (current.verify.disabled) return;
+  current.refresh.disabled = true;
+  current.verify.disabled = true;
+  current.verify.setAttribute("aria-busy", "true");
+  message(current.verificationOutput, tr("Verifying the latest local backup…"));
+  try {
+    const result = await current.ctx.api.post("./api/backups/verify", undefined, { timeout: 30 * 60 * 1000 + 10000 });
+    if (parts !== current) return;
+    renderVerification(current, result);
+    message(current.verificationOutput, "");
+  } catch (error) {
+    if (parts === current && error.status !== 401) message(current.verificationOutput, errorText(error), "failed");
+  } finally {
+    current.refresh.disabled = false;
+    current.verify.disabled = false;
+    current.verify.removeAttribute("aria-busy");
+  }
 }
 
 async function load() {
   const current = parts;
+  if (current.refresh.disabled) return;
   current.refresh.disabled = true;
+  if (current.verify) current.verify.disabled = true;
   current.refresh.setAttribute("aria-busy", "true");
   message(current.output, "");
   try {
@@ -99,6 +129,7 @@ async function load() {
   } finally {
     if (!current.loaded) current.last.replaceChildren();
     current.refresh.disabled = false;
+    if (current.verify) current.verify.disabled = false;
     current.refresh.removeAttribute("aria-busy");
   }
 }
@@ -150,23 +181,31 @@ export default {
     const enable = h("div");
     const output = statusLine();
     const queueBackup = downloadBlock(ctx);
+    const verification = h("div", { "aria-live": "polite" });
+    const verificationOutput = statusLine();
+    const verify = ctx.can("admin") && !ctx.demo ? button("Verify latest backup", () => void verifyBackup()) : null;
+    const verificationBlock = block("Backup verification", { note: "Checks the latest local scheduled copy and its GitHub App identity." },
+      verify ? h("div", { class: "toolbar" }, verify) : null, verification, verificationOutput);
+    verificationBlock.hidden = true;
     root.append(
       pageHead("Backups", refresh),
       intro(...fill("Restore a backup on the manager with {command}; the panel never restores.", { command: h("code", {}, "runquill restore") })),
       block("Schedule", {}, schedule, output),
       block("Last scheduled run", {}, last),
+      verificationBlock,
       enable,
       queueBackup.element,
     );
-    parts = { ctx, refresh, schedule, last, enable, output, download: queueBackup.download };
+    parts = { ctx, refresh, schedule, last, enable, output, download: queueBackup.download, verify, verificationBlock, verification, verificationOutput };
     void load();
   },
 
   commands() {
     if (!parts) return [];
-    const { download } = parts;
+    const { download, verify, verificationBlock } = parts;
     return [
       { label: "Refresh backup status", run: () => { if (parts) void load(); } },
+      verify && !verificationBlock.hidden && !verify.disabled && { label: "Verify latest backup", run: () => verify.isConnected && verify.click() },
       download && !download.disabled && { label: "Download queue backup", run: () => download.isConnected && download.click() },
     ].filter(Boolean);
   },

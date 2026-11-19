@@ -11,6 +11,8 @@ sh install.sh --wizard --dir ./runquill
 
 The default setup uses local Docker Compose, a personal GitHub account, and the host's recommended runner limits. Open **Advanced** for a GitHub organization, a K3s context, custom addresses, or different limits. For K3s, use the matching release's `runquill-k3s.yaml` and a context authorized to create the resources in it. Use a port-forward for a local panel or supply an existing HTTPS ingress.
 
+The K3s wizard reads the `kube-system` namespace UID to identify the cluster. To resume an interrupted deployment, reopen the wizard from the same installation directory and select the context for the same cluster and GitHub App. The wizard verifies its setup ID on the namespaces before continuing. If an older wizard created the namespaces without a setup ID, complete the deployment using the manual K3s instructions. [K3s installation](../deploy/k3s/README.md#install)
+
 Run `./runquill wizard` from the installation directory if you already have the release files. For an existing Compose installation, `./runquill wizard --check-compose` runs its read-only preflight. Over SSH, use the printed forwarding command and keep the setup link private.
 
 ## Tailscale

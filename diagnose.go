@@ -152,7 +152,7 @@ func diagnoseRepository(ctx context.Context, out io.Writer, api *github, db *sql
 		case poolErr != nil:
 			reason = poolErr.Error()
 		case found:
-			reason = localJobReason(local, report)
+			reason = localJobReason(local)
 		}
 		_, err = fmt.Fprintf(out, "Job %d (run %d): %s\n", candidate.ID, candidate.RunID, reason)
 		return err
@@ -196,31 +196,12 @@ func missingJobReason(candidate workflowJob, poll repositoryPoll, polling, local
 	}
 }
 
-func localJobReason(j statusJob, report *statusReport) string {
-	switch j.Status {
-	case "RETRY":
-		return "waiting for a Runquill retry (" + j.detail + ")"
-	case "WAITING":
-		if report.Runners != nil && report.Runners.OccupiedSlots+report.Runners.ReservedSlots >= report.SlotLimit {
-			return "waiting for capacity (manager runner limit reached)"
+func localJobReason(j statusJob) string {
+	if j.Diagnostic != nil {
+		if j.Diagnostic.Code == "waiting_scheduler" {
+			return fmt.Sprintf("%s Queue position %d.", j.Diagnostic.Message, j.QueuePosition)
 		}
-		if !slices.ContainsFunc(report.Hosts, func(host statusHost) bool {
-			return (j.Pool == "" || j.Pool == host.Pool) && host.Status == "UP" && !host.Cordoned && host.OccupiedSlots < host.SlotLimit
-		}) {
-			if j.Pool != "" {
-				return fmt.Sprintf("waiting for an available slot in worker pool %q", j.Pool)
-			}
-			return "waiting for a worker with an available slot"
-		}
-		return fmt.Sprintf("in the Runquill queue at position %d", j.QueuePosition)
-	case "STARTING", "OFFLINE", "UNKNOWN":
-		if j.Diagnostic != nil {
-			return j.Diagnostic.Message
-		}
-		return fmt.Sprintf("local state %s (%s)", j.Status, j.detail)
-	case "RUNNING":
-		return "runner container is running. GitHub still reports the job as queued"
-	default:
-		return fmt.Sprintf("local state %s (%s)", j.Status, j.detail)
+		return j.Diagnostic.Message
 	}
+	return fmt.Sprintf("local state %s (%s)", j.Status, j.detail)
 }

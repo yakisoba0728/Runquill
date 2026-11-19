@@ -691,7 +691,12 @@ func (s *mcpServer) listJobs(ctx context.Context, args mcpArgs) (any, error) {
 	if !ok {
 		return nil, mcpToolError("repository must be OWNER/NAME.")
 	}
-	return readPanelHistory(ctx, s.db, filter, s.panel.usagePools(), s.now())
+	page, err := readPanelHistory(ctx, s.db, filter, s.panel.usagePools(), s.now())
+	if err != nil {
+		return nil, err
+	}
+	page.addLiveDiagnostics(s.snapshot().Fleet)
+	return page, nil
 }
 
 func mcpParseAge(raw string) (time.Duration, error) {
@@ -712,10 +717,9 @@ func mcpParseAge(raw string) (time.Duration, error) {
 
 type mcpJob struct {
 	panelHistoryJob
-	Status        string         `json:"status,omitempty"`
-	QueuePosition int            `json:"queue_position,omitempty"`
-	Runner        string         `json:"runner,omitempty"`
-	Diagnostic    *jobDiagnostic `json:"diagnostic,omitempty"`
+	Status        string `json:"status,omitempty"`
+	QueuePosition int    `json:"queue_position,omitempty"`
+	Runner        string `json:"runner,omitempty"`
 }
 
 // getJob reads one row with readPanelHistory's columns and panelHistoryRow,
@@ -733,10 +737,12 @@ func (s *mcpServer) getJob(ctx context.Context, args mcpArgs) (any, error) {
 	err = s.db.QueryRowContext(ctx, `SELECT job_id, repository, route, phase, changed_at,
         coalesce(runner_name, ''), coalesce(runner_host, runner_cleaned_host, ''), retry_at, retry_reason,
         coalesce(failure, ''), coalesce(github_created_at, 0), coalesce(discovered_at, 0),
-        coalesce(provisioned_at, 0), coalesce(github_started_at, 0), coalesce(runner_cleaned_at, 0)
+        coalesce(provisioned_at, 0), coalesce(github_started_at, 0), coalesce(runner_cleaned_at, 0),
+        coalesce(discovery_source, ''), `+jobLaunchTimingColumns+`
         FROM jobs WHERE job_id = ?`, id).Scan(&j.id, &j.repository, &j.route, &j.phase, &j.changedAt, &j.runnerName,
 		&j.runnerHost, &j.retryAt, &j.retryReason, &j.failure, &j.githubCreatedAt, &j.discoveredAt,
-		&j.provisionedAt, &j.githubStartedAt, &cleanedAt)
+		&j.provisionedAt, &j.githubStartedAt, &cleanedAt, &j.discoverySource,
+		&j.jitRequestedMS, &j.jitRegisteredMS, &j.runnerLaunchMS)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, mcpToolError(fmt.Sprintf("Job %d is not in the job history. Finished jobs are kept for seven days.", id))
 	}
@@ -747,7 +753,10 @@ func (s *mcpServer) getJob(ctx context.Context, args mcpArgs) (any, error) {
 	if fleet := s.snapshot().Fleet; fleet != nil {
 		for _, live := range fleet.Jobs {
 			if live.ID == id {
-				out.Status, out.QueuePosition, out.Runner, out.Diagnostic = live.Status, live.QueuePosition, live.Runner, live.Diagnostic
+				out.Status, out.QueuePosition, out.Runner = live.Status, live.QueuePosition, live.Runner
+				if live.Diagnostic != nil {
+					out.Diagnostic = live.Diagnostic
+				}
 				break
 			}
 		}

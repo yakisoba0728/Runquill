@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -494,6 +495,80 @@ func TestUploadCommandScheduleAndRestoreFromS3(t *testing.T) {
 	}
 	if err := runQueueBackupWithDB(t, filepath.Join(dir, "again.sqlite3"), "restore", "--from-s3", keys[0], "--from", "x"); err == nil {
 		t.Fatal("accepted two restore sources")
+	}
+}
+
+func TestLiveS3BackupRestore(t *testing.T) {
+	if os.Getenv("RUNQUILL_TEST_BACKUP_S3") != "1" {
+		t.Skip("set RUNQUILL_TEST_BACKUP_S3=1 and configure a test S3 bucket")
+	}
+	t.Setenv("RUNQUILL_BACKUP_S3_KEEP", "0")
+	t.Setenv("RUNQUILL_BACKUP_S3_ALLOW_PLAINTEXT", "false")
+	base, err := loadS3Config(os.Getenv)
+	if err != nil || base == nil {
+		t.Fatalf("configure a test S3 bucket: %v", err)
+	}
+	t.Setenv("RUNQUILL_BACKUP_S3_PREFIX", base.prefix+"runquill-smoke-"+strings.ToLower(rand.Text()))
+	t.Setenv("RUNQUILL_BACKUP_PASSPHRASE", rand.Text())
+	t.Setenv("RUNQUILL_BACKUP_PASSPHRASE_FILE", "")
+	t.Setenv("RUNQUILL_BACKUP_INTERVAL", "1h")
+	dir := t.TempDir()
+	t.Setenv("RUNQUILL_BACKUP_DIR", filepath.Join(dir, "backups"))
+	t.Setenv("RUNQUILL_OWNER", "fixture")
+	t.Setenv("RUNQUILL_APP_ID", "123")
+	cfg, err := loadBackupScheduleConfig(os.Getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := newS3Client(cfg.s3)
+	at := time.Now().UTC()
+	name := backupObjectName(at, true)
+	key := client.key(name)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := client.delete(ctx, key); err != nil {
+			t.Errorf("clean up the smoke-test backup object: %s", redactSecrets(err.Error(), cfg.secrets()...))
+		}
+	})
+
+	live := filepath.Join(dir, "live.sqlite3")
+	q, err := openQueue(live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer q.close()
+	const jobID, runnerID = 42, 43
+	if _, err := q.Exec(`INSERT INTO jobs (job_id, repository, repository_id, installation_id, route, phase, changed_at, runner_name, runner_host, runner_id)
+		VALUES (?, 'fixture/repo', 8, 9, 'runquill-12-1-s3-smoke', 1, 123, 'runquill-42-abcdef012345', 'local', ?)`, jobID, runnerID); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	status := &backupStatus{}
+	runScheduledBackup(ctx, backupScheduleDeps{config: cfg, database: live, status: status, s3: client, now: func() time.Time { return at }})
+	snapshot := status.Snapshot()
+	if snapshot.Name != name || !snapshot.Sealed || snapshot.Error != "" || snapshot.Remote != "uploaded" || snapshot.RemotePending != 0 {
+		t.Fatalf("sealed S3 backup did not complete: %+v", snapshot)
+	}
+	recovered := filepath.Join(dir, "recovered.sqlite3")
+	if err := restoreFromS3Command(ctx, io.Discard, name, recovered, ""); err != nil {
+		t.Fatalf("restore from S3: %s", redactSecrets(err.Error(), cfg.secrets()...))
+	}
+	if err := checkQueueReady(recovered); err == nil || !strings.Contains(err.Error(), "fenced") {
+		t.Fatalf("restored queue did not require activation: %v", err)
+	}
+	if err := activateQueue(ctx, io.Discard, recovered); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := openQueue(recovered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restored.close()
+	jobs, err := restored.jobs(ctx, "ORDER BY sequence")
+	if err != nil || len(jobs) != 1 || jobs[0].id != jobID || jobs[0].runnerID != runnerID || jobs[0].runnerHost != "local" {
+		t.Fatalf("restored queue did not preserve the seeded lease: %+v, %v", jobs, err)
 	}
 }
 

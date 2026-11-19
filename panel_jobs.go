@@ -20,22 +20,24 @@ const (
 // from the phase, the failure reason and the runner lease: completed rows keep
 // stale retry columns that say nothing about how the job ended.
 type panelHistoryJob struct {
-	ID          int64      `json:"id"`
-	Repository  string     `json:"repository"`
-	RunnerLabel string     `json:"runner_label"`
-	Pool        string     `json:"pool,omitempty"`
-	RunnerOS    string     `json:"runner_os,omitempty"`
-	Host        string     `json:"host,omitempty"`
-	Outcome     string     `json:"outcome"`
-	Failure     string     `json:"failure,omitempty"`
-	RetryReason string     `json:"retry_reason,omitempty"`
-	RetryAt     *time.Time `json:"retry_at,omitempty"`
-	QueuedAt    *time.Time `json:"queued_at,omitempty"`
-	StartedAt   *time.Time `json:"started_at,omitempty"`
-	FinishedAt  *time.Time `json:"finished_at,omitempty"`
-	CleanedAt   *time.Time `json:"cleaned_at,omitempty"`
-	WaitSeconds *int64     `json:"wait_seconds,omitempty"`
-	URL         string     `json:"url,omitempty"`
+	ID          int64            `json:"id"`
+	Repository  string           `json:"repository"`
+	RunnerLabel string           `json:"runner_label"`
+	Pool        string           `json:"pool,omitempty"`
+	RunnerOS    string           `json:"runner_os,omitempty"`
+	Host        string           `json:"host,omitempty"`
+	Outcome     string           `json:"outcome"`
+	Failure     string           `json:"failure,omitempty"`
+	RetryReason string           `json:"retry_reason,omitempty"`
+	RetryAt     *time.Time       `json:"retry_at,omitempty"`
+	QueuedAt    *time.Time       `json:"queued_at,omitempty"`
+	StartedAt   *time.Time       `json:"started_at,omitempty"`
+	FinishedAt  *time.Time       `json:"finished_at,omitempty"`
+	CleanedAt   *time.Time       `json:"cleaned_at,omitempty"`
+	WaitSeconds *int64           `json:"wait_seconds,omitempty"`
+	URL         string           `json:"url,omitempty"`
+	Diagnostic  *jobDiagnostic   `json:"diagnostic,omitempty"`
+	Timing      *statusJobTiming `json:"timing,omitempty"`
 }
 
 type panelHistoryPageResponse struct {
@@ -105,7 +107,31 @@ func (p *panelState) jobHistory(w http.ResponseWriter, r *http.Request, db *sql.
 		http.Error(w, "Could not read the job history.", http.StatusServiceUnavailable)
 		return
 	}
+	p.mu.RLock()
+	fleet := p.snapshot.Fleet
+	p.mu.RUnlock()
+	page.addLiveDiagnostics(fleet)
 	panelJSON(w, http.StatusOK, page)
+}
+
+func (page *panelHistoryPageResponse) addLiveDiagnostics(fleet *statusReport) {
+	if fleet == nil || len(page.Jobs) == 0 {
+		return
+	}
+	rows := make(map[int64]*panelHistoryJob, len(page.Jobs))
+	for i := range page.Jobs {
+		row := &page.Jobs[i]
+		if row.Outcome == "waiting" || row.Outcome == "running" {
+			rows[row.ID] = row
+		}
+	}
+	for _, live := range fleet.Jobs {
+		if row := rows[live.ID]; row != nil && live.Diagnostic != nil &&
+			(row.Outcome != "waiting" || live.Runner == "") &&
+			(row.RetryAt == nil || live.Status == "RETRY") {
+			row.Diagnostic = live.Diagnostic
+		}
+	}
 }
 
 // readPanelHistory pages newest first by the primary key, so each page reads at
@@ -149,7 +175,8 @@ func readPanelHistory(ctx context.Context, db *sql.DB, filter panelHistoryFilter
 	rows, err := db.QueryContext(ctx, `SELECT sequence, job_id, repository, route, phase, changed_at,
         coalesce(runner_name, ''), coalesce(runner_host, runner_cleaned_host, ''), retry_at, retry_reason,
         coalesce(failure, ''), coalesce(github_created_at, 0), coalesce(discovered_at, 0),
-        coalesce(provisioned_at, 0), coalesce(github_started_at, 0), coalesce(runner_cleaned_at, 0)
+        coalesce(provisioned_at, 0), coalesce(github_started_at, 0), coalesce(runner_cleaned_at, 0),
+        coalesce(discovery_source, ''), `+jobLaunchTimingColumns+`
         FROM jobs WHERE `+strings.Join(conditions, " AND ")+` ORDER BY sequence DESC LIMIT ?`, args...)
 	if err != nil {
 		return panelHistoryPageResponse{}, err
@@ -162,7 +189,8 @@ func readPanelHistory(ctx context.Context, db *sql.DB, filter panelHistoryFilter
 		var sequence, cleanedAt int64
 		if err := rows.Scan(&sequence, &j.id, &j.repository, &j.route, &j.phase, &j.changedAt, &j.runnerName,
 			&j.runnerHost, &j.retryAt, &j.retryReason, &j.failure, &j.githubCreatedAt, &j.discoveredAt,
-			&j.provisionedAt, &j.githubStartedAt, &cleanedAt); err != nil {
+			&j.provisionedAt, &j.githubStartedAt, &cleanedAt, &j.discoverySource,
+			&j.jitRequestedMS, &j.jitRegisteredMS, &j.runnerLaunchMS); err != nil {
 			return panelHistoryPageResponse{}, err
 		}
 		if len(page.Jobs) == filter.limit {
@@ -179,7 +207,7 @@ func panelHistoryRow(j job, cleanedAt int64, pools workerPools, now time.Time) p
 	pool, _ := pools.forJob(j)
 	osName, _ := routeOS(j.route)
 	row := panelHistoryJob{ID: j.id, Repository: j.repository, RunnerLabel: j.route, Pool: pool, RunnerOS: osName, Host: j.runnerHost,
-		URL: jobURL(j), StartedAt: statusTime(j.githubStartedAt), CleanedAt: statusTime(cleanedAt)}
+		URL: jobURL(j), StartedAt: statusTime(j.githubStartedAt), CleanedAt: statusTime(cleanedAt), Timing: jobTiming(j, now)}
 	queuedAt := j.discoveredAt
 	if queuedAt == 0 {
 		queuedAt = j.githubCreatedAt
@@ -197,6 +225,9 @@ func panelHistoryRow(j job, cleanedAt int64, pools workerPools, now time.Time) p
 		row.RetryReason = j.retryReason
 		if j.retryAt > now.Unix() {
 			row.RetryAt = statusTime(j.retryAt)
+			row.Diagnostic = retryDiagnostic(j.retryReason)
+		} else if strings.HasPrefix(j.retryReason, imageWaitPrefix) {
+			row.Diagnostic = retryDiagnostic(j.retryReason)
 		}
 	}
 	if j.phase == completed {

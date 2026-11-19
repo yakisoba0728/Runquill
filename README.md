@@ -281,7 +281,7 @@ RUNQUILL_WORKER_POOLS='{"lint":{"hosts":["local"],"privileged":false,"cache":tru
 ```
 
 - `privileged` defaults to `true`, which starts each runner with `--privileged` and its own Docker daemon. Set it to `false` to run the runner as UID 1001 with all capabilities dropped and `no-new-privileges`. Those jobs cannot use `docker`, service containers, job containers or `sudo`. A custom `image` for such a pool needs a runner user with UID 1001 that owns `/home/runner`.
-- `cache: true` mounts a named Docker volume `runquill-cache-<repository ID>` at `/home/runner/.cache`. Later jobs from the same repository on the same host reuse its contents, and concurrent jobs share it. Every job of that repository in the pool can read and change the cache, so it no longer starts with a fully fresh filesystem. The runner also points `RUNNER_TOOL_CACHE` into this volume, so toolchains that `actions/setup-*` download are kept too. Each host keeps its own volumes, and the manager removes a volume that no runner has used for 30 days ([cleanup](docs/runner-images.md#cleanup-of-unused-images-and-cache-volumes)). List them with `docker volume ls -f label=io.runquill.cache=1`. This cache is separate from [Docker build layers](#reuse-docker-build-layers-across-jobs).
+- `cache: true` mounts a named Docker volume `runquill-cache-<repository ID>` at `/home/runner/.cache`. Jobs from the same repository on the same host share these package and build-tool caches. The runner mounts `RUNNER_TOOL_CACHE` at `/home/runner/.cache/tools` in a separate volume for the repository, image ID and platform, so `actions/setup-*` reuses tools for the same image. Each host keeps its own volumes. On local and SSH hosts the manager removes a volume that no runner has used for 30 days. List volumes with `docker volume ls -f label=io.runquill.cache=1`. [Tool cache and cleanup](docs/runner-images.md#tool-cache) · [Docker build layers](#reuse-docker-build-layers-across-jobs)
 - `max_per_repository` caps how many runners one repository can hold in that pool. It overrides `RUNQUILL_MAX_PER_REPOSITORY` for the pool. Without either value, a repository can use every free slot.
 - `images` lists the [runner OS](#choose-the-runner-os) names that jobs in the pool may select with `os__NAME__`. Omit it to allow every name.
 
@@ -446,7 +446,7 @@ To clean up, run `docker compose exec manager runquill gc --remove-orphans`. It 
 - Runquill marks a job failed when it has not started within 24 hours, with the reason and the last retry error. A job cancelled in the panel is also failed. A failed job never returns to the queue. The run stays queued on GitHub until you cancel or rerun it there, and a rerun creates a new job. The reason appears in the panel's job history, and expired jobs also log `job failed`.
 - `docker compose logs -f manager` shows admissions, cleanup, and API errors. The GitHub workflow retains step output as usual. To adopt a new GitHub runner version in a source install, rerun `docker build --pull -t runquill-runner:local runner`. Running jobs finish on the image they started with. Set `RUNQUILL_LOG_FORMAT` to `text` or `json` for structured logs and `RUNQUILL_LOG_LEVEL` to `debug`, `info`, `warn` or `error`. Without a format, the manager keeps its plain log lines. An invalid value stops the command with status 2.
 - `GET /healthz` on port 8080 returns HTTP 200 when the queue database answers. `GET /readyz` also requires a successful scheduler pass within the last 2 minutes and no current GitHub App authentication failure. It returns HTTP 503 otherwise, with a JSON body whose `scheduler` is `starting`, `failing` or `stalled`, and whose `database` and `github_auth` show the other checks. Error details stay in the manager log.
-- Runners are ephemeral, repository-scoped JIT runners. In the default pool, each job gets a new container with its own Docker daemon, so `docker build`, `services:` and `container:` work. After the job, the container with its inner images, volumes and work directory is deleted. Only the per-repository cache volume of a pool with `cache` enabled remains, until it has been unused for the cleanup retention.
+- Runners are ephemeral, repository-scoped JIT runners. In the default pool, each job gets a new container with its own Docker daemon, so `docker build`, `services:` and `container:` work. After the job, the container with its inner images, volumes and work directory is deleted. Named cache volumes for pools with `cache` enabled persist between jobs and follow the cleanup retention on local and SSH hosts.
 - Run one manager per fleet. Preserve the Compose `queue` volume during upgrades, including upgrades from the original Python version. A manager restart continues tracking existing runners.
 - Runquill polls the GitHub API on startup and waits `RUNQUILL_POLL_INTERVAL` (default `30s`) after each scan. Each scan checks queued and in-progress runs in every eligible repository, giving recent activity priority. The poller rotates requested, waiting, and pending runs so each repository receives a full scan within four successful passes if the repository list stays stable. Webhooks and polling share one queue record per GitHub job ID. Set the interval to `0` to run with webhooks alone.
 - Job timing records the first discovery source, successful GitHub runner registration, and GitHub’s reported job start when available. The discovery delay measures GitHub job creation to Runquill discovery when GitHub provides a creation timestamp. The Runquill queue duration measures discovery to first registration, or elapsed wait for a queued job. Missing timestamps and durations are omitted in `status --json`.
@@ -519,7 +519,7 @@ docker compose cp manager:/data/queue-backup.sqlite3 ./queue-backup.sqlite3
 
 Administrators can also download the same snapshot from the panel. The download shows its progress, can run for up to 30 minutes for a large queue, and does not block other panel operations once the copy is ready.
 
-The versioned snapshot is written with owner-only permissions to a new file. It contains queued jobs, runner leases, host maintenance state, repository scan history, and operational settings saved in the panel. Treat it as private because it contains repository and job metadata. Keep the GitHub App PEM, deployment configuration and OAuth secrets in your separate secret backup. Panel users, sessions, tokens and audit records are excluded. For a recovered panel, set `RUNQUILL_PANEL_BOOTSTRAP_ID` to the intended administrator's numeric GitHub ID, then enroll the team again and issue fresh tokens.
+The versioned snapshot is written with owner-only permissions to a new file. It contains queued jobs, runner leases, host maintenance state, repository scan history, operational settings saved in the panel, and enrolled worker identities and token digests. Treat it as private because it contains repository and job metadata. Keep the GitHub App PEM, deployment configuration and OAuth secrets in your separate secret backup. Panel users, sessions, tokens and audit records are excluded. For a recovered panel, set `RUNQUILL_PANEL_BOOTSTRAP_ID` to the intended administrator's numeric GitHub ID, then enroll the team again and issue fresh tokens.
 
 Stop the previous manager and preserve its queue file. Use the same `RUNQUILL_OWNER` and `RUNQUILL_APP_ID` to prepare a new queue on the destination volume.
 
@@ -541,7 +541,7 @@ With SSH workers or the panel overlay, use your usual Compose files. With K3s, p
 
 ### Schedule, seal and upload backups
 
-Set `RUNQUILL_BACKUP_INTERVAL` and `RUNQUILL_BACKUP_DIR` to take backups automatically, and `RUNQUILL_BACKUP_PASSPHRASE` or `RUNQUILL_BACKUP_PASSPHRASE_FILE` to encrypt them. `runquill backup --seal` writes the same sealed format by hand, and `runquill restore --from` opens it with the passphrase. With the `RUNQUILL_BACKUP_S3_*` variables, the manager also copies each backup to an S3-compatible bucket and `runquill restore --from-s3` restores from it. Runquill refuses to upload unsealed backups unless you set `RUNQUILL_BACKUP_S3_ALLOW_PLAINTEXT=true`. The S3 upload has not yet been exercised against a real bucket. [Backup guide](docs/backups.md)
+Set `RUNQUILL_BACKUP_INTERVAL` and `RUNQUILL_BACKUP_DIR` to take backups automatically, and `RUNQUILL_BACKUP_PASSPHRASE` or `RUNQUILL_BACKUP_PASSPHRASE_FILE` to encrypt them. Administrators can check the newest retained local copy with **Verify latest backup** in the panel. `runquill backup --seal` writes the same sealed format by hand, and `runquill restore --from` opens it with the passphrase. With the `RUNQUILL_BACKUP_S3_*` variables, the manager also copies each backup to an S3-compatible bucket and `runquill restore --from-s3` restores from it. Runquill refuses to upload unsealed backups unless you set `RUNQUILL_BACKUP_S3_ALLOW_PLAINTEXT=true`. [Backup guide](docs/backups.md)
 
 ### Uninstall
 
@@ -573,7 +573,6 @@ Finally, delete the GitHub App in **Settings → Developer settings → GitHub A
 The Go tests cover the features in this README, and CI runs real containers in the nested Docker test and the K3s lifecycle check. The features below are implemented and tested only against fakes or recorded output. They have not yet been run in a real environment:
 
 - Podman and rootless container engines
-- uploads to and restores from real S3 buckets
 - workflow migration against real GitHub repositories
 - the MCP endpoint and `runquill mcp` with a real MCP client
 - scheduler parallelism (`RUNQUILL_SCHEDULER_WORKERS`) on K3s, SSH and outbound workers
@@ -585,6 +584,8 @@ The Go tests cover the features in this README, and CI runs real containers in t
 - runner OS selection (`os__NAME__`) with outbound `agent://` workers
 
 Automatic runner image pulls and the cleanup against real Docker, all five OS variants started as runners, and the tool cache directory persisting per repository have been exercised on a developer machine, but not yet on a production fleet.
+
+Sealed scheduled uploads and restores have been exercised against an authenticated local SeaweedFS service. [S3 smoke test](docs/backups.md#upload-to-s3-compatible-storage)
 
 Report problems with these features as issues.
 

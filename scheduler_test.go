@@ -181,6 +181,48 @@ func TestSchedulerReleasesRunnerWhenStartFailsAfterProvisioning(t *testing.T) {
 	if started := readJob(t, q, 9); len(runtime.started) != 1 || started.runnerName != runtime.started[0] || started.retryReason != "" {
 		t.Fatalf("job was not relaunched after the start failure: %+v, started %v", started, runtime.started)
 	}
+	rows, err := readStatusJobs(t.Context(), q.DB)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("read status after successful retry: %v, %v", rows, err)
+	}
+	row := rows[0]
+	if row.jitRequestedMS == 0 || row.jitRegisteredMS < row.jitRequestedMS || row.runnerLaunchMS < row.jitRegisteredMS {
+		t.Fatalf("successful retry did not record ordered registration and launch: %+v", row)
+	}
+}
+
+func TestSchedulerRecordsJITRequestWhenRegistrationFails(t *testing.T) {
+	gh := testGitHub(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method + " " + r.URL.Path {
+		case "POST /app/installations/1/access_tokens":
+			fmt.Fprint(w, `{"token":"stub"}`)
+		case "GET /repos/owner/repo":
+			fmt.Fprint(w, `{"id":2,"private":true,"owner":{"login":"owner"}}`)
+		case "GET /repos/owner/repo/actions/jobs/9":
+			fmt.Fprint(w, `{"status":"queued"}`)
+		case "POST /repos/owner/repo/actions/runners/generate-jitconfig":
+			w.WriteHeader(http.StatusServiceUnavailable)
+		default:
+			t.Errorf("unexpected API request %s %s", r.Method, r.URL)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	q := testQueue(t)
+	now := time.Now()
+	recordTestJob(t, q, 9, "runquill-1-1-ci", now)
+	runtime := &testRuntime{hosts: []dockerHostSnapshot{{Name: "local", Containers: map[string]string{}}}}
+	s := scheduler{queue: q, github: gh, runtime: runtime, limit: 1}
+	if err := s.tick(t.Context(), now); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := readStatusJobs(t.Context(), q.DB)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("read status after failed registration: %v, %v", rows, err)
+	}
+	row := rows[0]
+	if row.jitRequestedMS == 0 || row.jitRegisteredMS != 0 || row.runnerLaunchMS != 0 || len(runtime.started) != 0 {
+		t.Fatalf("failed registration should record only the attempted stage: %+v", row)
+	}
 }
 
 func TestSchedulerFailsJobsThatCannotRun(t *testing.T) {

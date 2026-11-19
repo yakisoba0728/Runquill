@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
@@ -292,18 +293,21 @@ func TestWizardDeploysToExplicitK3sContext(t *testing.T) {
 	script += "case \"$*\" in\n"
 	script += "  *'create secret generic'*) printf '{\"kind\":\"Secret\"}\\n' ;;\n"
 	script += "  *'--server-side'*) test \"$(cat)\" = '{\"kind\":\"Secret\"}' ;;\n"
-	script += "  *'get namespace'*) test -z \"${RUNQUILL_WIZARD_NAMESPACE_EXISTS-}\" || printf '%s\\n' namespace/runquill-system ;;\n"
+	script += "  *'get namespace kube-system'*) printf '%s' cluster-uid ;;\n"
+	script += "  *'get namespace runquill-system'*) test -z \"${RUNQUILL_WIZARD_NAMESPACE_EXISTS-}\" || printf '%s\\n' '{\"metadata\":{\"name\":\"runquill-system\"}}' ;;\n"
+	script += "  *'create -f -'*) cat >/dev/null ;;\n"
 	script += "esac\n"
 	if err := os.WriteFile(filepath.Join(bin, "kubectl"), []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
+	stageK3sWizardManifest(t, dir)
 	web := &setupWizard{dir: dir, kubeContext: "fixture", log: io.Discard}
 	t.Setenv("RUNQUILL_WIZARD_NAMESPACE_EXISTS", "1")
-	if err := web.applyK3s(t.Context()); err == nil {
+	if err := web.applyK3s(t.Context(), "123"); err == nil {
 		t.Fatal("wizard accepted an existing Runquill namespace")
 	}
 	t.Setenv("RUNQUILL_WIZARD_NAMESPACE_EXISTS", "")
-	if err := web.applyK3s(t.Context()); err != nil {
+	if err := web.applyK3s(t.Context(), "123"); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(logPath)
@@ -317,13 +321,121 @@ func TestWizardDeploysToExplicitK3sContext(t *testing.T) {
 		}
 	}
 	for _, action := range []string{
-		"apply -f runquill-k3s.yaml", "create secret generic runquill-config --from-env-file=.env",
+		"create -f -", "apply -f runquill-k3s.yaml", "create secret generic runquill-config --from-env-file=.env",
 		"create secret generic runquill-github-key --from-file=github-app.pem",
 		"rollout status deployment/runquill", "exec deployment/runquill -- runquill doctor",
 	} {
 		if !strings.Contains(string(data), action) {
 			t.Fatalf("missing deployment step: %s", action)
 		}
+	}
+}
+
+func stageK3sWizardManifest(t *testing.T, dir string) {
+	t.Helper()
+	manifest, err := os.ReadFile("deploy/k3s/runquill.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "runquill-k3s.yaml"), manifest, 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWizardResumesOnlyItsK3sDeployment(t *testing.T) {
+	dir, bin := t.TempDir(), t.TempDir()
+	stageK3sWizardManifest(t, dir)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("RUNQUILL_TEST_CLUSTER_UID", "first-cluster")
+	const script = `#!/bin/sh
+set -eu
+shift 2
+case "$*" in
+  'get namespace kube-system '*) printf '%s' "$RUNQUILL_TEST_CLUSTER_UID" ;;
+  'get namespace '*)
+    if [ -f "$3.json" ]; then cat "$3.json"; fi ;;
+  'create -f -')
+    manifest=$(cat)
+    case "$manifest" in
+      *'"name":"runquill-system"'*) name=runquill-system ;;
+      *'"name":"runquill-runners"'*) name=runquill-runners ;;
+      *) exit 2 ;;
+    esac
+    test ! -f "$name.json"
+    if [ "$name" = runquill-runners ] && [ "${RUNQUILL_TEST_FAIL_CREATE-}" = 1 ]; then exit 1; fi
+    printf '%s' "$manifest" > "$name.json" ;;
+  *'create secret generic'*) printf '{"kind":"Secret"}\n' ;;
+  *'--server-side'*) cat >/dev/null ;;
+  *'runquill doctor'*) test "${RUNQUILL_TEST_FAIL_CHECK-}" != 1 ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(bin, "kubectl"), []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	attempt := func(appID string) error {
+		web := &setupWizard{dir: dir, kubeContext: "fixture", log: io.Discard}
+		return web.applyK3s(t.Context(), appID)
+	}
+	markerPath := filepath.Join(dir, k3sWizardMarker)
+	systemPath := filepath.Join(dir, "runquill-system.json")
+	runnerPath := filepath.Join(dir, "runquill-runners.json")
+
+	t.Setenv("RUNQUILL_TEST_FAIL_CREATE", "1")
+	if err := attempt("123"); err == nil || !strings.Contains(err.Error(), "create K3s namespace runquill-runners") {
+		t.Fatalf("expected a partial namespace deployment, got %v", err)
+	}
+	saved, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state k3sWizardDeployment
+	if err := json.Unmarshal(saved, &state); err != nil || state.ID == "" {
+		t.Fatalf("missing local setup ID: %v", err)
+	}
+	system, err := os.ReadFile(systemPath)
+	if err != nil || !bytes.Contains(system, []byte(state.ID)) || !bytes.Contains(system, []byte(`"pod-security.kubernetes.io/enforce":"restricted"`)) {
+		t.Fatalf("first namespace missing ownership or Pod Security: %s, %v", system, err)
+	}
+	t.Setenv("RUNQUILL_TEST_FAIL_CREATE", "")
+	t.Setenv("RUNQUILL_TEST_CLUSTER_UID", "second-cluster")
+	if err := attempt("123"); err == nil || !strings.Contains(err.Error(), "original cluster and GitHub App") {
+		t.Fatalf("expected a different cluster to be rejected, got %v", err)
+	}
+	t.Setenv("RUNQUILL_TEST_CLUSTER_UID", "first-cluster")
+	if err := attempt("456"); err == nil || !strings.Contains(err.Error(), "original cluster and GitHub App") {
+		t.Fatalf("expected a different App to be rejected, got %v", err)
+	}
+	unowned := []byte(`{"metadata":{"name":"runquill-runners","annotations":{"runquill.io/setup-id":"another-install"}}}`)
+	if err := os.WriteFile(runnerPath, unowned, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := attempt("123"); err == nil || !strings.Contains(err.Error(), "already has a Runquill namespace") {
+		t.Fatalf("expected a namespace owned by another install to be rejected, got %v", err)
+	}
+	if err := os.Remove(runnerPath); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("RUNQUILL_TEST_FAIL_CHECK", "1")
+	if err := attempt("123"); err == nil {
+		t.Fatal("expected doctor failure")
+	}
+	if _, err := os.Stat(markerPath); err != nil {
+		t.Fatalf("setup marker did not survive doctor failure: %v", err)
+	}
+	runner, err := os.ReadFile(runnerPath)
+	if err != nil || !bytes.Contains(runner, []byte(state.ID)) {
+		t.Fatalf("second namespace not created with original ownership: %s, %v", runner, err)
+	}
+	t.Setenv("RUNQUILL_TEST_FAIL_CHECK", "")
+	if err := attempt("123"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(markerPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("setup marker remained after successful deployment: %v", err)
+	}
+	if err := attempt("123"); err == nil || !strings.Contains(err.Error(), "documented upgrade flow") {
+		t.Fatalf("expected completed deployments to use the upgrade flow, got %v", err)
 	}
 }
 

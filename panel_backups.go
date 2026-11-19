@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
+	"database/sql"
+	"errors"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -22,6 +26,14 @@ type backupStatusReport struct {
 	Sealing         bool                `json:"sealing"`
 	Remote          backupRemoteSummary `json:"remote"`
 	Last            backupSnapshot      `json:"last"`
+	Verification    *backupVerification `json:"verification,omitempty"`
+}
+
+type backupVerification struct {
+	Name      string    `json:"name"`
+	CheckedAt time.Time `json:"checked_at"`
+	OK        bool      `json:"ok"`
+	Error     string    `json:"error,omitempty"`
 }
 
 type backupRemoteSummary struct {
@@ -33,13 +45,78 @@ type backupRemoteSummary struct {
 	Keep         int    `json:"keep"` // 0 never prunes
 }
 
-// registerBackupRoutes serves the scheduled-backup status to admins. The
-// on-demand download stays at POST /api/backup.
 func registerBackupRoutes(mux *http.ServeMux, a *panelAccess) {
+	var verification atomic.Pointer[backupVerification]
 	mux.HandleFunc("GET /api/backups/status", a.require("admin", func(w http.ResponseWriter, r *http.Request, _ panelIdentity) {
 		w.Header().Set("Cache-Control", "no-store")
-		panelJSON(w, http.StatusOK, backupStatusSummary(os.Getenv, scheduledBackups.Snapshot()))
+		report := backupStatusSummary(os.Getenv, scheduledBackups.Snapshot())
+		report.Verification = verification.Load()
+		panelJSON(w, http.StatusOK, report)
 	}))
+	mux.HandleFunc("POST /api/backups/verify", a.require("admin", func(w http.ResponseWriter, r *http.Request, user panelIdentity) {
+		a.verifyLatestBackup(w, r, user, &verification)
+	}))
+}
+
+func (a *panelAccess) verifyLatestBackup(w http.ResponseWriter, r *http.Request, user panelIdentity, latest *atomic.Pointer[backupVerification]) {
+	settings := backupStatusSummary(os.Getenv, backupSnapshot{})
+	if !settings.Scheduled || settings.Directory == "" {
+		http.Error(w, "Enable scheduled backups before verifying a backup.", http.StatusConflict)
+		return
+	}
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Now().Add(panelBackupTimeout + 5*time.Second)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		http.Error(w, "Could not prepare backup verification.", http.StatusServiceUnavailable)
+		return
+	}
+	ctx, done, ok := panelOperationContext(w, r, panelBackupTimeout)
+	if !ok {
+		return
+	}
+	defer done()
+	names, err := listLocalBackups(settings.Directory)
+	if err != nil {
+		http.Error(w, "Could not list the local backups.", http.StatusServiceUnavailable)
+		return
+	}
+	if len(names) == 0 {
+		http.Error(w, "No local scheduled backup is available to verify.", http.StatusConflict)
+		return
+	}
+	name := names[len(names)-1]
+	if err := a.change(ctx, user, "queue.backup.verify", name, func(*sql.Tx) error { return nil }); err != nil {
+		if errors.Is(err, errPanelUnauthorized) {
+			http.Error(w, "You do not have access to this operation.", http.StatusForbidden)
+		} else {
+			http.Error(w, "Could not record the backup verification.", http.StatusServiceUnavailable)
+		}
+		return
+	}
+	err = verifyLocalBackup(ctx, filepath.Join(settings.Directory, name))
+	if r.Context().Err() != nil {
+		return
+	}
+	result := &backupVerification{Name: name, CheckedAt: time.Now().UTC(), OK: err == nil}
+	if err != nil {
+		result.Error = backupVerificationError(err)
+	}
+	latest.Store(result)
+	w.Header().Set("Cache-Control", "no-store")
+	panelJSON(w, http.StatusOK, result)
+}
+
+func backupVerificationError(err error) string {
+	switch {
+	case errors.Is(err, errBackupVerificationPassphrase):
+		return "Could not load the backup passphrase for verification."
+	case errors.Is(err, errSealedAuth) || errors.Is(err, errSealedHeader):
+		return "The sealed backup is damaged or the passphrase is wrong."
+	case errors.Is(err, errQueueBackupIdentity):
+		return "The queue backup belongs to another GitHub owner or app."
+	case errors.Is(err, context.DeadlineExceeded):
+		return "Backup verification timed out."
+	default:
+		return "Could not verify the queue backup. It may be incomplete or unreadable."
+	}
 }
 
 // backupStatusSummary reads the same variables as loadBackupScheduleConfig

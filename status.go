@@ -72,8 +72,9 @@ func inspectStatus(ctx context.Context, db *sql.DB) (*statusReport, error) {
 	report := summarizeStatus(jobs, hosts, unassigned, limit, time.Now())
 	// Bad GitHub configuration should not hide the local queue.
 	scope, _ := parseRepositoryScope(os.Getenv(repositoryScopeEnv))
-	report.configure(runners.kind, scope, runners.pools, jobs, hosts)
-	report.describeImages(runners.images, jobs)
+	repoCap, _ := strconv.Atoi(os.Getenv("RUNQUILL_MAX_PER_REPOSITORY"))
+	report.configure(runners.kind, scope, runners.pools, jobs, hosts,
+		jobPlacementDiagnostics{images: runners.images, runtime: runners.runtime, repoCap: repoCap})
 	if probeErr != nil {
 		report.DockerError = strings.Join(strings.Fields(probeErr.Error()), " ")
 	}
@@ -105,8 +106,16 @@ func readStatusJobs(ctx context.Context, db *sql.DB) ([]job, error) {
 	if hasTiming {
 		timing = "coalesce(github_created_at, 0), coalesce(discovered_at, 0), coalesce(discovery_source, ''), coalesce(provisioned_at, 0), coalesce(github_started_at, 0)"
 	}
+	hasLaunchTiming, err := hasJobColumn(ctx, db, "runner_launch_ms")
+	if err != nil {
+		return nil, err
+	}
+	launchTiming := "0, 0, 0"
+	if hasLaunchTiming {
+		launchTiming = jobLaunchTimingColumns
+	}
 	rows, err := db.QueryContext(ctx, `
-        SELECT job_id, repository, route, phase, coalesce(runner_name, ''), retry_at, `+reason+`, `+host+`, `+timing+`
+        SELECT job_id, repository, route, phase, coalesce(runner_name, ''), retry_at, `+reason+`, `+host+`, `+timing+`, `+launchTiming+`
         FROM jobs WHERE phase = ? OR runner_name IS NOT NULL ORDER BY sequence`, queued)
 	if err != nil {
 		return nil, err
@@ -116,7 +125,8 @@ func readStatusJobs(ctx context.Context, db *sql.DB) ([]job, error) {
 	for rows.Next() {
 		var j job
 		if err := rows.Scan(&j.id, &j.repository, &j.route, &j.phase, &j.runnerName, &j.retryAt, &j.retryReason, &j.runnerHost,
-			&j.githubCreatedAt, &j.discoveredAt, &j.discoverySource, &j.provisionedAt, &j.githubStartedAt); err != nil {
+			&j.githubCreatedAt, &j.discoveredAt, &j.discoverySource, &j.provisionedAt, &j.githubStartedAt,
+			&j.jitRequestedMS, &j.jitRegisteredMS, &j.runnerLaunchMS); err != nil {
 			return nil, err
 		}
 		jobs = append(jobs, j)
@@ -154,7 +164,8 @@ type statusHost struct {
 	ReservedSlots int    `json:"reserved_slots"`
 	Error         string `json:"error,omitempty"`
 	// ImageStatus is ready, pulling, missing or failed while Runquill pulls runner images on this host.
-	ImageStatus string `json:"image_status,omitempty"`
+	ImageStatus         string `json:"image_status,omitempty"`
+	EnrollmentAvailable bool   `json:"enrollment_available,omitempty"`
 }
 
 type statusJob struct {
@@ -178,18 +189,25 @@ type statusJob struct {
 }
 
 type statusJobTiming struct {
-	GitHubCreatedAt   *time.Time `json:"github_created_at,omitempty"`
-	DiscoveredAt      *time.Time `json:"discovered_at,omitempty"`
-	DiscoverySource   string     `json:"discovery_source,omitempty"`
-	ProvisionedAt     *time.Time `json:"provisioned_at,omitempty"`
-	GitHubStartedAt   *time.Time `json:"github_started_at,omitempty"`
-	DiscoverySeconds  *int64     `json:"creation_to_discovery_seconds,omitempty"`
-	QueueSeconds      *int64     `json:"runquill_queue_seconds,omitempty"`
-	AssignmentSeconds *int64     `json:"provision_to_start_seconds,omitempty"`
+	GitHubCreatedAt     *time.Time `json:"github_created_at,omitempty"`
+	DiscoveredAt        *time.Time `json:"discovered_at,omitempty"`
+	DiscoverySource     string     `json:"discovery_source,omitempty"`
+	ProvisionedAt       *time.Time `json:"provisioned_at,omitempty"`
+	GitHubStartedAt     *time.Time `json:"github_started_at,omitempty"`
+	DiscoverySeconds    *int64     `json:"creation_to_discovery_seconds,omitempty"`
+	QueueSeconds        *int64     `json:"runquill_queue_seconds,omitempty"`
+	AssignmentSeconds   *int64     `json:"provision_to_start_seconds,omitempty"`
+	JITRequestedAt      *time.Time `json:"jit_requested_at,omitempty"`
+	JITRegisteredAt     *time.Time `json:"jit_registered_at,omitempty"`
+	RunnerLaunchAt      *time.Time `json:"runner_launch_at,omitempty"`
+	SchedulerMillis     *int64     `json:"scheduler_wait_millis,omitempty"`
+	JITMillis           *int64     `json:"jit_registration_millis,omitempty"`
+	RuntimeMillis       *int64     `json:"runtime_launch_millis,omitempty"`
+	GitHubAssignSeconds *int64     `json:"launch_to_github_start_seconds,omitempty"`
 }
 
 func jobTiming(j job, now time.Time) *statusJobTiming {
-	if j.githubCreatedAt == 0 && j.discoveredAt == 0 && j.provisionedAt == 0 && j.githubStartedAt == 0 {
+	if j.githubCreatedAt == 0 && j.discoveredAt == 0 && j.provisionedAt == 0 && j.githubStartedAt == 0 && j.jitRequestedMS == 0 {
 		return nil
 	}
 	queueEnd := j.provisionedAt
@@ -197,15 +215,30 @@ func jobTiming(j job, now time.Time) *statusJobTiming {
 		queueEnd = now.Unix()
 	}
 	return &statusJobTiming{
-		GitHubCreatedAt:   statusTime(j.githubCreatedAt),
-		DiscoveredAt:      statusTime(j.discoveredAt),
-		DiscoverySource:   j.discoverySource,
-		ProvisionedAt:     statusTime(j.provisionedAt),
-		GitHubStartedAt:   statusTime(j.githubStartedAt),
-		DiscoverySeconds:  elapsedSeconds(j.githubCreatedAt, j.discoveredAt),
-		QueueSeconds:      elapsedSeconds(j.discoveredAt, queueEnd),
-		AssignmentSeconds: elapsedSeconds(j.provisionedAt, j.githubStartedAt),
+		GitHubCreatedAt:     statusTime(j.githubCreatedAt),
+		DiscoveredAt:        statusTime(j.discoveredAt),
+		DiscoverySource:     j.discoverySource,
+		ProvisionedAt:       statusTime(j.provisionedAt),
+		GitHubStartedAt:     statusTime(j.githubStartedAt),
+		DiscoverySeconds:    elapsedSeconds(j.githubCreatedAt, j.discoveredAt),
+		QueueSeconds:        elapsedSeconds(j.discoveredAt, queueEnd),
+		AssignmentSeconds:   elapsedSeconds(j.provisionedAt, j.githubStartedAt),
+		JITRequestedAt:      statusTimeMillis(j.jitRequestedMS),
+		JITRegisteredAt:     statusTimeMillis(j.jitRegisteredMS),
+		RunnerLaunchAt:      statusTimeMillis(j.runnerLaunchMS),
+		SchedulerMillis:     elapsed(j.discoveredAt*1000, j.jitRequestedMS),
+		JITMillis:           elapsed(j.jitRequestedMS, j.jitRegisteredMS),
+		RuntimeMillis:       elapsed(j.jitRegisteredMS, j.runnerLaunchMS),
+		GitHubAssignSeconds: elapsed(j.runnerLaunchMS/1000, j.githubStartedAt),
 	}
+}
+
+func statusTimeMillis(timestamp int64) *time.Time {
+	if timestamp == 0 {
+		return nil
+	}
+	at := time.UnixMilli(timestamp).UTC()
+	return &at
 }
 
 func statusTime(timestamp int64) *time.Time {
@@ -216,12 +249,14 @@ func statusTime(timestamp int64) *time.Time {
 	return &at
 }
 
-func elapsedSeconds(start, end int64) *int64 {
+func elapsedSeconds(start, end int64) *int64 { return elapsed(start, end) }
+
+func elapsed(start, end int64) *int64 {
 	if start == 0 || end < start {
 		return nil
 	}
-	seconds := end - start
-	return &seconds
+	difference := end - start
+	return &difference
 }
 
 func (t statusJobTiming) text() string {
@@ -229,16 +264,20 @@ func (t statusJobTiming) text() string {
 	if t.DiscoverySource != "" {
 		stages = append(stages, "via "+t.DiscoverySource)
 	}
-	for _, stage := range []struct {
-		label string
-		value *int64
-	}{
-		{"creation to discovery", t.DiscoverySeconds},
-		{"Runquill queue", t.QueueSeconds},
-		{"provision to start", t.AssignmentSeconds},
-	} {
+	type duration struct {
+		label, unit string
+		value       *int64
+	}
+	timings := []duration{{"creation to discovery", "s", t.DiscoverySeconds}}
+	if t.JITRequestedAt == nil {
+		timings = append(timings, duration{"Runquill queue", "s", t.QueueSeconds}, duration{"provision to start", "s", t.AssignmentSeconds})
+	} else {
+		timings = append(timings, duration{"scheduler wait", "ms", t.SchedulerMillis}, duration{"JIT registration", "ms", t.JITMillis},
+			duration{"runtime launch", "ms", t.RuntimeMillis}, duration{"GitHub assignment", "s", t.GitHubAssignSeconds})
+	}
+	for _, stage := range timings {
 		if stage.value != nil {
-			stages = append(stages, fmt.Sprintf("%s %ds", stage.label, *stage.value))
+			stages = append(stages, fmt.Sprintf("%s %d%s", stage.label, *stage.value, stage.unit))
 		}
 	}
 	return strings.Join(stages, " · ")
@@ -255,7 +294,7 @@ func summarizeStatus(jobs []job, hosts []hostCapacity, unassigned, limit int, no
 		runners := &statusRunners{ReservedSlots: unassigned, UnassignedReservedSlots: unassigned}
 		for _, host := range hosts {
 			row := statusHost{Name: host.Name, Pool: host.Pool, Status: "UP", Cordoned: host.Cordoned, SlotLimit: host.Limit,
-				ImageStatus: host.ImageStatus}
+				ImageStatus: host.ImageStatus, EnrollmentAvailable: host.EnrollmentAvailable}
 			if host.Err != nil {
 				row.Status = "UNAVAILABLE"
 				row.Error = strings.Join(strings.Fields(host.Err.Error()), " ")
@@ -298,20 +337,6 @@ func summarizeStatus(jobs []job, hosts []hostCapacity, unassigned, limit int, no
 		report.Jobs = append(report.Jobs, row)
 	}
 	return report
-}
-
-func (r *statusReport) configure(backend, repositoryScope string, pools workerPools, jobs []job, hosts []hostCapacity) {
-	r.pools = pools
-	r.Backend = backend
-	r.RepositoryScope = repositoryScope
-	for i, j := range jobs {
-		pool, err := pools.forJob(j)
-		r.Jobs[i].Pool = pool
-		if err != nil {
-			r.Jobs[i].PoolError = err.Error()
-		}
-		r.Jobs[i].Diagnostic = r.explainJob(r.Jobs[i], j.phase, hosts)
-	}
 }
 
 func (r statusReport) writeText(out io.Writer) error {
@@ -373,7 +398,7 @@ func (r statusReport) writeText(out io.Writer) error {
 		if j.RunnerOS != "" {
 			fmt.Fprintf(table, "\t\t\tos=%s image=%s\n", j.RunnerOS, cmp.Or(j.RunnerImage, "unknown"))
 		}
-		if j.Diagnostic != nil && j.Diagnostic.Message != j.PoolError {
+		if j.Diagnostic != nil && j.Diagnostic.Message != j.PoolError && j.Diagnostic.Message != j.RetryReason {
 			fmt.Fprintf(table, "\t\t\t%s\n", j.Diagnostic.Message)
 		}
 		if j.Timing != nil {

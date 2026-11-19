@@ -152,12 +152,18 @@ func (s *scheduler) tickFleet(ctx context.Context, now time.Time, state *operati
 			return err
 		}
 	}
-	// Usage statistics must fold finished jobs in before they are deleted.
-	if err := rollupUsage(ctx, s.queue, s.pools, now); err != nil && ctx.Err() == nil {
-		slog.Warn("roll up usage statistics", "error", err)
+	// A rollup may fail or leave jobs for the next batch. Prune completed jobs
+	// only when the ledger confirms they have been counted.
+	prune := "DELETE FROM jobs WHERE runner_name IS NULL AND changed_at < ?"
+	if err := rollupUsage(ctx, s.queue, s.pools, now); err != nil {
+		if ctx.Err() == nil {
+			slog.Warn("roll up usage statistics", "error", err)
+		}
+		prune += " AND phase <> ?"
+	} else {
+		prune += " AND (phase <> ? OR EXISTS (SELECT 1 FROM usage_rolled WHERE usage_rolled.job_id = jobs.job_id))"
 	}
-	_, err = s.queue.ExecContext(ctx, "DELETE FROM jobs WHERE runner_name IS NULL AND changed_at < ?",
-		now.Add(-7*24*time.Hour).Unix())
+	_, err = s.queue.ExecContext(ctx, prune, now.Add(-7*24*time.Hour).Unix(), completed)
 	if err != nil {
 		return err
 	}
@@ -328,10 +334,14 @@ func (s *scheduler) capped() bool {
 }
 
 func (s *scheduler) repositoryCap(pool string) int {
-	if p := s.pools[pool]; p.MaxPerRepository > 0 {
-		return p.MaxPerRepository
+	return repositoryRunnerCap(s.pools[pool], s.maxPerRepository)
+}
+
+func repositoryRunnerCap(pool workerPool, fallback int) int {
+	if pool.MaxPerRepository > 0 {
+		return pool.MaxPerRepository
 	}
-	return s.maxPerRepository
+	return fallback
 }
 
 // fairOrder yields waiting jobs FIFO within each repository, taking next the
@@ -622,11 +632,13 @@ func (s *scheduler) launch(ctx context.Context, j job, host, pool string, now ti
 		return false, err
 	}
 	name := fmt.Sprintf("runquill-%d-%s", j.id, hex.EncodeToString(nonce[:]))
+	jitRequested := time.Now().UnixMilli()
 	claim, err := s.queue.ExecContext(ctx, `
-        UPDATE jobs SET runner_name = ?, runner_host = ?, launched_at = ?
+        UPDATE jobs SET runner_name = ?, runner_host = ?, launched_at = ?,
+            jit_requested_ms = ?, jit_registered_ms = NULL, runner_launch_ms = NULL
         WHERE job_id = ? AND phase = ? AND runner_name IS NULL
         AND NOT EXISTS (SELECT 1 FROM docker_hosts WHERE host = ? AND cordoned = 1)`,
-		name, host, now.Unix(), j.id, queued, host)
+		name, host, now.Unix(), jitRequested, j.id, queued, host)
 	if err != nil {
 		return false, err
 	}
@@ -638,10 +650,12 @@ func (s *scheduler) launch(ctx context.Context, j job, host, pool string, now ti
 	if err != nil {
 		return true, err
 	}
+	jitRegistered := time.Now().UnixMilli()
 	_, err = s.queue.ExecContext(ctx, `UPDATE jobs SET runner_id = ?,
         provisioned_at = coalesce(provisioned_at, ?),
-        github_created_at = coalesce(github_created_at, nullif(?, 0)) WHERE job_id = ?`,
-		runnerID, time.Now().Unix(), githubTimestamp(observed.CreatedAt), j.id)
+        github_created_at = coalesce(github_created_at, nullif(?, 0)),
+        jit_registered_ms = ? WHERE job_id = ?`,
+		runnerID, jitRegistered/1000, githubTimestamp(observed.CreatedAt), jitRegistered, j.id)
 	if err != nil {
 		return true, err
 	}
@@ -653,11 +667,13 @@ func (s *scheduler) launch(ctx context.Context, j job, host, pool string, now ti
 		if err := s.runtime.startOn(withRunnerRepository(ctx, j.repositoryID), host, name, jit); err != nil {
 			return true, err
 		}
+		runnerLaunch := time.Now().UnixMilli()
 		if s.metrics != nil {
 			s.metrics.starts.Add(1)
 		}
 		slog.Info("runner started", "runner", name, "runner_host", host, "repository", j.repository, "job", j.id)
-		_, err = s.queue.ExecContext(ctx, "UPDATE jobs SET retry_at = 0, retry_reason = '' WHERE job_id = ?", j.id)
+		_, err = s.queue.ExecContext(ctx, `UPDATE jobs SET retry_at = 0, retry_reason = '', runner_launch_ms = ?
+            WHERE job_id = ? AND runner_name = ?`, runnerLaunch, j.id, name)
 		return true, err
 	}
 	return true, nil

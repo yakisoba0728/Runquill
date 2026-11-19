@@ -230,6 +230,71 @@ func TestUsageRollupRescansReusedSequences(t *testing.T) {
 	}
 }
 
+func TestSchedulerPrunesCompletedJobsAfterUsageRollup(t *testing.T) {
+	checkCounts := func(t *testing.T, q *queue, wantRemaining, wantRolled int) {
+		t.Helper()
+		var remaining, rolled int
+		err := q.QueryRow(`SELECT (SELECT count(*) FROM jobs),
+            (SELECT coalesce(sum(jobs), 0) FROM usage_daily)`).Scan(&remaining, &rolled)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if remaining != wantRemaining || rolled != wantRolled {
+			t.Fatalf("remaining jobs = %d, rolled jobs = %d; want %d, %d", remaining, rolled, wantRemaining, wantRolled)
+		}
+	}
+
+	t.Run("batch backlog", func(t *testing.T) {
+		q := openUsageQueue(t, filepath.Join(t.TempDir(), "queue.sqlite3"))
+		t.Cleanup(q.close)
+		if _, err := q.Exec(`WITH RECURSIVE ids(id) AS (
+            VALUES (1) UNION ALL SELECT id + 1 FROM ids WHERE id < ?
+        )
+        INSERT INTO jobs (job_id, repository, repository_id, installation_id, route, phase, changed_at)
+        SELECT id, 'owner/app', 1, 1, 'runquill-1-1-build', ?, ? FROM ids`,
+			usageRollupBatch+1, completed, usageNow.Add(-8*24*time.Hour).Unix()); err != nil {
+			t.Fatal(err)
+		}
+		s := scheduler{queue: q, runtime: &testRuntime{}, limit: 1}
+		if err := s.tick(t.Context(), usageNow); err != nil {
+			t.Fatal(err)
+		}
+		checkCounts(t, q, 1, usageRollupBatch)
+		if err := s.tick(t.Context(), usageNow.Add(time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		checkCounts(t, q, 0, usageRollupBatch+1)
+	})
+
+	t.Run("failed rollup", func(t *testing.T) {
+		q := openUsageQueue(t, filepath.Join(t.TempDir(), "queue.sqlite3"))
+		t.Cleanup(q.close)
+		old := usageNow.Add(-8 * 24 * time.Hour)
+		insertUsageJob(t, q, usageFinishedJob(1, "owner/app", "h1", old, time.Minute, time.Minute))
+		// Webhooks can record an in-progress job without a local lease.
+		if _, err := q.Exec(`INSERT INTO jobs (job_id, repository, repository_id, installation_id, route, phase, changed_at)
+            VALUES (2, 'owner/app', 1, 1, 'runquill-1-1-build', ?, ?)`, inProgress, old.Unix()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := q.Exec(`CREATE TRIGGER fail_usage_rollup BEFORE INSERT ON usage_daily
+            BEGIN SELECT RAISE(ABORT, 'simulated rollup failure'); END;`); err != nil {
+			t.Fatal(err)
+		}
+		s := scheduler{queue: q, runtime: &testRuntime{}, limit: 1}
+		if err := s.tick(t.Context(), usageNow); err != nil {
+			t.Fatal(err)
+		}
+		checkCounts(t, q, 1, 0)
+		if _, err := q.Exec("DROP TRIGGER fail_usage_rollup"); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.tick(t.Context(), usageNow.Add(time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		checkCounts(t, q, 0, 1)
+	})
+}
+
 func TestUsagePercentileMergeWithinBucket(t *testing.T) {
 	rng := rand.New(rand.NewPCG(1, 2))
 	var parts [4]usageTotals
@@ -401,7 +466,8 @@ func TestUsageSurvivesJobDeletionAndBoundsGroups(t *testing.T) {
 	}
 	before := usageRows(t, q)
 	// The scheduler's retention delete, then a rollup on the next day.
-	if _, err := q.Exec("DELETE FROM jobs WHERE runner_name IS NULL AND changed_at < ?", usageNow.Add(-7*24*time.Hour).Unix()); err != nil {
+	s := scheduler{queue: q, runtime: &testRuntime{}, limit: 1}
+	if err := s.tick(ctx, usageNow); err != nil {
 		t.Fatal(err)
 	}
 	if err := rollupUsage(ctx, q, nil, usageNow.Add(24*time.Hour)); err != nil {

@@ -48,32 +48,41 @@ func TestContainerEngineCreateArgs(t *testing.T) {
 	plain := "--user 1001:1001 --security-opt no-new-privileges --cap-drop ALL --env RUNQUILL_RUNNER_MODE=plain --env RUNQUILL_JIT_FILE=/run/runquill/jit"
 	dockerLogs := "--log-driver json-file --log-opt max-size=10m --log-opt max-file=2 "
 	podmanLogs := "--log-driver k8s-file --log-opt max-size=10m "
+	dockerMounts := " --mount type=volume,src=runquill-cache-7,dst=/home/runner/.cache,volume-label=io.runquill.cache=1" +
+		" --mount type=volume,src=runquill-cache-7-tools-key,dst=/home/runner/.cache/tools,volume-label=io.runquill.cache=1,volume-nocopy"
+	podmanMounts := " --mount type=volume,src=runquill-cache-7,dst=/home/runner/.cache" +
+		" --mount type=volume,src=runquill-cache-7-tools-key,dst=/home/runner/.cache/tools"
+	toolEnv := " --env RUNNER_TOOL_CACHE=/home/runner/.cache/tools img"
 	for _, test := range []struct {
-		name, engine, volume string
-		unprivileged         bool
-		target               docker
-		create, volumeArgs   string
-		jit                  string
-		dirs                 []string
+		name, engine, volume, tools string
+		unprivileged                bool
+		target                      docker
+		create, jit                 string
+		volumeArgs, dirs            []string
 	}{
-		{"docker dind", "docker", "", false, docker{image: "img"},
-			common + dockerLogs + "--privileged img", "", "run/runquill-jit", nil},
-		{"docker plain cached", "docker", "runquill-cache-7", true, docker{image: "img", cpus: 1.5, memoryMiB: 512, worker: "w1"},
+		{"docker dind", "docker", "", "", false, docker{image: "img"},
+			common + dockerLogs + "--privileged img", "run/runquill-jit", nil, nil},
+		{"docker plain cached", "docker", "runquill-cache-7", "runquill-cache-7-tools-key", true, docker{image: "img", cpus: 1.5, memoryMiB: 512, worker: "w1"},
 			common + dockerLogs + "--label io.runquill.worker=w1 " + plain +
-				" --cpus 1.5 --memory 512m --memory-swap 512m --mount type=volume,src=runquill-cache-7,dst=/home/runner/.cache,volume-label=io.runquill.cache=1 --env RUNNER_TOOL_CACHE=/home/runner/.cache/tools img",
-			"", "run/runquill/jit", []string{"run/runquill/", "home/runner/.cache/", "home/runner/.cache/tools/"}},
-		{"podman dind", "podman", "", false, docker{image: "img"},
-			common + podmanLogs + "--privileged img", "", "run/runquill-jit", nil},
-		{"podman plain cached", "podman", "runquill-cache-7", true, docker{image: "img"},
-			common + podmanLogs + plain + " --mount type=volume,src=runquill-cache-7,dst=/home/runner/.cache --env RUNNER_TOOL_CACHE=/home/runner/.cache/tools img",
-			"volume create --ignore --label io.runquill.cache=1 runquill-cache-7", "run/runquill/jit", []string{"run/runquill/", "home/runner/.cache/", "home/runner/.cache/tools/"}},
+				" --cpus 1.5 --memory 512m --memory-swap 512m" + dockerMounts + toolEnv,
+			"run/runquill/jit", nil, []string{"run/runquill/", "home/runner/.cache/", "home/runner/.cache/tools/"}},
+		{"podman dind", "podman", "", "", false, docker{image: "img"},
+			common + podmanLogs + "--privileged img", "run/runquill-jit", nil, nil},
+		{"podman plain cached", "podman", "runquill-cache-7", "runquill-cache-7-tools-key", true, docker{image: "img"},
+			common + podmanLogs + plain + podmanMounts + toolEnv, "run/runquill/jit",
+			[]string{"volume create --ignore --label io.runquill.cache=1 runquill-cache-7", "volume create --ignore --label io.runquill.cache=1 --opt nocopy runquill-cache-7-tools-key"},
+			[]string{"run/runquill/", "home/runner/.cache/", "home/runner/.cache/tools/"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			plan := test.target.createPlan(containerEngines[test.engine], "r1", test.volume, test.unprivileged)
+			plan := test.target.createPlan(containerEngines[test.engine], "r1", test.volume, test.tools, test.unprivileged)
 			if got := strings.Join(plan.create, " "); got != test.create {
 				t.Errorf("create argv\n got %s\nwant %s", got, test.create)
 			}
-			if got := strings.Join(plan.volume, " "); got != test.volumeArgs {
+			var volumeArgs []string
+			for _, args := range plan.volumes {
+				volumeArgs = append(volumeArgs, strings.Join(args, " "))
+			}
+			if got := volumeArgs; !slices.Equal(got, test.volumeArgs) {
 				t.Errorf("volume argv: got %q, want %q", got, test.volumeArgs)
 			}
 			wantOwner := 0
@@ -208,6 +217,8 @@ printf '%s %s\n' "$host" "$*" >> "$PODMAN_TEST_LOG"
 case "$1" in
   info)
     if [ "$3" = '{{json .}}' ]; then printf '%s\n' '`+podmanRootlessInfo+`'; else printf '%s:/graph\n' "$host"; fi ;;
+  image)
+    if [ "${5:-}" = '`+runnerCacheImageFormat+`' ]; then printf '%s\n' '`+strings.TrimPrefix(cacheFixtureImageID, "sha256:")+`|linux|amd64'; fi ;;
   cp) cat >/dev/null ;;
 esac
 `), 0700); err != nil {
@@ -234,6 +245,7 @@ esac
 	for _, want := range []string{
 		"local info --format {{.Host.Hostname}}:{{.Store.GraphRoot}}",
 		remote + "volume create --ignore --label io.runquill.cache=1 runquill-cache-3",
+		remote + "volume create --ignore --label io.runquill.cache=1 --opt nocopy runquill-cache-3-tools-",
 		remote + "create --name r1 --label io.runquill.runner=1 --pull never --init --cgroupns private --log-driver k8s-file --log-opt max-size=10m --user 1001:1001",
 		remote + "cp - r1:/",
 		remote + "start r1",
