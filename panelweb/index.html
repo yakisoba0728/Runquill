@@ -45,6 +45,7 @@
         <a href="#overview" aria-current="location">Overview</a>
         <a href="#fleet-jobs">Queue and jobs</a>
         <a href="#fleet-runners">Runners</a>
+        <a href="#history">Job history</a>
         <a href="#fleet-hosts">Hosts</a>
         <a href="#fleet-pools">Worker pools</a>
         <a href="#first-job">First job setup</a>
@@ -116,12 +117,14 @@
                 </table>
                 <p class="empty" id="job-empty">Waiting for a fleet snapshot…</p>
               </div>
+              <p id="job-action-message" class="inline-note" role="status" hidden></p>
               <p id="job-diagnose" class="inline-note" hidden>Missing a job? Run <code>runquill diagnose OWNER/REPO</code> to check GitHub App access, its job label, and delivery.</p>
               <div id="job-details" class="job-details" hidden>
                 <div class="detail-head"><h3 id="detail-title">Job details</h3><a id="detail-link" target="_blank" rel="noopener noreferrer" hidden>Open in GitHub ↗</a></div>
                 <p id="detail-reason"></p>
                 <p id="detail-retry" hidden></p>
                 <p id="detail-route" hidden>Runner label <code id="detail-label"></code></p>
+                <div id="detail-actions" class="job-actions" hidden></div>
                 <dl id="detail-timings" class="timings" aria-label="Job timings" hidden></dl>
                 <ol id="detail-timeline" class="timeline" aria-label="Observed job events"></ol>
               </div>
@@ -177,6 +180,36 @@
           </div>
         </section>
 
+        <section class="surface fleet-section" id="history" aria-labelledby="history-title">
+          <div class="section-head"><div><h2 id="history-title">Job history</h2><p>Runquill keeps finished jobs for seven days. Job logs stay on GitHub.</p></div></div>
+          <form id="history-form" class="filters history-filters">
+            <input type="search" name="repository" aria-label="Filter by repository" placeholder="OWNER/REPO" maxlength="140">
+            <select name="outcome" aria-label="Filter by outcome">
+              <option value="">All outcomes</option>
+              <option value="waiting">Waiting</option>
+              <option value="running">Running</option>
+              <option value="finished">Finished</option>
+              <option value="failed">Failed</option>
+            </select>
+            <select name="range" aria-label="Filter by time range">
+              <option value="">Any time</option>
+              <option value="3600">Last hour</option>
+              <option value="86400">Last 24 hours</option>
+              <option value="604800">Last 7 days</option>
+            </select>
+            <button class="button" type="submit">Apply filters</button>
+          </form>
+          <div class="table-scroll" tabindex="0" aria-label="Job history results">
+            <table>
+              <thead><tr><th scope="col">Repository / job</th><th scope="col">Outcome</th><th scope="col">Pool</th><th scope="col">Host</th><th scope="col">Queued</th><th scope="col">Started</th><th scope="col">Finished</th><th scope="col">Queue time</th><th scope="col">Actions</th></tr></thead>
+              <tbody id="history-rows"></tbody>
+            </table>
+            <p class="empty" id="history-empty">Loading job history…</p>
+          </div>
+          <div class="history-footer"><button class="button" id="history-more" type="button" hidden>Load older jobs</button></div>
+          <p id="history-message" class="inline-note" role="status" hidden></p>
+        </section>
+
         <section class="management" id="access" aria-labelledby="access-title" hidden>
           <div class="management-heading"><h2 id="access-title">Manage access</h2><p id="current-user"></p></div>
           <div class="management-grid">
@@ -197,9 +230,9 @@
               <p id="token-message" class="inline-note" role="status" hidden></p>
             </section>
             <section class="surface" id="team-panel" aria-labelledby="team-title" hidden>
-              <div class="section-head"><div><h2 id="team-title">Team</h2><p>Enroll a teammate by their numeric GitHub account ID</p></div></div>
+              <div class="section-head"><div><h2 id="team-title">Team</h2><p>Enroll a teammate by GitHub login or numeric account ID</p></div></div>
               <form id="team-form" class="control-form">
-                <label>GitHub ID<input name="github_id" inputmode="numeric" pattern="[0-9]+" maxlength="19" required></label>
+                <label>GitHub login or ID<input name="account" maxlength="40" placeholder="octocat" autocomplete="off" required></label>
                 <label>Role<select name="role" aria-label="Role"><option value="viewer">Viewer</option><option value="operator">Operator</option><option value="admin">Admin</option></select></label>
                 <button class="button primary" type="submit">Save team member</button>
               </form>
@@ -218,7 +251,22 @@
           </section>
           <section class="surface" id="audit-panel" aria-labelledby="audit-title" hidden>
             <div class="section-head"><div><h2 id="audit-title">Audit history</h2><p>Recent sign-ins and management actions</p></div><button class="button" id="refresh-audit" type="button">Refresh</button></div>
+            <form id="audit-form" class="filters">
+              <select name="action" aria-label="Filter by action">
+                <option value="">All actions</option>
+                <option value="session.">Sign-ins</option>
+                <option value="user.">Team changes</option>
+                <option value="token.">API tokens</option>
+                <option value="host.">Host maintenance</option>
+                <option value="job.">Job actions</option>
+                <option value="settings.update">Settings changes</option>
+                <option value="queue.backup">Queue backups</option>
+              </select>
+              <input type="search" name="actor" aria-label="Filter by actor" placeholder="Login or GitHub ID" maxlength="100">
+              <button class="button" type="submit">Apply filters</button>
+            </form>
             <ul class="control-list" id="audit-list"></ul>
+            <div class="history-footer"><button class="button" id="audit-more" type="button" hidden>Load older entries</button></div>
             <p id="audit-message" class="inline-note" role="status" hidden></p>
           </section>
         </section>
@@ -260,6 +308,8 @@
               </div>
               <label>Pool runner image<input name="image" maxlength="256" placeholder="Use default image"></label>
               <label>Worker addresses<textarea name="hosts" rows="2" placeholder="One worker address per line"></textarea></label>
+              <label class="settings-check"><input name="privileged" type="checkbox" checked>Run Docker-in-Docker (privileged)</label>
+              <label class="settings-check"><input name="cache" type="checkbox">Keep a shared build cache</label>
               <label class="settings-check"><input name="restrict" type="checkbox">Restrict repositories</label>
               <label>Allowed repositories<textarea name="repositories" rows="2" placeholder="One OWNER/REPO per line"></textarea></label>
               <button class="button" type="button" data-remove>Remove pool</button>

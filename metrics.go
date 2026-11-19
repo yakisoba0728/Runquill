@@ -22,6 +22,7 @@ type fleetMetrics struct {
 	launchErrors atomic.Uint64
 	releases     atomic.Uint64
 	tickErrors   atomic.Uint64
+	notify       *notifier
 }
 
 type fleetMetricSample struct {
@@ -70,6 +71,11 @@ func (m *fleetMetrics) writePrometheus(w io.Writer) {
 	counter("runner_launch_errors_total", "Errors while attempting to launch a runner.", m.launchErrors.Load())
 	counter("runner_lease_releases_total", "Runner leases released after reconciliation.", m.releases.Load())
 	counter("scheduler_tick_errors_total", "Scheduler ticks that returned an error.", m.tickErrors.Load())
+	if m.notify != nil {
+		counter("notifications_sent_total", "Notifications delivered to the webhook.", m.notify.Sent())
+		counter("notifications_failed_total", "Notifications not delivered after all attempts.", m.notify.Failed())
+		counter("notifications_dropped_total", "Notifications discarded because the queue was full or closed.", m.notify.Dropped())
+	}
 
 	s := m.sample.Load()
 	if s == nil {

@@ -64,14 +64,17 @@ type workerResult struct {
 }
 
 type workerTask struct {
-	ID        string    `json:"id"`
-	Operation string    `json:"operation"`
-	Name      string    `json:"name"`
-	Image     string    `json:"image,omitempty"`
-	JIT       string    `json:"jit,omitempty"`
-	CPUs      float64   `json:"cpus,omitempty"`
-	MemoryMiB int64     `json:"memory_mib,omitempty"`
-	Expires   time.Time `json:"expires_at"`
+	ID        string  `json:"id"`
+	Operation string  `json:"operation"`
+	Name      string  `json:"name"`
+	Image     string  `json:"image,omitempty"`
+	JIT       string  `json:"jit,omitempty"`
+	CPUs      float64 `json:"cpus,omitempty"`
+	MemoryMiB int64   `json:"memory_mib,omitempty"`
+	// Older agents reject these unknown fields, so a pool option is never silently dropped.
+	Unprivileged    bool      `json:"unprivileged,omitempty"`
+	CacheRepository int64     `json:"cache_repository_id,omitempty"`
+	Expires         time.Time `json:"expires_at"`
 }
 
 type workerClaim struct {
@@ -428,9 +431,11 @@ func validWorkerTask(task workerTask) bool {
 	case "start":
 		return validWorkerImage(task.Image) && len(task.JIT) > 0 && len(task.JIT) <= workerJITLimit &&
 			task.CPUs >= 0 && task.CPUs <= 1_000_000 && (task.CPUs == 0 || task.CPUs >= 0.01) &&
-			task.MemoryMiB >= 0 && task.MemoryMiB <= (1<<63-1)>>20 && (task.MemoryMiB == 0 || task.MemoryMiB >= 6)
+			task.MemoryMiB >= 0 && task.MemoryMiB <= (1<<63-1)>>20 && (task.MemoryMiB == 0 || task.MemoryMiB >= 6) &&
+			task.CacheRepository >= 0
 	case "remove":
-		return task.Image == "" && task.JIT == "" && task.CPUs == 0 && task.MemoryMiB == 0
+		return task.Image == "" && task.JIT == "" && task.CPUs == 0 && task.MemoryMiB == 0 &&
+			!task.Unprivileged && task.CacheRepository == 0
 	default:
 		return false
 	}

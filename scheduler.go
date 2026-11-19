@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 )
@@ -16,6 +17,7 @@ const (
 	retryDelay      = 15 * time.Second
 	idleTimeout     = 5 * time.Minute
 	completionGrace = 30 * time.Second
+	queueExpiry     = 24 * time.Hour
 )
 
 type runnerRuntime interface {
@@ -34,18 +36,83 @@ type scheduler struct {
 	pools      workerPools
 	metrics    *fleetMetrics
 	operations *operations
+	alerts     *fleetAlerts
+	// maxPerRepository caps runners per repository in pools without their own cap; 0 is unlimited.
+	maxPerRepository int
+	// workers bounds concurrent launches and reconciles in a tick; 0 or 1 is serial.
+	workers int
 }
 
 func (s *scheduler) tick(ctx context.Context, now time.Time) error {
-	if s.operations == nil {
-		return s.tickFleet(ctx, now, nil)
+	// Once GitHub asks for a pause, the rest of the tick stops calling it.
+	err := s.tickOnce(withRateGate(ctx), now)
+	if ctx.Err() == nil && s.github != nil {
+		s.github.ready.markTick(time.Now(), err)
 	}
-	s.operations.topology.RLock()
-	defer s.operations.topology.RUnlock()
-	state := s.operations.current.Load()
+	return err
+}
+
+func (s *scheduler) tickOnce(ctx context.Context, now time.Time) error {
 	tick := *s
-	tick.runtime, tick.pools, tick.hostLimits, tick.limit = state.runners.runtime, state.runners.pools, state.runners.hostLimits, state.policy.Limit
+	var state *operationState
+	if s.operations != nil {
+		s.operations.topology.RLock()
+		defer s.operations.topology.RUnlock()
+		state = s.operations.current.Load()
+		tick.runtime, tick.pools, tick.hostLimits, tick.limit = state.runners.runtime, state.runners.pools, state.runners.hostLimits, state.policy.Limit
+	}
+	if tick.workers > 1 {
+		// Concurrent work still reaches each host one runtime call at a time; outbound workers take one claim at once.
+		tick.runtime = &hostSerialRuntime{runnerRuntime: tick.runtime, hosts: make(map[string]*sync.Mutex)}
+	}
 	return tick.tickFleet(ctx, now, state)
+}
+
+// hostSerialRuntime serialises start and remove calls per host within one tick.
+type hostSerialRuntime struct {
+	runnerRuntime
+	mu    sync.Mutex
+	hosts map[string]*sync.Mutex
+}
+
+func (r *hostSerialRuntime) lock(host string) func() {
+	r.mu.Lock()
+	m := r.hosts[host]
+	if m == nil {
+		m = new(sync.Mutex)
+		r.hosts[host] = m
+	}
+	r.mu.Unlock()
+	m.Lock()
+	return m.Unlock
+}
+
+func (r *hostSerialRuntime) startOn(ctx context.Context, host, name, jit string) error {
+	defer r.lock(host)()
+	return r.runnerRuntime.startOn(ctx, host, name, jit)
+}
+
+func (r *hostSerialRuntime) removeOn(ctx context.Context, host, name string) error {
+	defer r.lock(host)()
+	return r.runnerRuntime.removeOn(ctx, host, name)
+}
+
+// spawn runs f on a new goroutine once fewer than s.workers are busy, or
+// inline when the scheduler is serial. Callers wait on wg before returning.
+func (s *scheduler) spawn(slots chan struct{}, wg *sync.WaitGroup, f func()) {
+	if s.workers <= 1 {
+		f()
+		return
+	}
+	slots <- struct{}{}
+	wg.Add(1)
+	go func() {
+		defer func() {
+			<-slots
+			wg.Done()
+		}()
+		f()
+	}()
 }
 
 func (s *scheduler) tickFleet(ctx context.Context, now time.Time, state *operationState) error {
@@ -68,11 +135,19 @@ func (s *scheduler) tickFleet(ctx context.Context, now time.Time, state *operati
 		return err
 	}
 
-	_, err = s.queue.ExecContext(ctx, `UPDATE jobs SET phase = ?, changed_at = ?
-        WHERE runner_name IS NULL AND phase = ? AND changed_at <= ?`,
-		completed, now.Unix(), queued, now.Add(-24*time.Hour).Unix())
+	expired, err := s.queue.jobs(ctx, "WHERE runner_name IS NULL AND phase = ? AND changed_at <= ?",
+		queued, now.Add(-queueExpiry).Unix())
 	if err != nil {
 		return err
+	}
+	for _, j := range expired {
+		reason := "not started within 24 hours"
+		if j.retryReason != "" {
+			reason += "; last error: " + j.retryReason
+		}
+		if err := s.fail(ctx, j, now, reason); err != nil {
+			return err
+		}
 	}
 	_, err = s.queue.ExecContext(ctx, "DELETE FROM jobs WHERE runner_name IS NULL AND changed_at < ?",
 		now.Add(-7*24*time.Hour).Unix())
@@ -89,56 +164,205 @@ func (s *scheduler) tickFleet(ctx context.Context, now time.Time, state *operati
 	if s.panel != nil {
 		s.panel.capture(ctx, s.queue, hosts, occupied, s.limit, s.pools, nil)
 	}
+	if err := s.alerts.observe(ctx, s.queue, hosts, now, s.capped()); err != nil && ctx.Err() == nil {
+		slog.Warn("derive fleet notifications", "error", err)
+	}
 	for _, host := range hosts {
 		occupied += host.Occupied
 	}
 	if occupied >= s.limit || availableHost(hosts, "") == nil {
 		return nil
 	}
-	condition := "WHERE phase = 0 AND runner_name IS NULL AND retry_at <= ? ORDER BY sequence"
-	args := []any{now.Unix()}
-	if s.pools == nil {
-		condition += " LIMIT ?"
-		args = append(args, s.limit-occupied)
-	}
-	waiting, err := s.queue.jobs(ctx, condition, args...)
+	// Read every waiting job: a repository cap or fairness can pass over the oldest ones.
+	waiting, err := s.queue.jobs(ctx, "WHERE phase = 0 AND runner_name IS NULL AND retry_at <= ? ORDER BY sequence", now.Unix())
 	if err != nil {
 		return err
 	}
-	var attempts int
-	for _, j := range waiting {
-		if state != nil && s.operations.current.Load() != state {
-			break
-		}
-		pool, err := s.pools.forJob(j)
-		if err != nil {
-			if err := s.retry(ctx, j, now, "select worker pool", err); err != nil {
-				return err
+	order := newFairOrder(waiting)
+	perPool := make(map[[2]string]int)
+	for _, j := range active {
+		pool, _ := s.pools.forJob(j)
+		perPool[[2]string{pool, j.repository}]++
+		order.running[j.repository]++
+	}
+	// Only this goroutine touches the accounting. Each launch reserves its host,
+	// pool and repository slot before it starts and returns it unless claimed.
+	type launchResult struct {
+		j          job
+		host       *hostCapacity
+		repository [2]string
+		claimed    bool
+		err        error
+	}
+	results := make(chan launchResult, s.limit)
+	slots := make(chan struct{}, max(1, s.workers))
+	var wg sync.WaitGroup
+	settle := func() error {
+		var first error
+		for {
+			select {
+			case r := <-results:
+				if !r.claimed {
+					r.host.Occupied--
+					perPool[r.repository]--
+				}
+				if r.err == nil {
+					continue
+				}
+				if s.metrics != nil {
+					s.metrics.launchErrors.Add(1)
+				}
+				if err := s.retry(ctx, r.j, now, "provision runner", r.err); err != nil && first == nil {
+					first = err
+				}
+			default:
+				return first
 			}
-			continue
-		}
-		host := availableHost(hosts, pool)
-		if host == nil {
-			continue
-		}
-		attempts++
-		claimed, err := s.launch(ctx, j, host.Name, pool, now)
-		if claimed {
-			host.Occupied++
-		}
-		if err != nil {
-			if s.metrics != nil {
-				s.metrics.launchErrors.Add(1)
-			}
-			if err := s.retry(ctx, j, now, "provision runner", err); err != nil {
-				return err
-			}
-		}
-		if attempts >= s.limit-occupied {
-			break
 		}
 	}
-	return nil
+	parallel, held := s.workers > 1, false
+	err = func() error {
+		for attempts := 0; attempts < s.limit-occupied; {
+			// Wait for a worker before looking at the queue, so the state and
+			// rate-limit checks below see every launch that has finished.
+			if parallel && !held {
+				slots <- struct{}{}
+				held = true
+			}
+			if err := settle(); err != nil {
+				return err
+			}
+			j, more := order.next()
+			if !more {
+				return nil
+			}
+			if state != nil && s.operations.current.Load() != state {
+				return nil
+			}
+			pool, err := s.pools.forJob(j)
+			if err != nil {
+				// An operator can fix the pool settings, and a failed job never re-queues, so keep waiting.
+				if err := s.retry(ctx, j, now, "select worker pool", err); err != nil {
+					return err
+				}
+				continue
+			}
+			repository := [2]string{pool, j.repository}
+			if limit := s.repositoryCap(pool); limit > 0 && perPool[repository] >= limit {
+				// A capped job waits untouched and must not hold back other repositories.
+				continue
+			}
+			host := availableHost(hosts, pool)
+			if host == nil {
+				continue
+			}
+			if !s.github.backoffUntil(time.Now()).IsZero() {
+				// GitHub asked for a pause; leave the remaining jobs untouched until it ends.
+				return nil
+			}
+			attempts++
+			order.running[j.repository]++
+			host.Occupied++
+			perPool[repository]++
+			launch := func() {
+				claimed, err := s.launch(ctx, j, host.Name, pool, now)
+				results <- launchResult{j, host, repository, claimed, err}
+			}
+			if !parallel {
+				launch()
+				continue
+			}
+			held = false
+			wg.Add(1)
+			go func() {
+				defer func() {
+					<-slots
+					wg.Done()
+				}()
+				launch()
+			}()
+		}
+		return nil
+	}()
+	if held {
+		<-slots
+	}
+	wg.Wait()
+	if settled := settle(); err == nil {
+		err = settled
+	}
+	return err
+}
+
+// repositoryCap is the most runners one repository may hold in pool; 0 is unlimited.
+// capped reports whether any per-repository cap can hold a job back.
+func (s *scheduler) capped() bool {
+	if s.maxPerRepository > 0 {
+		return true
+	}
+	for _, pool := range s.pools {
+		if pool.MaxPerRepository > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *scheduler) repositoryCap(pool string) int {
+	if p := s.pools[pool]; p.MaxPerRepository > 0 {
+		return p.MaxPerRepository
+	}
+	return s.maxPerRepository
+}
+
+// fairOrder yields waiting jobs FIFO within each repository, taking next the
+// repository with the fewest runners; ties go to the longest-waiting job.
+type fairOrder struct {
+	queues  [][]fairJob
+	running map[string]int
+}
+
+type fairJob struct {
+	job
+	position int
+}
+
+func newFairOrder(waiting []job) *fairOrder {
+	o := &fairOrder{running: make(map[string]int)}
+	index := make(map[string]int)
+	for i, j := range waiting {
+		n, ok := index[j.repository]
+		if !ok {
+			n = len(o.queues)
+			index[j.repository] = n
+			o.queues = append(o.queues, nil)
+		}
+		o.queues[n] = append(o.queues[n], fairJob{j, i})
+	}
+	return o
+}
+
+func (o *fairOrder) next() (job, bool) {
+	best := -1
+	for i, q := range o.queues {
+		if len(q) == 0 {
+			continue
+		}
+		if best < 0 {
+			best = i
+			continue
+		}
+		head, current := q[0], o.queues[best][0]
+		if r, c := o.running[head.repository], o.running[current.repository]; r < c || r == c && head.position < current.position {
+			best = i
+		}
+	}
+	if best < 0 {
+		return job{}, false
+	}
+	j := o.queues[best][0]
+	o.queues[best] = o.queues[best][1:]
+	return j.job, true
 }
 
 func availableHost(hosts []hostCapacity, pool string) *hostCapacity {
@@ -178,29 +402,65 @@ func (s *scheduler) reconcileFleet(ctx context.Context, active []job, snapshots 
 	}
 
 	owners := make(map[string]string, len(active))
-	for i := range active {
-		j := &active[i]
-		seen := seenOn[j.runnerName]
-		if j.runnerHost == "" && seen != "" {
-			// Adopt runners that predate persisted Docker host ownership.
-			_, err := s.queue.ExecContext(ctx, "UPDATE jobs SET runner_host = ? WHERE job_id = ?", seen, j.id)
-			if err != nil {
-				return err
+	slots := make(chan struct{}, max(1, s.workers))
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var failed error
+	removed := make(map[string][]string)
+	err := func() error {
+		for i := range active {
+			j := &active[i]
+			seen := seenOn[j.runnerName]
+			if j.runnerHost == "" && seen != "" {
+				// Adopt runners that predate persisted Docker host ownership.
+				_, err := s.queue.ExecContext(ctx, "UPDATE jobs SET runner_host = ? WHERE job_id = ?", seen, j.id)
+				if err != nil {
+					return err
+				}
+				j.runnerHost = seen
 			}
-			j.runnerHost = seen
-		}
-		owners[j.runnerName] = j.runnerHost
-		if j.retryAt > now.Unix() || (seen != "" && j.runnerHost != seen) {
-			continue
-		}
-		host := observations[j.runnerHost]
-		if host.Containers == nil && (j.runnerHost != "" || !allObserved) {
-			continue
-		}
-		if err := s.reconcile(ctx, *j, host.Containers, host.RunnerDiagnostics[j.runnerName], now); err != nil {
-			if err := s.retry(ctx, *j, now, "reconcile runner", err); err != nil {
-				return err
+			owners[j.runnerName] = j.runnerHost
+			if j.retryAt > now.Unix() || (seen != "" && j.runnerHost != seen) {
+				continue
 			}
+			host := observations[j.runnerHost]
+			if host.Containers == nil && (j.runnerHost != "" || !allObserved) {
+				continue
+			}
+			mu.Lock()
+			stop := failed
+			mu.Unlock()
+			if stop != nil {
+				return nil
+			}
+			leased, state, detail := *j, host.Containers[j.runnerName], host.RunnerDiagnostics[j.runnerName]
+			s.spawn(slots, &wg, func() {
+				gone, err := s.reconcile(ctx, leased, state, detail, now)
+				if err != nil {
+					err = s.retry(ctx, leased, now, "reconcile runner", err)
+				}
+				mu.Lock()
+				defer mu.Unlock()
+				if gone {
+					removed[leased.runnerHost] = append(removed[leased.runnerHost], leased.runnerName)
+				}
+				if err != nil && failed == nil {
+					failed = err
+				}
+			})
+		}
+		return nil
+	}()
+	wg.Wait()
+	if err == nil {
+		err = failed
+	}
+	if err != nil {
+		return err
+	}
+	for host, names := range removed {
+		for _, name := range names {
+			delete(observations[host].Containers, name)
 		}
 	}
 
@@ -223,9 +483,28 @@ func (s *scheduler) reconcileFleet(ctx context.Context, active []job, snapshots 
 	return nil
 }
 
+// permanentError marks a launch error that retrying cannot fix.
+type permanentError struct{ error }
+
+func (e permanentError) Unwrap() error { return e.error }
+
+func permanent(err error) error { return permanentError{err} }
+
+func (s *scheduler) fail(ctx context.Context, j job, now time.Time, reason string) error {
+	failed, err := s.queue.fail(ctx, j.id, now, reason)
+	if failed {
+		slog.Warn("job failed", "repository", j.repository, "job", j.id, "reason", reason)
+		s.alerts.jobFailed(j, now, reason)
+	}
+	return err
+}
+
 func (s *scheduler) retry(ctx context.Context, j job, now time.Time, operation string, cause error) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
+	}
+	if errors.As(cause, new(permanentError)) {
+		return s.fail(ctx, j, now, retryMessage(operation, cause))
 	}
 	slog.Warn(operation, "repository", j.repository, "job", j.id, "error", cause)
 	retryAt := now.Add(retryDelay)
@@ -333,7 +612,7 @@ func (s *scheduler) launch(ctx context.Context, j job, host, pool string, now ti
 		return true, err
 	}
 	if current == queued {
-		if err := s.runtime.startOn(ctx, host, name, jit); err != nil {
+		if err := s.runtime.startOn(withRunnerRepository(ctx, j.repositoryID), host, name, jit); err != nil {
 			return true, err
 		}
 		if s.metrics != nil {
@@ -346,19 +625,20 @@ func (s *scheduler) launch(ctx context.Context, j job, host, pool string, now ti
 	return true, nil
 }
 
-func (s *scheduler) reconcile(ctx context.Context, j job, containers map[string]string, detail jobDiagnostic, now time.Time) error {
-	state := containers[j.runnerName]
+// reconcile checks one leased runner whose observed runtime state is state.
+// removed reports that its runtime was deleted, even when a later step fails.
+func (s *scheduler) reconcile(ctx context.Context, j job, state string, detail jobDiagnostic, now time.Time) (removed bool, err error) {
 	outsideInstallation := false
 	if state == "running" || state == "pending" || state == "paused" || state == "restarting" {
 		switch j.phase {
 		case completed:
 			if now.Unix() < j.changedAt+int64(completionGrace.Seconds()) {
-				return nil
+				return false, nil
 			}
 		default:
 			lastSeen := max(j.launchedAt, j.changedAt)
 			if now.Unix() < lastSeen+int64(idleTimeout.Seconds()) {
-				return nil
+				return false, nil
 			}
 			token, err := s.github.token(ctx, j)
 			if errors.Is(err, errRepositoryOutsideInstallation) {
@@ -366,17 +646,17 @@ func (s *scheduler) reconcile(ctx context.Context, j job, containers map[string]
 				break
 			}
 			if err != nil {
-				return err
+				return false, err
 			}
 			observed, err := s.github.jobDetails(ctx, j, token)
 			if githubNotFound(err) {
-				return s.queue.advance(ctx, j.id, completed, now)
+				return false, s.queue.advance(ctx, j.id, completed, now)
 			}
 			if err != nil {
-				return err
+				return false, err
 			}
 			if observed.Status == "completed" {
-				return s.queue.advanceGitHubJob(ctx, j.id, completed, now, observed)
+				return false, s.queue.advanceGitHubJob(ctx, j.id, completed, now, observed)
 			}
 			if observed.Status == "in_progress" || j.phase == inProgress {
 				// Recheck periodically when GitHub misses a lifecycle webhook.
@@ -385,15 +665,15 @@ func (s *scheduler) reconcile(ctx context.Context, j job, containers map[string]
                     github_started_at = coalesce(github_started_at, nullif(?, 0))
                     WHERE job_id = ? AND phase < ?`, inProgress, now.Unix(),
 					githubTimestamp(observed.CreatedAt), githubTimestamp(observed.StartedAt), j.id, completed)
-				return err
+				return false, err
 			}
 		}
 	}
 	if state != "" {
 		if err := s.runtime.removeOn(ctx, j.runnerHost, j.runnerName); err != nil {
-			return err
+			return false, err
 		}
-		delete(containers, j.runnerName)
+		removed = true
 	}
 	if j.phase != completed && !outsideInstallation {
 		// A runner can exit before GitHub has sent its final job event, including in polling-only mode.
@@ -404,37 +684,37 @@ func (s *scheduler) reconcile(ctx context.Context, j job, containers map[string]
 		}
 		outsideInstallation = errors.Is(err, errRepositoryOutsideInstallation)
 		if err != nil && !githubNotFound(err) && !outsideInstallation {
-			return err
+			return removed, err
 		}
 		if observed.Status == "completed" || githubNotFound(err) {
 			if err := s.queue.advanceGitHubJob(ctx, j.id, completed, now, observed); err != nil {
-				return err
+				return removed, err
 			}
 		} else if observed.Status == "in_progress" {
 			if err := s.queue.advanceGitHubJob(ctx, j.id, inProgress, now, observed); err != nil {
-				return err
+				return removed, err
 			}
 			_, err := s.queue.ExecContext(ctx, `UPDATE jobs SET retry_at = ?,
                 retry_reason = 'waiting for GitHub to finish the job after the runner exited'
                 WHERE job_id = ? AND phase < ?`, now.Add(retryDelay).Unix(), j.id, completed)
-			return err
+			return removed, err
 		}
 	}
 	if !outsideInstallation || s.github.runnerGroupID > 0 {
 		if err := s.github.remove(ctx, j); err != nil {
-			return err
+			return removed, err
 		}
 	}
 	if outsideInstallation {
 		if err := s.discardOutsideInstallation(ctx, j); err != nil {
-			return err
+			return removed, err
 		}
 	}
 	previousRunner := ""
 	if detail.Message != "" && detail.Code != "pod_terminating" {
 		previousRunner = "Previous runner · " + detail.Message
 	}
-	_, err := s.queue.ExecContext(ctx, `UPDATE jobs SET runner_name = NULL, runner_host = NULL, runner_id = NULL,
+	_, err = s.queue.ExecContext(ctx, `UPDATE jobs SET runner_name = NULL, runner_host = NULL, runner_id = NULL,
         launched_at = NULL, retry_at = ?,
         runner_cleaned_at = CASE WHEN phase = ? THEN max(changed_at, ?) END,
         runner_cleaned_host = CASE WHEN phase = ? THEN runner_host END,
@@ -442,13 +722,13 @@ func (s *scheduler) reconcile(ctx context.Context, j job, containers map[string]
             'runner became unavailable while the job was queued') ELSE '' END
         WHERE job_id = ? AND runner_name = ?`, now.Add(retryDelay).Unix(), completed, time.Now().Unix(), completed, queued, previousRunner, j.id, j.runnerName)
 	if err != nil {
-		return err
+		return removed, err
 	}
 	if s.metrics != nil {
 		s.metrics.releases.Add(1)
 	}
 	slog.Info("runner removed", "runner", j.runnerName, "repository", j.repository, "job", j.id)
-	return nil
+	return removed, nil
 }
 
 func (s *scheduler) discardOutsideInstallation(ctx context.Context, j job) error {

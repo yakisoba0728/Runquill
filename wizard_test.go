@@ -286,3 +286,73 @@ func TestWizardDeploysToExplicitK3sContext(t *testing.T) {
 		}
 	}
 }
+
+func TestWizardFirstStepErrorsStayInBrowserWithAnswers(t *testing.T) {
+	web := &setupWizard{dir: t.TempDir(), log: io.Discard, ctx: t.Context(), language: "en"}
+	page := func(form url.Values, lang string) string {
+		t.Helper()
+		web.phase = "working"
+		web.configure(form)
+		if web.phase != "options" || !web.failed {
+			t.Fatalf("invalid answers were not returned to the first step: %s %t", web.phase, web.failed)
+		}
+		rec := httptest.NewRecorder()
+		web.render(rec, httptest.NewRequest(http.MethodGet, "/?lang="+lang, nil))
+		return rec.Body.String()
+	}
+	invalid := func(body, name string) bool {
+		return regexp.MustCompile(`name="` + name + `"[^>]*aria-invalid="true" aria-describedby="wizard-error"`).MatchString(body)
+	}
+
+	body := page(url.Values{"backend": {"k3s"}, "repositories": {"selected"}, "context": {`-x"<b>`}, "organization": {"acme"}}, "ko")
+	if !strings.Contains(body, "배포할 k3s 컨텍스트 이름을 정확히 입력하세요.") || !strings.Contains(body, `id="wizard-error"`) ||
+		strings.Contains(body, "Runquill 터미널에서") {
+		t.Fatal("the K3s context problem was not explained in the browser")
+	}
+	if !invalid(body, "context") || invalid(body, "organization") {
+		t.Fatal("only the K3s context field should be marked invalid")
+	}
+	if !strings.Contains(body, `value="-x&#34;&lt;b&gt;"`) || strings.Contains(body, `-x"<b>`) {
+		t.Fatal("the submitted context was not restored as escaped text")
+	}
+	if !strings.Contains(body, `value="acme"`) || !strings.Contains(body, `<option value="k3s" selected>`) ||
+		!strings.Contains(body, `<option value="selected" selected>`) || !strings.Contains(body, `<details class="advanced" open>`) {
+		t.Fatal("the submitted answers were not restored")
+	}
+	if !regexp.MustCompile(`name="context"[^>]*required`).MatchString(body) || strings.Contains(body, "data-k3s hidden") {
+		t.Fatal("K3s must show and require its context")
+	}
+
+	body = page(url.Values{"backend": {"docker"}, "group": {"abc"}}, "en")
+	if !strings.Contains(body, "Enter a positive organization runner group ID.") || !invalid(body, "group") ||
+		!strings.Contains(body, `value="abc"`) || !strings.Contains(body, `<details class="advanced" open>`) {
+		t.Fatal("the runner group problem was not shown next to its field")
+	}
+	if regexp.MustCompile(`name="context"[^>]*required`).MatchString(body) || !strings.Contains(body, "data-k3s hidden") {
+		t.Fatal("Docker must not require a K3s context")
+	}
+
+	body = page(url.Values{"backend": {"docker"}, "panel_url": {"https://admin:hunter2@panel.example"}}, "en")
+	if !invalid(body, "panel_url") || strings.Contains(body, "hunter2") {
+		t.Fatal("a panel origin with credentials must be flagged without echoing them")
+	}
+
+	body = page(url.Values{"backend": {"docker"}, "panel_url": {"https://panel.example"}, "serve": {"on"}}, "en")
+	if !strings.Contains(body, "Clear the panel origin when Tailscale Serve provides it.") || !invalid(body, "panel_url") ||
+		!regexp.MustCompile(`name="serve" checked`).MatchString(body) {
+		t.Fatal("a Tailscale Serve conflict was not shown next to the panel origin")
+	}
+
+	body = page(url.Values{"backend": {"k3s"}, "context": {"fixture"}}, "ko")
+	if !strings.Contains(body, "runquill-k3s.yaml 파일이 없습니다") || strings.Contains(body, `aria-invalid="true"`) ||
+		!strings.Contains(body, `value="fixture"`) {
+		t.Fatal("a missing K3s manifest was not explained in the browser")
+	}
+
+	web.form, web.issue, web.failed = wizardForm{}, nil, false
+	rec := httptest.NewRecorder()
+	web.render(rec, httptest.NewRequest(http.MethodGet, "/?lang=en", nil))
+	if strings.Contains(rec.Body.String(), `id="wizard-error"`) || strings.Contains(rec.Body.String(), `<details class="advanced" open>`) {
+		t.Fatal("a fresh first step must not show an earlier problem")
+	}
+}

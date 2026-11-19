@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -61,6 +62,19 @@ func webhook(q *queue, api *github, secret []byte, panel *panelState) http.Handl
 			return
 		}
 		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
+		report := api.ready.report(time.Now())
+		report.Database = "ok"
+		if err := q.PingContext(r.Context()); err != nil {
+			report.Database, report.Ready = "unavailable", false
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		if !report.Ready {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+		json.NewEncoder(w).Encode(report)
 	})
 	if len(secret) == 0 {
 		return mux
@@ -127,6 +141,80 @@ func webhook(q *queue, api *github, secret []byte, panel *panelState) http.Handl
 		w.WriteHeader(http.StatusAccepted)
 	})
 	return mux
+}
+
+// A successful scheduler tick older than this makes /readyz fail.
+const readyTickMaxAge = 2 * time.Minute
+
+// readiness records the outcome of the last scheduler tick and GitHub App authentication.
+type readiness struct {
+	mu                    sync.Mutex
+	tickAt, tickSucceeded time.Time
+	tickFailed            bool
+	authAt                time.Time
+	authFailed            bool
+}
+
+type readinessReport struct {
+	Ready      bool       `json:"ready"`
+	Database   string     `json:"database"`
+	Scheduler  string     `json:"scheduler"`
+	LastTick   *time.Time `json:"last_successful_tick,omitempty"`
+	GitHubAuth string     `json:"github_auth"`
+}
+
+func (r *readiness) markTick(now time.Time, err error) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.tickAt, r.tickFailed = now, err != nil
+	if err == nil {
+		r.tickSucceeded = now
+	}
+}
+
+func (r *readiness) markAuth(now time.Time, err error) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.authAt, r.authFailed = now, err != nil
+}
+
+// report omits error details because /readyz shares the webhook listener.
+func (r *readiness) report(now time.Time) readinessReport {
+	report := readinessReport{Ready: true, Scheduler: "unknown", GitHubAuth: "unknown"}
+	if r == nil {
+		return report
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.tickSucceeded.IsZero() {
+		at := r.tickSucceeded.UTC()
+		report.LastTick = &at
+	}
+	switch {
+	case r.tickAt.IsZero():
+		report.Scheduler, report.Ready = "starting", false
+	case r.tickFailed:
+		report.Scheduler, report.Ready = "failing", false
+	case now.Sub(r.tickSucceeded) > readyTickMaxAge:
+		report.Scheduler, report.Ready = "stalled", false
+	default:
+		report.Scheduler = "ok"
+	}
+	switch {
+	case r.authAt.IsZero():
+		// Runquill authenticates on demand; an idle queue has not needed a token yet.
+	case r.authFailed:
+		report.GitHubAuth, report.Ready = "failing", false
+	default:
+		report.GitHubAuth = "ok"
+	}
+	return report
 }
 
 func (repo repository) privateFor(owner string) bool {

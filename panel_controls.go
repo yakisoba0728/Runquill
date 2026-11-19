@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -47,6 +48,9 @@ func panelPermission(user panelIdentity, required string) bool {
 		return true
 	case "hosts:write":
 		return user.Role == "operator" || user.Role == "admin"
+	case "jobs:write":
+		// No token scope grants job changes; they need a signed-in operator.
+		return user.Scope == "" && (user.Role == "operator" || user.Role == "admin")
 	case "admin":
 		return user.Role == "admin"
 	default:
@@ -62,6 +66,7 @@ func (a *panelAccess) register(mux *http.ServeMux, panel *panelState) {
 	}))
 	mux.HandleFunc("POST /api/logout", a.require("browser", a.logout))
 	mux.HandleFunc("GET /api/team", a.require("admin", a.team))
+	mux.HandleFunc("POST /api/team", a.require("admin", a.addTeamMember))
 	mux.HandleFunc("PUT /api/team/{id}", a.require("admin", a.setTeamUser))
 	mux.HandleFunc("GET /api/tokens", a.require("browser", a.tokens))
 	mux.HandleFunc("POST /api/tokens", a.require("browser", a.createToken))
@@ -75,6 +80,11 @@ func (a *panelAccess) register(mux *http.ServeMux, panel *panelState) {
 			a.saveOperationSettings(w, r, user, panel)
 		}))
 	}
+	mux.HandleFunc("GET /api/jobs", a.require("fleet:read", func(w http.ResponseWriter, r *http.Request, _ panelIdentity) {
+		panel.jobHistory(w, r, a.db)
+	}))
+	mux.HandleFunc("POST /api/jobs/{id}/cancel", a.require("jobs:write", a.cancelJob))
+	mux.HandleFunc("POST /api/jobs/{id}/retry", a.require("jobs:write", a.retryJob))
 	mux.HandleFunc("POST /api/hosts/cordon", a.require("hosts:write", func(w http.ResponseWriter, r *http.Request, user panelIdentity) {
 		a.cordon(w, r, user, panel)
 	}))
@@ -333,23 +343,58 @@ func (a *panelAccess) revokeToken(w http.ResponseWriter, r *http.Request, user p
 	w.WriteHeader(http.StatusNoContent)
 }
 
+type panelAuditEvent struct {
+	ID         int64  `json:"id"`
+	Actor      int64  `json:"actor"`
+	ActorLogin string `json:"actor_login,omitempty"`
+	Action     string `json:"action"`
+	Target     string `json:"target"`
+	OccurredAt int64  `json:"occurred_at"`
+}
+
+// audit pages newest first by ID. action matches exactly, or as a prefix when
+// it ends with a dot ("user."); actor is a numeric GitHub ID or a login.
 func (a *panelAccess) audit(w http.ResponseWriter, r *http.Request, user panelIdentity) {
-	rows, err := a.db.QueryContext(r.Context(), `SELECT actor,action,target,occurred_at FROM panel_audit ORDER BY id DESC LIMIT 100`)
+	query := r.URL.Query()
+	limit, before := 50, int64(math.MaxInt64)
+	action, actor := strings.TrimSpace(query.Get("action")), strings.TrimPrefix(strings.TrimSpace(query.Get("actor")), "@")
+	valid := len(action) <= 64 && len(actor) <= 100
+	if raw := query.Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		valid = valid && err == nil && n > 0
+		limit = min(n, 200)
+	}
+	if raw := query.Get("before"); raw != "" {
+		n, err := strconv.ParseInt(raw, 10, 64)
+		valid = valid && err == nil && n > 0
+		before = n
+	}
+	if !valid {
+		http.Error(w, "Use a valid audit filter and page.", http.StatusBadRequest)
+		return
+	}
+	actorID, err := strconv.ParseInt(actor, 10, 64)
+	if err != nil {
+		actorID = 0
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	rows, err := a.db.QueryContext(ctx, `SELECT a.id, a.actor, coalesce(u.login, ''), a.action, a.target, a.occurred_at
+        FROM panel_audit a LEFT JOIN panel_users u ON u.github_id = a.actor
+        WHERE a.id < ?
+        AND (? = '' OR a.action = ? OR (substr(?, -1) = '.' AND substr(a.action, 1, length(?)) = ?))
+        AND (? = '' OR a.actor = ? OR u.login = ? COLLATE NOCASE)
+        ORDER BY a.id DESC LIMIT ?`,
+		before, action, action, action, action, action, actor, actorID, actor, limit)
 	if err != nil {
 		http.Error(w, "Could not read audit entries.", http.StatusServiceUnavailable)
 		return
 	}
 	defer rows.Close()
-	type event struct {
-		Actor      int64  `json:"actor"`
-		Action     string `json:"action"`
-		Target     string `json:"target"`
-		OccurredAt int64  `json:"occurred_at"`
-	}
-	events := make([]event, 0)
+	events := make([]panelAuditEvent, 0)
 	for rows.Next() {
-		var e event
-		if err := rows.Scan(&e.Actor, &e.Action, &e.Target, &e.OccurredAt); err != nil {
+		var e panelAuditEvent
+		if err := rows.Scan(&e.ID, &e.Actor, &e.ActorLogin, &e.Action, &e.Target, &e.OccurredAt); err != nil {
 			http.Error(w, "Could not read audit entries.", http.StatusServiceUnavailable)
 			return
 		}

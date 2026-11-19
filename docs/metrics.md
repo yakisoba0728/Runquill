@@ -62,6 +62,8 @@ Metric values describe the fleet as a whole. Samples carry no repository, job, r
 
 Counters `runquill_runner_starts_total`, `runquill_runner_launch_errors_total`, `runquill_runner_lease_releases_total`, and `runquill_scheduler_tick_errors_total` reset on manager restart. Lease releases include cleanup before a retry and can include jobs that did not finish successfully.
 
+With [notifications](../README.md#send-notifications) configured, `runquill_notifications_sent_total`, `runquill_notifications_failed_total` and `runquill_notifications_dropped_total` count events delivered to the webhook, events not delivered after all attempts, and events discarded because the in-memory queue was full or the manager was stopping. These counters are absent without `RUNQUILL_NOTIFY_URL` and also reset on manager restart.
+
 For example, this query finds managers with ready jobs and all configured slots occupied or reserved. Use `time() - runquill_fleet_snapshot_timestamp_seconds` to detect stale values.
 
 ```promql

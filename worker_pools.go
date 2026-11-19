@@ -10,7 +10,10 @@ import (
 	"strings"
 )
 
-const defaultWorkerPool = "default"
+const (
+	defaultWorkerPool     = "default"
+	maxPerRepositoryLimit = 10_000
+)
 
 var workerPoolName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
 
@@ -20,6 +23,10 @@ type workerPool struct {
 	CPUs         float64  `json:"cpus"`
 	MemoryMiB    int64    `json:"memory_mib"`
 	Image        string   `json:"image"`
+	Privileged   *bool    `json:"privileged,omitempty"` // nil keeps the Docker-in-Docker default
+	Cache        bool     `json:"cache,omitempty"`
+	// MaxPerRepository caps one repository's runners in this pool; 0 uses RUNQUILL_MAX_PER_REPOSITORY.
+	MaxPerRepository int `json:"max_per_repository,omitempty"`
 }
 
 type workerPools map[string]workerPool
@@ -51,6 +58,9 @@ func (f *dockerFleet) configurePools(raw string) (workerPools, error) {
 		}
 		if pool.MemoryMiB < 0 || pool.MemoryMiB > (1<<63-1)>>20 || pool.MemoryMiB > 0 && pool.MemoryMiB < 6 {
 			return nil, fmt.Errorf("worker pool %q: memory_mib must be zero or at least 6 MiB, within a 64-bit byte count", name)
+		}
+		if pool.MaxPerRepository < 0 || pool.MaxPerRepository > maxPerRepositoryLimit {
+			return nil, fmt.Errorf("worker pool %q: max_per_repository must be between 0 and %d", name, maxPerRepositoryLimit)
 		}
 		if strings.HasPrefix(pool.Image, "-") || strings.ContainsAny(pool.Image, " \t\r\n") {
 			return nil, fmt.Errorf("worker pool %q: image must be a Docker image reference", name)
@@ -84,6 +94,7 @@ func (f *dockerFleet) configurePools(raw string) (workerPools, error) {
 		}
 		pool := pools[host.pool]
 		host.cpus, host.memoryMiB = pool.CPUs, pool.MemoryMiB
+		host.unprivileged, host.cache = pool.Privileged != nil && !*pool.Privileged, pool.Cache
 		if pool.Image != "" {
 			host.image = pool.Image
 		}

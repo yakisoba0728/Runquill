@@ -67,7 +67,7 @@ func (g *github) organizationJobToken(ctx context.Context, j job, provision bool
 			return "", err
 		}
 	}
-	token, err := g.mintToken(ctx, jwt, inst.ID, map[string]any{
+	token, err := g.mintCached(ctx, jwt, inst.ID, map[string]any{
 		"permissions": map[string]string{organizationRunnerPermission: "write"},
 	})
 	if err != nil {

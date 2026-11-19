@@ -218,7 +218,6 @@ const words = {
   "{repo} job {id}": "{repo} 작업 {id}",
   "queue {position}": "대기 {position}번",
   "{n} offline": "{n}개 연결 끊김",
-  "Panel refresh failed. Showing the last available snapshot.": "새로고침에 실패해 마지막으로 확인한 상태를 표시합니다.",
   "The latest GitHub poll failed. Check the manager logs.": "최근 GitHub 폴링에 실패했습니다. 매니저 로그를 확인하세요.",
   "Sample data": "샘플 데이터",
   "Observed {time}": "{time} 갱신",
@@ -230,7 +229,6 @@ const words = {
   "Runquill observed a GitHub delivery or a successful poll.": "GitHub 웹훅을 받았거나 폴링에 성공했습니다.",
   "Runner cleanup confirmed for job #{id}.": "작업 #{id}의 러너 정리를 확인했습니다.",
   "Your session ended. Sign in again to view the fleet.": "세션이 종료되었습니다. 러너를 보려면 다시 로그인하세요.",
-  "No snapshot is available yet. Runquill will try again.": "아직 수집된 상태가 없습니다. 다시 시도합니다.",
   "Request failed.": "요청에 실패했습니다.",
   "No active API tokens": "활성 API 토큰 없음",
   "Create a token when a script needs access.": "스크립트에서 접근해야 한다면 토큰을 발급하세요.",
@@ -326,7 +324,157 @@ const words = {
   "Webhook missed": "웹훅 누락",
   "Worker offline": "워커 연결 끊김",
 
+  "Connection lost. Retrying in {n}s. Showing the last available snapshot.": "연결이 끊겼습니다. {n}초 후 다시 시도하며 마지막으로 확인한 상태를 표시합니다.",
+  "Connection lost. Retrying in {n}s.": "연결이 끊겼습니다. {n}초 후 다시 시도합니다.",
+  "Preparing queue backup…": "대기열 백업을 준비하는 중…",
+  "Downloading queue backup… {progress}": "대기열 백업 다운로드 중… {progress}",
+  "Remove the worker {name} from these settings? The change applies when you save.": "설정에서 {name} 워커를 제거할까요? 설정을 저장하면 적용됩니다.",
+  "Remove the pool {name} from these settings? The change applies when you save.": "설정에서 {name} 풀을 제거할까요? 설정을 저장하면 적용됩니다.",
+  "ID {id}": "ID {id}",
+
+  "user.bootstrap": "첫 관리자 등록",
+  "user.set.viewer": "팀원을 뷰어로 지정",
+  "user.set.operator": "팀원을 운영자로 지정",
+  "user.set.admin": "팀원을 관리자로 지정",
+  "user.disable": "팀원 비활성화",
+  "queue.backup": "대기열 백업 다운로드",
+
+  "Panel page unavailable": "패널 페이지를 열 수 없습니다.",
+  "Use the configured panel address.": "설정된 패널 주소로 접속하세요.",
+  "Sign in to Runquill.": "Runquill에 로그인하세요.",
+  "Could not check panel access.": "패널 접근 권한을 확인하지 못했습니다.",
+  "The request must come from the panel origin.": "패널 주소에서 보낸 요청만 처리할 수 있습니다.",
+  "Send application/json.": "application/json 형식으로 보내세요.",
+  "Invalid JSON request.": "요청 JSON이 올바르지 않습니다.",
+  "Could not end the session.": "세션을 종료하지 못했습니다.",
+  "Could not read team members.": "팀원 목록을 읽지 못했습니다.",
+  "At least one active administrator is required.": "활성화된 관리자가 한 명 이상 필요합니다.",
+  "Use a positive GitHub account ID.": "GitHub 계정 ID에 양수를 입력하세요.",
+  "Choose viewer, operator, or admin.": "뷰어, 운영자, 관리자 중 하나를 선택하세요.",
+  "Could not update the team member.": "팀원 정보를 변경하지 못했습니다.",
+  "Could not read API tokens.": "API 토큰 목록을 읽지 못했습니다.",
+  "Use a token name and an expiry between 1 and 90 days.": "토큰 이름과 1~90일 사이의 유효 기간을 입력하세요.",
+  "Choose a token scope that your role permits.": "내 역할에 허용된 토큰 권한 범위를 선택하세요.",
+  "Could not create the token.": "토큰을 발급하지 못했습니다.",
+  "Your panel permissions changed. Reload and try again.": "패널 권한이 변경됐습니다. 새로고침한 뒤 다시 시도하세요.",
+  "Could not revoke the token.": "토큰을 폐기하지 못했습니다.",
+  "Could not read audit entries.": "감사 기록을 읽지 못했습니다.",
+  "Choose a host and maintenance state.": "워커와 유지보수 상태를 선택하세요.",
+  "This host has no current observation.": "이 워커의 현재 상태가 수집되지 않았습니다.",
+  "Could not update the host.": "워커 상태를 변경하지 못했습니다.",
+  "Another settings update is in progress. Try again shortly.": "다른 설정 변경이 진행 중입니다. 잠시 후 다시 시도하세요.",
+  "Could not save operation settings.": "운영 설정을 저장하지 못했습니다.",
+  "Connect the worker and make its runner image available before saving.": "저장하기 전에 워커를 연결하고 러너 이미지를 준비하세요.",
+  "Could not prepare the queue backup.": "대기열 백업을 준비하지 못했습니다.",
+  "Could not open the backup.": "백업 파일을 열지 못했습니다.",
+  "Could not authorize the backup download.": "백업 다운로드 권한을 확인하지 못했습니다.",
+  "Runner host discovery failed. Check the manager logs.": "워커 상태를 수집하지 못했습니다. 매니저 로그를 확인하세요.",
+  "Use the deployment credentials to enroll or remove outbound agent hosts.": "아웃바운드 에이전트 워커는 배포 인증으로 등록하거나 제거하세요.",
+  "Enter valid runner images for worker pools.": "워커 풀에 유효한 러너 이미지를 입력하세요.",
+  "Docker workers and pools are unavailable in Kubernetes mode.": "Kubernetes 모드에서는 Docker 워커와 풀을 사용할 수 없습니다.",
+  "Runner backend is unavailable.": "러너 백엔드를 사용할 수 없습니다.",
+  "Use a valid audit filter and page.": "감사 기록 필터와 페이지 값을 확인하세요.",
+  "Use a valid repository, outcome, time range, and page.": "저장소(OWNER/REPO), 결과, 기간, 페이지 값을 확인하세요.",
+  "Could not read the job history.": "작업 기록을 읽지 못했습니다.",
+  "This job is no longer waiting for a runner.": "이 작업은 더 이상 러너를 기다리고 있지 않습니다.",
+  "This job has no retry delay to clear.": "이 작업에는 해제할 재시도 대기 시간이 없습니다.",
+  "Could not update the job.": "작업을 변경하지 못했습니다.",
+  "No GitHub user has this login.": "이 로그인을 쓰는 GitHub 사용자가 없습니다.",
+  "Enter a GitHub login such as octocat.": "octocat 같은 GitHub 로그인을 입력하세요.",
+  "Could not look up the GitHub account. Try again or enter the numeric ID.": "GitHub 계정을 조회하지 못했습니다. 다시 시도하거나 숫자 ID를 입력하세요.",
+  "job.cancel": "작업 취소",
+  "job.retry": "작업 즉시 재시도",
+
+  "Job history": "작업 기록",
+  "Runquill keeps finished jobs for seven days. Job logs stay on GitHub.": "끝난 작업은 7일 동안 보관합니다. 작업 로그는 GitHub에서 확인하세요.",
+  "Filter by repository": "저장소로 필터링",
+  "Filter by outcome": "결과로 필터링",
+  "Filter by time range": "기간으로 필터링",
+  "All outcomes": "모든 결과",
+  "Finished": "종료",
+  "Failed": "실패",
+  "Any time": "전체 기간",
+  "Last hour": "최근 1시간",
+  "Last 24 hours": "최근 24시간",
+  "Last 7 days": "최근 7일",
+  "Apply filters": "필터 적용",
+  "Job history results": "작업 기록 목록",
+  "Outcome": "결과",
+  "Queued": "대기 시작",
+  "Started": "시작",
+  "Loading job history…": "작업 기록을 불러오는 중…",
+  "Load older jobs": "이전 작업 더 보기",
+  "FINISHED": "종료",
+  "FAILED": "실패",
+  "Reason: {reason}": "사유: {reason}",
+  "Last retry: {reason}": "마지막 재시도: {reason}",
+  "{repo} job {id} on GitHub": "GitHub의 {repo} 작업 {id}",
+  "Retry now": "지금 재시도",
+  "Cancel job": "작업 취소",
+  "{action} for job {id}": "작업 {id} {action}",
+  "Cancel job #{id} in Runquill? It is marked failed and no runner starts for it. The run stays queued on GitHub until you cancel it there.": "Runquill에서 작업 #{id}을 취소할까요? 작업이 실패로 기록되고 러너를 시작하지 않습니다. GitHub의 실행은 그곳에서 취소할 때까지 대기열에 남습니다.",
+  "Retry job #{id} now? Runquill tries to start a runner on its next pass.": "작업 #{id}을 지금 재시도할까요? 다음 스케줄링 때 러너 시작을 시도합니다.",
+  "Job cancelled.": "작업을 취소했습니다.",
+  "The job will be retried on the next scheduler pass.": "다음 스케줄링 때 작업을 재시도합니다.",
+  "Enroll a teammate by GitHub login or numeric account ID": "GitHub 로그인이나 숫자 계정 ID로 팀원을 등록하세요.",
+  "GitHub login or ID": "GitHub 로그인 또는 ID",
+  "Filter by action": "작업 종류로 필터링",
+  "Filter by actor": "실행한 사람으로 필터링",
+  "All actions": "모든 작업",
+  "Sign-ins": "로그인",
+  "Team changes": "팀 변경",
+  "Host maintenance": "워커 유지보수",
+  "Job actions": "작업 관리",
+  "Settings changes": "설정 변경",
+  "Queue backups": "대기열 백업",
+  "Login or GitHub ID": "로그인 또는 GitHub ID",
+  "Load older entries": "이전 기록 더 보기",
+  "Run Docker-in-Docker (privileged)": "Docker-in-Docker 실행(privileged)",
+  "Keep a shared build cache": "공유 빌드 캐시 유지",
+
+  // Server messages with dynamic parts. Each key is also listed in serverPatterns.
+  "duplicate Docker host {host}": "Docker 워커 {host}가 중복됐습니다.",
+  "Docker worker hosts require agent://NAME with 1–32 lowercase letters, digits or hyphens": "Docker 워커는 agent://NAME 형식이어야 하며 NAME은 소문자, 숫자, 하이픈 1~32자입니다.",
+  "RUNQUILL_DOCKER_HOSTS must be a comma-separated list of local, ssh://[user@]host[:port] or agent://name": "워커 주소는 local, ssh://[user@]host[:port], agent://name 중 하나여야 합니다.",
+  "Docker SSH hosts require an SSH user and key authentication": "SSH 워커에는 SSH 사용자와 키 인증이 필요합니다.",
+  "invalid worker pool {name}: named pools require at least one Docker host": "워커 풀 {name}: 이름을 지정한 풀에는 Docker 워커가 하나 이상 필요합니다.",
+  "worker pool {name}: cpus must be zero or between 0.01 and 1000000": "워커 풀 {name}: CPU 한도는 0이거나 0.01~1000000 사이여야 합니다.",
+  "worker pool {name}: memory_mib must be zero or at least 6 MiB, within a 64-bit byte count": "워커 풀 {name}: 메모리 한도는 0이거나 6MiB 이상이어야 합니다.",
+  "worker pool {name}: image must be a Docker image reference": "워커 풀 {name}: 러너 이미지는 Docker 이미지 주소여야 합니다.",
+  "worker pool {name}: invalid repository {repo}": "워커 풀 {name}: 저장소 {repo}가 올바르지 않습니다.",
+  "Docker host {host} appears more than once in worker pools ({pools})": "Docker 워커 {host}가 여러 워커 풀에 속해 있습니다({pools}).",
+  "worker pool {name}: {detail}": "워커 풀 {name}: {detail}",
+  "Docker host {host} did not report an engine ID": "Docker 워커 {host}가 엔진 ID를 보고하지 않았습니다.",
+  "Docker hosts {first} and {second} identify the same engine": "Docker 워커 {first}와 {second}가 같은 엔진을 가리킵니다.",
+  "unknown Docker host {host}": "알 수 없는 Docker 워커 {host}",
+  "runner image {image} on Docker host {host}: {detail}": "Docker 워커 {host}의 러너 이미지 {image}: {detail}",
 };
+
+// Server-originated messages whose dynamic parts are matched by {placeholder}.
+// Specific templates come before generic ones: the first match wins.
+const serverPatterns = [
+  "duplicate Docker host {host}",
+  "invalid worker pool {name}: named pools require at least one Docker host",
+  "worker pool {name}: cpus must be zero or between 0.01 and 1000000",
+  "worker pool {name}: memory_mib must be zero or at least 6 MiB, within a 64-bit byte count",
+  "worker pool {name}: image must be a Docker image reference",
+  "worker pool {name}: invalid repository {repo}",
+  "Docker host {host} appears more than once in worker pools ({pools})",
+  "Docker host {host} did not report an engine ID",
+  "Docker hosts {first} and {second} identify the same engine",
+  "unknown Docker host {host}",
+  "runner image {image} on Docker host {host}: {detail}",
+  "worker pool {name}: {detail}",
+].map((key) => {
+  const names = [];
+  const source = key.split(/(\{[a-z]+\})/).map((part) => {
+    const token = /^\{([a-z]+)\}$/.exec(part);
+    if (!token) return part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    names.push(token[1]);
+    return "(.+?)";
+  }).join("");
+  return { key, names, pattern: new RegExp("^" + source + "$", "s") };
+});
 
 function preferredLanguage() {
   const requested = new URL(location.href).searchParams.get("lang");
@@ -343,6 +491,23 @@ export const language = preferredLanguage();
 export function tr(message, values = {}) {
   const translated = language === "ko" && Object.hasOwn(words, message) ? words[message] : message;
   return String(translated).replace(/\{([a-z]+)\}/g, (token, key) => Object.hasOwn(values, key) ? values[key] : token);
+}
+
+// Server messages are a stable English sentence that is a key above. Dynamic
+// details either follow it on later lines, shown verbatim, or match a
+// template in serverPatterns. Anything else is shown as the server sent it.
+export function serverText(message) {
+  const text = String(message || "").trim();
+  const [head, ...detail] = text.split("\n");
+  if (Object.hasOwn(words, head)) return [tr(head), ...detail].join("\n");
+  if (language !== "ko") return text;
+  for (const { key, names, pattern } of serverPatterns) {
+    const match = pattern.exec(text);
+    if (!match) continue;
+    const values = Object.fromEntries(names.map((name, i) => [name, name === "detail" ? serverText(match[i + 1]) : match[i + 1]]));
+    return tr(key, values);
+  }
+  return text;
 }
 
 export function localizeDocument() {

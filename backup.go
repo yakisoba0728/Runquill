@@ -30,7 +30,7 @@ var queueBackupTables = []struct {
 	baseColumns   int
 }{
 	{"jobs", "sequence job_id repository repository_id installation_id route phase changed_at runner_name runner_id launched_at retry_at " +
-		"retry_reason runner_host github_created_at discovered_at provisioned_at github_started_at discovery_source runner_cleaned_at runner_cleaned_host", 12},
+		"retry_reason runner_host github_created_at discovered_at provisioned_at github_started_at discovery_source runner_cleaned_at runner_cleaned_host failure", 12},
 	{"docker_hosts", "host cordoned untracked_slots", 2},
 	{"repository_polls", "installation_id repository_id checked_at full_at active_at last_error", 6},
 	{"operation_settings", "id revision policy", 3},

@@ -42,15 +42,24 @@ func (network *wizardNetwork) configure(ctx context.Context, opts *setupOptions)
 	if !network.serve && !network.funnel {
 		return nil
 	}
-	if opts.kubernetes {
-		return errors.New("managed Tailscale directions require a Docker Compose host")
+	field := "serve"
+	if !network.serve {
+		field = "funnel"
 	}
-	if network.serve && opts.panelURL != "" || network.funnel && opts.webhookURL != "" {
-		return errors.New("clear the external address when using Tailscale for that endpoint")
+	if opts.kubernetes {
+		return newWizardIssue("backend", "Tailscale 자동 연결은 Docker Compose 설치에서만 쓸 수 있습니다.", "Managed Tailscale directions require a Docker Compose host.")
+	}
+	if network.serve && opts.panelURL != "" {
+		return newWizardIssue("panel_url", "Tailscale Serve를 쓰려면 패널 주소를 비워 두세요.", "Clear the panel origin when Tailscale Serve provides it.")
+	}
+	if network.funnel && opts.webhookURL != "" {
+		return newWizardIssue("webhook_url", "Tailscale Funnel을 쓰려면 외부 웹훅 주소를 비워 두세요.", "Clear the public webhook URL when Tailscale Funnel provides it.")
 	}
 	addr, err := readTailscaleName(ctx)
 	if err != nil {
-		return err
+		return &wizardIssue{field: field, cause: err,
+			ko: "이 호스트에서 Tailscale에 연결하고 MagicDNS를 켠 뒤 다시 시도하세요.",
+			en: "Connect Tailscale on this host and enable MagicDNS, then try again."}
 	}
 	network.host = addr
 	if network.serve {
@@ -65,7 +74,9 @@ func (network *wizardNetwork) configure(ctx context.Context, opts *setupOptions)
 	}
 	for _, route := range network.routes() {
 		if exists, matches := mappings.routeState(addr, route); exists && !matches {
-			return fmt.Errorf("Tailscale port %s is already used by a different listener", route.port)
+			return &wizardIssue{field: route.command,
+				ko: "Tailscale 포트 " + route.port + "을(를) 다른 연결이 이미 쓰고 있습니다.",
+				en: "Tailscale port " + route.port + " is already used by a different listener."}
 		}
 	}
 	return nil

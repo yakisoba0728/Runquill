@@ -1,10 +1,13 @@
 package main
 
 import (
+	"archive/tar"
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -64,11 +67,94 @@ func TestWorkerPoolsValidatePolicyAndSetDockerResources(t *testing.T) {
 		`{"build": {"hosts":["local"],"cpus":-1}}`,
 		`{"build": {"hosts":["local"],"repositories":["../outside"]}}`,
 		`{"build": {"hosts":["local"]},"other":{"hosts":["local"]}}`,
+		`{"build": {"hosts":["local"],"privileged":"no"}}`,
+		`{"build": {"hosts":["local"],"cache":"/cache"}}`,
 		raw + raw,
 	} {
 		if _, err := fleet.configurePools(input); err == nil {
 			t.Errorf("accepted invalid worker pools: %s", input)
 		}
+	}
+}
+
+func TestWorkerPoolsSetPrivilegeAndRepositoryCache(t *testing.T) {
+	fleet, logPath := testDockerFleet(t)
+	raw := fmt.Sprintf(`{"build":{"hosts":[%q],"privileged":false,"cache":true},"default":{"privileged":true}}`, fleetTestWorker)
+	if _, err := fleet.configurePools(raw); err != nil {
+		t.Fatal(err)
+	}
+	if err := fleet.startOn(t.Context(), fleetTestWorker, "uncached", "jit-config"); err == nil {
+		t.Fatal("cache-enabled pool started a runner without a repository")
+	}
+	archive := func() map[string]*tar.Header {
+		t.Helper()
+		file, err := os.Open(logPath + ".tar")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer file.Close()
+		entries := make(map[string]*tar.Header)
+		for reader := tar.NewReader(file); ; {
+			header, err := reader.Next()
+			if err == io.EOF {
+				return entries
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			entries[header.Name] = header
+		}
+	}
+	for _, repo := range []int64{7, 8} {
+		if err := fleet.startOn(withRunnerRepository(t.Context(), repo), fleetTestWorker, fmt.Sprint("cached-", repo), "jit-config"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	entries := archive()
+	if jit, dir, cache := entries["run/runquill/jit"], entries["run/runquill/"], entries["home/runner/.cache/"]; jit == nil || jit.Uid != 1001 ||
+		dir == nil || dir.Uid != 1001 || cache == nil || cache.Uid != 1001 || len(entries) != 3 {
+		t.Fatalf("unprivileged runner archive: %+v", entries)
+	}
+	if err := fleet.startOn(withRunnerRepository(t.Context(), 7), "local", "default-runner", "jit-config"); err != nil {
+		t.Fatal(err)
+	}
+	if entries := archive(); len(entries) != 1 || entries["run/runquill-jit"] == nil || entries["run/runquill-jit"].Uid != 0 {
+		t.Fatalf("privileged runner archive: %+v", entries)
+	}
+	if _, err := fleet.configurePools(`{"default":{"cache":true}}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := fleet.startOn(withRunnerRepository(t.Context(), 7), "local", "privileged-cached", "jit-config"); err != nil {
+		t.Fatal(err)
+	}
+	if entries := archive(); len(entries) != 2 || entries["run/runquill-jit"] == nil || entries["run/runquill-jit"].Uid != 0 ||
+		entries["home/runner/.cache/"] == nil || entries["home/runner/.cache/"].Uid != 1001 {
+		t.Fatalf("privileged cached runner archive: %+v", entries)
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cached7, cached8, privileged, privilegedCached bool
+	for line := range strings.SplitSeq(string(data), "\n") {
+		unprivileged := !strings.Contains(line, "--privileged") &&
+			strings.Contains(line, "--user 1001:1001 --security-opt no-new-privileges --cap-drop ALL --env RUNQUILL_RUNNER_MODE=plain --env RUNQUILL_JIT_FILE=/run/runquill/jit")
+		mount := "--mount type=volume,src=runquill-cache-%d,dst=/home/runner/.cache,volume-label=io.runquill.cache=1"
+		switch {
+		case strings.Contains(line, "create --name cached-7"):
+			cached7 = unprivileged && strings.Contains(line, fmt.Sprintf(mount, 7))
+		case strings.Contains(line, "create --name cached-8"):
+			cached8 = unprivileged && strings.Contains(line, fmt.Sprintf(mount, 8)) && !strings.Contains(line, "runquill-cache-7")
+		case strings.Contains(line, "create --name default-runner"):
+			privileged = strings.Contains(line, "--privileged") && !strings.Contains(line, "--mount") && !strings.Contains(line, "--user")
+		case strings.Contains(line, "create --name privileged-cached"):
+			privilegedCached = strings.Contains(line, "--privileged") && strings.Contains(line, fmt.Sprintf(mount, 7)) && !strings.Contains(line, "--user")
+		case strings.Contains(line, "create --name uncached"):
+			t.Errorf("created a runner without its cache scope: %s", line)
+		}
+	}
+	if !cached7 || !cached8 || !privileged || !privilegedCached {
+		t.Fatalf("incorrect Docker runtime options in %s", data)
 	}
 }
 
@@ -121,8 +207,9 @@ func TestPoolSchedulerDoesNotSpillOrBlockOtherPools(t *testing.T) {
 		{Name: "local", Pool: "default", Containers: make(map[string]string)},
 		{Name: worker, Pool: "build", Containers: map[string]string{"occupying-build-worker": "running"}},
 	}}
+	scoped := &cacheScopeRuntime{testRuntime: runtime}
 	s := &scheduler{queue: q, github: &github{client: server.Client(), base: server.URL, key: key, appID: "1", owner: "owner"},
-		runtime: runtime, limit: 2, hostLimits: map[string]int{worker: 1},
+		runtime: scoped, limit: 2, hostLimits: map[string]int{worker: 1},
 		pools: workerPools{defaultWorkerPool: {}, "build": {Repositories: []string{"owner/repo"}}},
 	}
 	for _, j := range []job{
@@ -166,4 +253,21 @@ func TestPoolSchedulerDoesNotSpillOrBlockOtherPools(t *testing.T) {
 		!slices.Equal(labels, []string{"runquill-17-1-local", "runquill-17-1-pool__build__first"}) {
 		t.Fatalf("wrong worker pool or modified unique labels: %+v %v %v", leases, labels, err)
 	}
+	if !slices.Equal(scoped.volumes, []string{"runquill-cache-2", "runquill-cache-2"}) {
+		t.Fatalf("runner starts were not scoped to their repository: %v", scoped.volumes)
+	}
+}
+
+type cacheScopeRuntime struct {
+	*testRuntime
+	volumes []string
+}
+
+func (r *cacheScopeRuntime) startOn(ctx context.Context, host, name, jit string) error {
+	volume, err := runnerCacheVolume(ctx)
+	if err != nil {
+		return err
+	}
+	r.volumes = append(r.volumes, volume)
+	return r.testRuntime.startOn(ctx, host, name, jit)
 }

@@ -51,8 +51,10 @@ RUNQUILL_RUNNER_IMAGE=runquill-runner:local \
 
 The worker validates the server certificate. Literal loopback HTTP is available for local testing. Keep the worker process running with your service manager. It locks a file beside its token file to prevent two processes from using the same credentials concurrently. Use a unique token and name per worker.
 
+Run the same Runquill release on the worker as on the manager. A worker in a pool with `privileged: false` or `cache: true` must be upgraded with the manager, because older workers reject runner tasks that carry those settings. The cache volume lives on the worker's own engine.
+
 Use `runquill status` or the panel to view the worker. Existing reserve, slot, pool, and cordon behavior applies. After a disconnect, Runquill waits for fresh inventory before acting on that worker's previous runner leases. A restarted worker can take over its previous session after up to 45 seconds. After a clean job, the manager removes the worker-owned container by its verified Docker ID.
 
 ## Rotation and replacement
 
-Cordon `agent://worker-a` and wait for its jobs to drain before rotating credentials or replacing the engine. Stop the worker, generate a fresh token, update the manager's digest and restart the manager, then restart and uncordon the worker. Keep the same name and engine ID for token rotation. For an engine replacement, update the engine ID after draining. If a worker is permanently decommissioned with unresolved leases, those leases remain reserved until the manager can reconcile that worker. Review `runquill gc --dry-run` before deleting any unfamiliar runner locally.
+Cordon `agent://worker-a` and wait for its jobs to drain before rotating credentials or replacing the engine. Stop the worker, generate a fresh token, update the manager's digest and restart the manager, then restart and uncordon the worker. Keep the same name and engine ID for token rotation. For an engine replacement, update the engine ID after draining. If a worker is permanently decommissioned with unresolved leases, those leases remain reserved until the manager can reconcile that worker. Review `runquill gc --dry-run` before deleting any unfamiliar runner locally. `runquill gc --remove-orphans` skips outbound workers.

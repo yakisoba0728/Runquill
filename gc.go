@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/hex"
@@ -16,7 +17,10 @@ import (
 	"time"
 )
 
-func gc(ctx context.Context, out io.Writer) error {
+// defaultOrphanGrace is how long a runner must exist before gc --remove-orphans considers it.
+const defaultOrphanGrace = 10 * time.Minute
+
+func gc(ctx context.Context, out io.Writer, removeOrphanRunners bool, grace time.Duration) error {
 	db, err := openQueueDB(env("RUNQUILL_DB", "runquill.sqlite3"), "ro")
 	if err != nil {
 		return err
@@ -35,12 +39,6 @@ func gc(ctx context.Context, out io.Writer) error {
 		}
 		runners = state.runners
 	}
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	hosts, err := runners.runtime.snapshot(ctx)
-	if err != nil {
-		return err
-	}
 	loadAPI := sync.OnceValues(func() (*github, error) {
 		cfg, err := loadConfig()
 		if err != nil {
@@ -48,6 +46,28 @@ func gc(ctx context.Context, out io.Writer) error {
 		}
 		return cfg.github()
 	})
+	if removeOrphanRunners {
+		var hosts []orphanHost
+		fleet, ok := runners.runtime.(*dockerFleet)
+		if !ok {
+			fmt.Fprintf(out, "Skipped %s runners: orphan removal supports Docker hosts only.\n", runners.kind)
+		} else {
+			for _, host := range fleet.hosts {
+				if host.agentName() != "" {
+					fmt.Fprintf(out, "Skipped %s: orphan removal is not supported on outbound workers.\n", host.label())
+					continue
+				}
+				hosts = append(hosts, host)
+			}
+		}
+		return removeOrphans(ctx, out, db, hosts, loadAPI, grace, time.Now())
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	hosts, err := runners.runtime.snapshot(ctx)
+	if err != nil {
+		return err
+	}
 	lookup := func(ctx context.Context, j job) (string, error) {
 		api, err := loadAPI()
 		if err != nil {
@@ -192,4 +212,182 @@ func (g *github) readRunnerJobStatus(ctx context.Context, j job) (string, error)
 		return "", err
 	}
 	return details.Status, err
+}
+
+type orphanHost interface {
+	label() string
+	ownedRunners(context.Context) ([]runnerContainer, error)
+	removeContainer(context.Context, string) error
+}
+
+type runnerContainer struct {
+	name, id, state string
+	owned           bool
+	worker          string
+	created         time.Time
+}
+
+const runnerInspectFormat = `{{.Name}}|{{.Id}}|{{index .Config.Labels "io.runquill.runner"}}|{{index .Config.Labels "io.runquill.worker"}}|{{.Created}}|{{.State.Status}}`
+
+func (d docker) ownedRunners(ctx context.Context) ([]runnerContainer, error) {
+	ids, err := d.command(ctx, nil, "ps", "-a", "-q", "--no-trunc", "--filter", "label="+runnerLabel)
+	if err != nil || strings.TrimSpace(ids) == "" {
+		return nil, err
+	}
+	output, err := d.command(ctx, nil, append([]string{"inspect", "--format", runnerInspectFormat}, strings.Fields(ids)...)...)
+	if err != nil {
+		return nil, err
+	}
+	return parseRunnerInspect(output)
+}
+
+func parseRunnerInspect(output string) ([]runnerContainer, error) {
+	var runners []runnerContainer
+	for line := range strings.SplitSeq(strings.TrimSpace(output), "\n") {
+		if line == "" {
+			continue
+		}
+		fields := strings.Split(line, "|")
+		if len(fields) != 6 || !validHex32(fields[1]) {
+			return nil, errors.New("invalid Docker inspect output")
+		}
+		created, err := time.Parse(time.RFC3339Nano, fields[4])
+		if err != nil {
+			return nil, fmt.Errorf("invalid Docker creation time for %s: %w", fields[0], err)
+		}
+		runners = append(runners, runnerContainer{name: strings.TrimPrefix(fields[0], "/"), id: fields[1],
+			owned: fields[2] == "1", worker: fields[3], created: created, state: fields[5]})
+	}
+	return runners, nil
+}
+
+func (d docker) removeContainer(ctx context.Context, id string) error {
+	// Remove by ID so a newer container that reuses the name is never touched.
+	return d.remove(ctx, id)
+}
+
+// removeOrphans deletes untracked runner containers that cannot be running a GitHub job.
+// Anything it cannot prove idle is skipped with the reason printed.
+func removeOrphans(ctx context.Context, out io.Writer, db *sql.DB, hosts []orphanHost, loadAPI func() (*github, error), grace time.Duration, now time.Time) error {
+	type candidate struct {
+		host orphanHost
+		runnerContainer
+	}
+	var candidates []candidate
+	var failures []error
+	for _, host := range hosts {
+		listCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		runners, err := host.ownedRunners(listCtx)
+		cancel()
+		if err != nil {
+			fmt.Fprintf(out, "Skipped %s: %s\n", host.label(), oneLine(err))
+			failures = append(failures, fmt.Errorf("%s: %w", host.label(), err))
+			continue
+		}
+		for _, runner := range runners {
+			candidates = append(candidates, candidate{host, runner})
+		}
+	}
+	// Read leases after listing: a runner launched meanwhile is then tracked or inside the grace period.
+	leases, err := readRunnerLeases(ctx, db)
+	if err != nil {
+		return fmt.Errorf("read runner leases, nothing removed: %w", err)
+	}
+	var removed, skipped int
+	for _, c := range candidates {
+		owner, tracked := leases[c.name]
+		if tracked && (owner == c.host.label() || owner == "") {
+			continue
+		}
+		reason, err := removeOrphan(ctx, db, c.host, c.runnerContainer, tracked, owner, loadAPI, grace, now)
+		if err != nil {
+			failures = append(failures, fmt.Errorf("%s %s: %w", c.host.label(), c.name, err))
+		}
+		if reason != "" {
+			fmt.Fprintf(out, "Skipped %s %s: %s\n", c.host.label(), c.name, reason)
+			skipped++
+			continue
+		}
+		fmt.Fprintf(out, "Removed %s %s\n", c.host.label(), c.name)
+		removed++
+	}
+	fmt.Fprintf(out, "Removed %d orphaned runners; skipped %d.\n", removed, skipped)
+	return errors.Join(errors.Join(failures...), ctx.Err())
+}
+
+// removeOrphan returns a non-empty reason when it left the runner in place.
+func removeOrphan(ctx context.Context, db *sql.DB, host orphanHost, c runnerContainer, tracked bool, owner string,
+	loadAPI func() (*github, error), grace time.Duration, now time.Time) (string, error) {
+	switch {
+	case !c.owned:
+		return "missing the Runquill ownership label", nil
+	case c.worker != "":
+		return "belongs to outbound worker " + c.worker, nil
+	case tracked:
+		return "lease recorded on " + owner, nil
+	case c.created.IsZero() || now.Sub(c.created) < grace:
+		return fmt.Sprintf("created %s ago, inside the %s grace period", now.Sub(c.created).Round(time.Second), grace), nil
+	}
+	id, valid := runnerJobID(c.name)
+	if !valid {
+		return "name does not match a Runquill runner", nil
+	}
+	running := runnerOccupiesSlot(c.state)
+	j, err := jobByID(ctx, db, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		if running {
+			return fmt.Sprintf("no queue record for job %d, so GitHub cannot confirm the runner is idle", id), nil
+		}
+		// A stopped container cannot run a job, and GitHub expires its offline JIT registration.
+		if err := host.removeContainer(ctx, c.id); err != nil {
+			return "remove container: " + oneLine(err), err
+		}
+		return "", nil
+	}
+	if err != nil {
+		return "read queue: " + oneLine(err), err
+	}
+	j.runnerName = c.name
+	api, err := loadAPI()
+	if err != nil {
+		return "GitHub unavailable: " + oneLine(err), err
+	}
+	if running {
+		token, err := api.token(ctx, j)
+		if err != nil {
+			return "read GitHub job: " + oneLine(err), nil
+		}
+		details, err := api.jobDetails(ctx, j, token)
+		if err != nil && !githubNotFound(err) {
+			return "read GitHub job: " + oneLine(err), nil
+		}
+		if err == nil && details.Status != "completed" {
+			return fmt.Sprintf("GitHub job %d is %s", j.id, cmp.Or(details.Status, "in an unknown state")), nil
+		}
+	}
+	token, err := api.runnerToken(ctx, j)
+	if err != nil {
+		return "look up GitHub runner: " + oneLine(err), nil
+	}
+	registration, err := api.findRunner(ctx, j, token)
+	if err != nil {
+		return "look up GitHub runner: " + oneLine(err), nil
+	}
+	if registration.Busy {
+		return "GitHub reports the runner busy", nil
+	}
+	if registration.ID > 0 {
+		// Delete the registration first so the runner cannot accept a job while it is removed.
+		if err := api.deleteRunner(ctx, j, token, registration.ID); err != nil {
+			return "delete GitHub runner registration: " + oneLine(err), nil
+		}
+	}
+	if err := host.removeContainer(ctx, c.id); err != nil {
+		return "remove container: " + oneLine(err), err
+	}
+	return "", nil
+}
+
+func oneLine(err error) string {
+	return strings.Join(strings.Fields(err.Error()), " ")
 }

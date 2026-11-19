@@ -34,7 +34,7 @@ case "$1" in
     fi
     ;;
   image) if [ "$state" = missing-image ]; then exit 1; fi ;;
-  cp) cat >/dev/null ;;
+  cp) cat >"$FLEET_TEST_LOG.tar" ;;
 esac
 `), 0700); err != nil {
 		t.Fatal(err)
@@ -71,7 +71,7 @@ func TestDockerFleetPlacesAndRemovesRunnersOnTheirHost(t *testing.T) {
 	}
 	for _, want := range []string{
 		"ssh://builder@worker.example.com create --name new-runner",
-		"ssh://builder@worker.example.com cp - new-runner:/run",
+		"ssh://builder@worker.example.com cp - new-runner:/\n",
 		"ssh://builder@worker.example.com start new-runner",
 		"local rm -f -v existing",
 		"local create --name next-runner",

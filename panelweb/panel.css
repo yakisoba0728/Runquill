@@ -148,6 +148,13 @@ tbody tr:has(button[aria-expanded="true"]) { background: var(--accent-bg); }
 .timings > div { display: flex; gap: 6px; align-items: baseline; font-size: .76rem; }
 .timings dt { color: var(--muted); }
 .timings dd { margin: 0; font-weight: 680; }
+.job-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
+.history-filters .button { min-height: 35px; }
+#history table { min-width: 900px; }
+#history td:last-child { font-family: var(--sans); }
+.history-cell { white-space: nowrap; font-size: .76rem; }
+.history-footer { padding: 0 17px 12px; }
+.history-footer:has(> [hidden]:only-child) { display: none; }
 
 .pool-row { padding: 12px 17px; }
 .pool-row + .pool-row { border-top: 1px solid var(--soft); }
@@ -182,6 +189,7 @@ code { padding: 1px 3px; border-radius: 3px; color: var(--accent); background: v
 .button.primary { background: var(--action); color: var(--action-ink); border-color: var(--action); }
 .button.primary:hover { background: var(--action-hover); border-color: var(--action-hover); }
 .button:disabled { opacity: .55; cursor: default; }
+.button[aria-busy="true"] { cursor: progress; }
 .inline-note { margin: 0; padding: 10px 17px; color: var(--muted); border-top: 1px solid var(--soft); font-size: .79rem; }
 .management { margin-top: 28px; }
 .management-heading { margin: 0 0 13px; }

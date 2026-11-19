@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -21,13 +22,23 @@ var version = "dev"
 func main() {
 	showVersion := flag.Bool("version", false, "print the Runquill version")
 	flag.Usage = func() {
-		fmt.Fprintln(flag.CommandLine.Output(), "Usage: runquill [--version] | runquill setup | runquill wizard | runquill workflow init | runquill doctor | runquill diagnose OWNER/REPO | runquill status [--json] | runquill gc --dry-run | runquill host {cordon|uncordon} HOST | runquill panel --demo | runquill worker | runquill backup --output FILE | runquill restore (--from FILE | --activate)")
+		fmt.Fprintln(flag.CommandLine.Output(), "Usage: runquill [--version] | runquill setup | runquill wizard | runquill workflow init | runquill doctor | runquill diagnose OWNER/REPO | runquill status [--json] | runquill gc (--dry-run | --remove-orphans [--grace DURATION]) | runquill host {cordon|uncordon} HOST | runquill panel --demo | runquill worker | runquill backup --output FILE | runquill restore (--from FILE | --activate)")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
 	if *showVersion {
 		fmt.Println(version)
 		return
+	}
+	handler, level, err := logHandler(os.Stderr, os.Getenv("RUNQUILL_LOG_FORMAT"), os.Getenv("RUNQUILL_LOG_LEVEL"))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	if handler != nil {
+		slog.SetDefault(slog.New(handler))
+	} else {
+		slog.SetLogLoggerLevel(level)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -135,12 +146,18 @@ func main() {
 	if flag.Arg(0) == "gc" {
 		flags := flag.NewFlagSet("runquill gc", flag.ExitOnError)
 		dryRun := flags.Bool("dry-run", false, "inspect runners and leases without changes")
+		removeOrphans := flags.Bool("remove-orphans", false, "remove untracked idle runners on local and SSH Docker hosts and delete their GitHub registrations")
+		grace := flags.Duration("grace", defaultOrphanGrace, "with --remove-orphans, keep runners created more recently than this (at least 1m)")
+		flags.Usage = func() {
+			fmt.Fprintln(flags.Output(), "Usage: runquill gc (--dry-run | --remove-orphans [--grace DURATION])")
+			flags.PrintDefaults()
+		}
 		flags.Parse(flag.Args()[1:])
-		if !*dryRun || flags.NArg() != 0 {
+		if *dryRun == *removeOrphans || flags.NArg() != 0 || *grace < time.Minute {
 			flags.Usage()
 			os.Exit(2)
 		}
-		if err := gc(ctx, os.Stdout); err != nil {
+		if err := gc(ctx, os.Stdout, *removeOrphans, *grace); err != nil {
 			slog.Error("runquill gc", "error", err)
 			os.Exit(1)
 		}
@@ -185,7 +202,7 @@ type config struct {
 	repositoryScope                            string
 	organization                               bool
 	runnerGroupID                              int64
-	limit                                      int
+	limit, maxPerRepository, workers           int
 	pollInterval                               time.Duration
 }
 
@@ -214,6 +231,14 @@ func loadConfig() (config, error) {
 		return cfg, err
 	}
 	cfg.limit = limit
+	cfg.maxPerRepository, err = strconv.Atoi(env("RUNQUILL_MAX_PER_REPOSITORY", "0"))
+	if err != nil || cfg.maxPerRepository < 0 || cfg.maxPerRepository > maxPerRepositoryLimit {
+		return cfg, fmt.Errorf("RUNQUILL_MAX_PER_REPOSITORY must be an integer from 0 (unlimited) to %d", maxPerRepositoryLimit)
+	}
+	cfg.workers, err = strconv.Atoi(env("RUNQUILL_SCHEDULER_WORKERS", "4"))
+	if err != nil || cfg.workers < 1 || cfg.workers > 32 {
+		return cfg, errors.New("RUNQUILL_SCHEDULER_WORKERS must be an integer from 1 (serial) to 32")
+	}
 	cfg.repositoryScope, err = parseRepositoryScope(os.Getenv(repositoryScopeEnv))
 	if err != nil {
 		return cfg, fmt.Errorf("%s: %w", repositoryScopeEnv, err)
@@ -266,6 +291,19 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	api.ready = &readiness{}
+	// The notify URL is a secret: its errors never include it.
+	notify, err := notifierFromEnv(os.Getenv)
+	if err != nil {
+		return fmt.Errorf("configure RUNQUILL_NOTIFY_*: %w", err)
+	}
+	defer func() {
+		closing, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := notify.Close(closing); err != nil {
+			slog.Warn("deliver pending notifications", "error", err)
+		}
+	}()
 	runners, err := configureRunnerRuntime(cfg.runnerImage)
 	if err != nil {
 		return err
@@ -318,7 +356,8 @@ func run(ctx context.Context) error {
 		}
 		defer panelListener.Close()
 	}
-	s := &scheduler{queue: q, github: api, panel: panel, operations: ops}
+	s := &scheduler{queue: q, github: api, panel: panel, operations: ops,
+		alerts: &fleetAlerts{notifier: notify}, maxPerRepository: cfg.maxPerRepository, workers: cfg.workers}
 	metrics, err := openMetrics(os.Getenv("RUNQUILL_METRICS_ADDR"), os.Getenv("RUNQUILL_METRICS_TOKEN_FILE"))
 	if err != nil {
 		return err
@@ -326,6 +365,7 @@ func run(ctx context.Context) error {
 	if metrics != nil {
 		defer metrics.listener.Close()
 		s.metrics = &metrics.fleetMetrics
+		s.metrics.notify = notify
 	}
 	server := &http.Server{
 		Addr:              net.JoinHostPort(env("RUNQUILL_BIND", "127.0.0.1"), env("RUNQUILL_PORT", "8080")),
@@ -406,6 +446,27 @@ func run(ctx context.Context) error {
 	<-workerExit
 	<-pollExit
 	return serveErr
+}
+
+// logHandler returns a nil handler when the standard log output should be kept.
+func logHandler(w io.Writer, format, level string) (slog.Handler, slog.Level, error) {
+	var minimum slog.Level
+	if level != "" {
+		if err := minimum.UnmarshalText([]byte(level)); err != nil {
+			return nil, 0, errors.New("RUNQUILL_LOG_LEVEL must be debug, info, warn or error")
+		}
+	}
+	options := &slog.HandlerOptions{Level: minimum}
+	switch format {
+	case "":
+		return nil, minimum, nil
+	case "text":
+		return slog.NewTextHandler(w, options), minimum, nil
+	case "json":
+		return slog.NewJSONHandler(w, options), minimum, nil
+	default:
+		return nil, 0, errors.New("RUNQUILL_LOG_FORMAT must be text or json")
+	}
 }
 
 func env(name, fallback string) string {

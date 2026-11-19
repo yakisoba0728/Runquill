@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -125,5 +126,37 @@ func TestPanelSettingsAreAuditedAndAppliedWithoutRestart(t *testing.T) {
 	var changes int
 	if err := q.QueryRow("SELECT count(*) FROM panel_audit WHERE action='settings.update' AND actor=101").Scan(&changes); err != nil || changes != 1 {
 		t.Fatalf("settings audit count %d: %v", changes, err)
+	}
+	var target string
+	if err := q.QueryRow("SELECT target FROM panel_audit WHERE action='settings.update'").Scan(&target); err != nil ||
+		target != "docker: slot_limit 2 -> 4; poll_interval 30s -> 45s; host_limits[local] unset -> 3; worker_pools +build" {
+		t.Fatalf("settings audit target %q: %v", target, err)
+	}
+}
+
+func TestSettingsChangeSummaryNamesFieldsWithoutSecrets(t *testing.T) {
+	off := false
+	old := operationPolicy{Limit: 2, PollInterval: "30s", Image: "runner:1", Hosts: []string{"local", "ssh://a@b"},
+		HostLimits: map[string]int{"local": 2},
+		Pools:      workerPools{"build": {Hosts: []string{"local"}, CPUs: 2}, "old": {Hosts: []string{"ssh://a@b"}}}}
+	next := operationPolicy{Limit: 2, PollInterval: "30s", Image: "runner:2", Hosts: []string{"local", "agent://c"},
+		Pools: workerPools{"build": {Hosts: []string{"local"}, CPUs: 4, Privileged: &off, Cache: true}}}
+	got := settingsChangeSummary("docker", old, next)
+	want := "docker: runner_image runner:1 -> runner:2; docker_hosts +agent://c; docker_hosts -ssh://a@b; " +
+		"host_limits[local] 2 -> unset; worker_pools[build].cache default -> true; worker_pools[build].cpus 2 -> 4; " +
+		"worker_pools[build].privileged default -> false; worker_pools -old"
+	if got != want {
+		t.Fatalf("summary\n got %s\nwant %s", got, want)
+	}
+	if got := settingsChangeSummary("kubernetes", old, old); got != "kubernetes: no changes" {
+		t.Fatalf("unchanged summary: %s", got)
+	}
+	long := next
+	long.Image = strings.Repeat("x", 2000)
+	if got := []rune(settingsChangeSummary("docker", old, long)); len(got) != settingsSummaryLimit {
+		t.Fatalf("summary was not capped: %d", len(got))
+	}
+	if !secretSettingName.MatchString("api_token") || secretSettingName.MatchString("max_per_repository") {
+		t.Fatal("secret field names are not recognised")
 	}
 }

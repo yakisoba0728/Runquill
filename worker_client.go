@@ -247,7 +247,8 @@ func (c *workerClient) apply(ctx context.Context, task workerTask) error {
 	}
 	target := c.target
 	target.cpus, target.memoryMiB = task.CPUs, task.MemoryMiB
-	return target.start(ctx, task.Name, task.JIT)
+	target.unprivileged, target.cache = task.Unprivileged, task.CacheRepository > 0
+	return target.start(withRunnerRepository(ctx, task.CacheRepository), task.Name, task.JIT)
 }
 
 func (d docker) removeWorkerRunner(ctx context.Context, name string) error {

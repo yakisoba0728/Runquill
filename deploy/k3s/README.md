@@ -44,6 +44,23 @@ Pending runner Pods can show scheduling, image pull, volume mount and container 
 | `RUNQUILL_K8S_JOB_MEMORY` | unset | Optional memory request and limit, for example `4Gi`. |
 | `RUNQUILL_K8S_RUNNER_MODE` | `plain` | `plain` executes steps directly under UID 1001. `dind` adds the privileged Docker daemon for Docker builds and container-based jobs, actions, and services. |
 
-For DinD, use a dedicated cluster with trusted workflows. Label the approved worker nodes, set `RUNQUILL_K8S_NODE_SELECTOR` to select them, and allow privileged Pods in the runner namespace only. Keep the manager namespace restricted. Leave `RUNQUILL_DOCKER_HOSTS`, `RUNQUILL_DOCKER_HOST_LIMITS`, and `RUNQUILL_WORKER_POOLS` empty for this backend. Use `runquill host cordon kubernetes` to pause new assignments without interrupting active jobs.
+For DinD, use a dedicated cluster with trusted workflows. Label the approved worker nodes, set `RUNQUILL_K8S_NODE_SELECTOR` to select them, and allow privileged Pods in the runner namespace only. Keep the manager namespace restricted. Leave `RUNQUILL_DOCKER_HOSTS`, `RUNQUILL_DOCKER_HOST_LIMITS`, and `RUNQUILL_WORKER_POOLS` empty for this backend. `RUNQUILL_MAX_PER_REPOSITORY`, `RUNQUILL_SCHEDULER_WORKERS`, the `RUNQUILL_LOG_*` and `RUNQUILL_NOTIFY_*` settings apply here as well. Add them to `.env`, recreate `runquill-config`, and restart the Deployment. Use `runquill host cordon kubernetes` to pause new assignments without interrupting active jobs.
 
 The default K3s local-path volume persists manager restarts on its storage node. Use cluster-appropriate persistent storage and backups for recovery from node loss. Keep the manager at one replica. Drain existing jobs before switching the runner backend.
+
+The bundled manifest probes `/healthz`, which checks only the queue database. `GET /readyz` on port 8080 also reports a stalled scheduler or failing GitHub App authentication if you want to probe or alert on it. `runquill gc --remove-orphans` supports Docker hosts only and skips this backend.
+
+## Upgrade and uninstall
+
+With a release that supports it, run `sh install.sh --upgrade --dir runquill` to replace the release files, including `runquill-k3s.yaml`, then apply the new manifest. The Secrets and the queue PVC are kept.
+
+```sh
+kubectl apply -f runquill-k3s.yaml
+kubectl -n runquill-system rollout status deployment/runquill
+```
+
+To uninstall, delete the manifest's objects. This removes both namespaces with the manager, runner Pods, Secrets and the queue PVC. Back up the queue first if you might need it, then delete the GitHub App as described in the [README](../../README.md#uninstall).
+
+```sh
+kubectl delete -f runquill-k3s.yaml
+```

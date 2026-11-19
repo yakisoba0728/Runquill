@@ -4,20 +4,25 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"errors"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
 var panelOperation = make(chan struct{}, 1)
 
-func panelOperationContext(w http.ResponseWriter, r *http.Request) (context.Context, func(), bool) {
+// Large queues need longer than the panel's 10s write timeout to copy and send.
+const panelBackupTimeout = 30 * time.Minute
+
+func panelOperationContext(w http.ResponseWriter, r *http.Request, timeout time.Duration) (context.Context, func(), bool) {
 	select {
 	case panelOperation <- struct{}{}:
-		ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
-		return ctx, func() { cancel(); <-panelOperation }, true
+		ctx, cancel := context.WithTimeout(r.Context(), timeout)
+		return ctx, sync.OnceFunc(func() { cancel(); <-panelOperation }), true
 	default:
 		http.Error(w, "Another operation is running. Try again shortly.", http.StatusTooManyRequests)
 		return nil, nil, false
@@ -25,7 +30,14 @@ func panelOperationContext(w http.ResponseWriter, r *http.Request) (context.Cont
 }
 
 func (a *panelAccess) downloadBackup(w http.ResponseWriter, r *http.Request, user panelIdentity) {
-	ctx, done, ok := panelOperationContext(w, r)
+	// The server's write deadline started when the request headers arrived.
+	// Recorders and other writers without deadlines report ErrNotSupported.
+	err := http.NewResponseController(w).SetWriteDeadline(time.Now().Add(panelBackupTimeout))
+	if err != nil && !errors.Is(err, http.ErrNotSupported) {
+		http.Error(w, "Could not prepare the queue backup.", http.StatusServiceUnavailable)
+		return
+	}
+	ctx, done, ok := panelOperationContext(w, r, panelBackupTimeout)
 	if !ok {
 		return
 	}
@@ -52,6 +64,8 @@ func (a *panelAccess) downloadBackup(w http.ResponseWriter, r *http.Request, use
 		http.Error(w, "Could not authorize the backup download.", http.StatusForbidden)
 		return
 	}
+	// The copy is complete and audited; a slow download must not block other operations.
+	done()
 	w.Header().Set("Content-Type", "application/vnd.sqlite3")
 	w.Header().Set("Content-Disposition", "attachment; filename="+name)
 	http.ServeContent(w, r, name, time.Time{}, file)
@@ -62,7 +76,7 @@ func panelDiagnose(w http.ResponseWriter, r *http.Request, _ panelIdentity) {
 	if !decodePanelJSON(w, r, &request) {
 		return
 	}
-	ctx, done, ok := panelOperationContext(w, r)
+	ctx, done, ok := panelOperationContext(w, r, 8*time.Second)
 	if !ok {
 		return
 	}

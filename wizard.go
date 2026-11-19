@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	_ "embed"
+	"errors"
 	"flag"
 	"fmt"
 	"html/template"
@@ -14,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -43,6 +45,55 @@ type setupWizard struct {
 	networkEnabled   bool
 	checkCompose     bool
 	progress         wizardProgress
+	form             wizardForm
+	issue            *wizardIssue
+}
+
+// wizardIssue is a first-step problem the browser can explain beside the field that caused it.
+type wizardIssue struct {
+	field, ko, en string
+	cause         error
+}
+
+func (issue *wizardIssue) Error() string {
+	if issue.cause != nil {
+		return issue.en + " (" + issue.cause.Error() + ")"
+	}
+	return issue.en
+}
+
+func (issue *wizardIssue) Unwrap() error { return issue.cause }
+
+func newWizardIssue(field, ko, en string) error { return &wizardIssue{field: field, ko: ko, en: en} }
+
+// wizardForm keeps the first-step answers so a rejected submission can be corrected in place.
+type wizardForm struct {
+	Backend, Repositories, Context, Organization, Group, PanelURL, WebhookURL string
+	Serve, Funnel                                                             bool
+}
+
+var wizardAdvancedFields = []string{"organization", "group", "panel_url", "webhook_url", "serve", "funnel"}
+
+func wizardFormValues(form url.Values) wizardForm {
+	return wizardForm{
+		Backend: form.Get("backend"), Repositories: form.Get("repositories"), Context: form.Get("context"),
+		Organization: form.Get("organization"), Group: form.Get("group"),
+		PanelURL: wizardVisibleURL(form.Get("panel_url")), WebhookURL: wizardVisibleURL(form.Get("webhook_url")),
+		Serve: form.Get("serve") == "on", Funnel: form.Get("funnel") == "on",
+	}
+}
+
+// wizardVisibleURL drops an address that embeds credentials instead of echoing them into the page.
+func wizardVisibleURL(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.User != nil {
+		return ""
+	}
+	return raw
+}
+
+func (form wizardForm) advanced() bool {
+	return form.Organization != "" || form.Group != "" || form.PanelURL != "" || form.WebhookURL != "" || form.Serve || form.Funnel
 }
 
 //go:embed panelweb/wizard.css
@@ -114,30 +165,32 @@ var wizardHome = template.Must(template.New("wizard").Parse(`
         <li{{if eq .Phase "working"}} aria-current="step"{{end}}>GitHub</li>
         <li{{if or (eq .Phase "ready") (eq .Phase "deploying") (eq .Phase "done")}} aria-current="step"{{end}}>{{if .KO}}배포{{else}}Deploy{{end}}</li>
       </ol>
-      {{if .Error}}<p class="notice" role="alert">
-        {{if eq .Phase "ready"}}{{if .KO}}배포 점검을 통과하지 못했습니다. 아래 로그에서 원인을 확인하세요.{{else}}Deployment checks failed. See the log below.{{end}}
+      <p class="notice connection" id="wizard-connection" role="status" data-reconnecting="{{if .KO}}설치 마법사에 다시 연결하는 중입니다…{{else}}Reconnecting to the setup wizard…{{end}}" data-ended="{{if .KO}}설치 세션이 끝났습니다. 새 설치 링크를 열어 주세요.{{else}}This setup session ended. Open a new setup link.{{end}}"></p>
+      {{if .Error}}<p class="notice" role="alert" id="wizard-error">
+        {{if .Problem}}{{.Problem}}
+        {{else if eq .Phase "ready"}}{{if .KO}}배포 점검을 통과하지 못했습니다. 아래 로그에서 원인을 확인하세요.{{else}}Deployment checks failed. See the log below.{{end}}
         {{else}}{{if .KO}}설정 중 문제가 발생했습니다. Runquill 터미널에서 원인을 확인하세요.{{else}}Setup needs attention. Check the Runquill terminal for details.{{end}}{{end}}
       </p>{{end}}
       {{if eq .Phase "options"}}
       <h1>{{if .KO}}Runquill 시작하기{{else}}Set up Runquill{{end}}</h1>
       <form method="post" action="/start">
         <div class="form-grid">
-          <label>{{if .KO}}설치 환경{{else}}Deployment target{{end}}<select name="backend"><option value="docker">Docker Compose</option><option value="k3s">K3s</option></select></label>
-          <label>{{if .KO}}저장소 연결 범위{{else}}Repository access{{end}}<select name="repositories"><option value="all">{{if .KO}}전체 저장소{{else}}All repositories{{end}}</option><option value="selected">{{if .KO}}선택한 저장소{{else}}Selected repositories{{end}}</option></select></label>
+          <label>{{if .KO}}설치 환경{{else}}Deployment target{{end}}<select name="backend"{{if eq .Field "backend"}} aria-invalid="true" aria-describedby="wizard-error" autofocus{{end}}><option value="docker">Docker Compose</option><option value="k3s"{{if eq .Form.Backend "k3s"}} selected{{end}}>K3s</option></select></label>
+          <label>{{if .KO}}저장소 연결 범위{{else}}Repository access{{end}}<select name="repositories"><option value="all">{{if .KO}}전체 저장소{{else}}All repositories{{end}}</option><option value="selected"{{if eq .Form.Repositories "selected"}} selected{{end}}>{{if .KO}}선택한 저장소{{else}}Selected repositories{{end}}</option></select></label>
         </div>
-        <label data-k3s>{{if .KO}}k3s 컨텍스트 이름{{else}}K3s context name{{end}} <input name="context" maxlength="200" spellcheck="false"></label>
-        <details class="advanced">
+        <label data-k3s{{if ne .Form.Backend "k3s"}} hidden{{end}}>{{if .KO}}k3s 컨텍스트 이름{{else}}K3s context name{{end}} <input name="context" maxlength="200" spellcheck="false" value="{{.Form.Context}}"{{if eq .Form.Backend "k3s"}} required{{end}}{{if eq .Field "context"}} aria-invalid="true" aria-describedby="wizard-error" autofocus{{end}}></label>
+        <details class="advanced"{{if .Advanced}} open{{end}}>
           <summary>{{if .KO}}조직 및 연결 설정{{else}}Organization and network{{end}}</summary>
           <div class="form-grid">
-            <label>{{if .KO}}GitHub 조직 (선택){{else}}GitHub organization (optional){{end}}<input name="organization" maxlength="39" spellcheck="false"></label>
-            <label>{{if .KO}}러너 그룹 ID (선택){{else}}Runner group ID (optional){{end}}<input name="group" inputmode="numeric" pattern="[0-9]*" maxlength="19"></label>
+            <label>{{if .KO}}GitHub 조직 (선택){{else}}GitHub organization (optional){{end}}<input name="organization" maxlength="39" spellcheck="false" value="{{.Form.Organization}}"{{if eq .Field "organization"}} aria-invalid="true" aria-describedby="wizard-error" autofocus{{end}}></label>
+            <label>{{if .KO}}러너 그룹 ID (선택){{else}}Runner group ID (optional){{end}}<input name="group" inputmode="numeric" pattern="[0-9]*" maxlength="19" value="{{.Form.Group}}"{{if eq .Field "group"}} aria-invalid="true" aria-describedby="wizard-error" autofocus{{end}}></label>
           </div>
-          <label>{{if .KO}}패널 주소 (선택){{else}}Panel origin (optional){{end}}<input name="panel_url" type="url" placeholder="http://127.0.0.1:8081"></label>
-          <label>{{if .KO}}외부 웹훅 주소 (선택){{else}}Public webhook URL (optional){{end}}<input name="webhook_url" type="url" placeholder="https://example.com/webhook"></label>
+          <label>{{if .KO}}패널 주소 (선택){{else}}Panel origin (optional){{end}}<input name="panel_url" type="url" placeholder="http://127.0.0.1:8081" value="{{.Form.PanelURL}}"{{if eq .Field "panel_url"}} aria-invalid="true" aria-describedby="wizard-error" autofocus{{end}}></label>
+          <label>{{if .KO}}외부 웹훅 주소 (선택){{else}}Public webhook URL (optional){{end}}<input name="webhook_url" type="url" placeholder="https://example.com/webhook" value="{{.Form.WebhookURL}}"{{if eq .Field "webhook_url"}} aria-invalid="true" aria-describedby="wizard-error" autofocus{{end}}></label>
           <fieldset>
             <legend>Tailscale</legend>
-            <label class="check"><input type="checkbox" name="serve">{{if .KO}}Serve로 패널을 tailnet에 연결{{else}}Serve the panel privately on the tailnet{{end}}</label>
-            <label class="check"><input type="checkbox" name="funnel">{{if .KO}}Funnel로 웹훅 경로를 인터넷에 공개{{else}}Expose the webhook path through Funnel{{end}}</label>
+            <label class="check"><input type="checkbox" name="serve"{{if .Form.Serve}} checked{{end}}{{if eq .Field "serve"}} aria-invalid="true" aria-describedby="wizard-error" autofocus{{end}}>{{if .KO}}Serve로 패널을 tailnet에 연결{{else}}Serve the panel privately on the tailnet{{end}}</label>
+            <label class="check"><input type="checkbox" name="funnel"{{if .Form.Funnel}} checked{{end}}{{if eq .Field "funnel"}} aria-invalid="true" aria-describedby="wizard-error" autofocus{{end}}>{{if .KO}}Funnel로 웹훅 경로를 인터넷에 공개{{else}}Expose the webhook path through Funnel{{end}}</label>
           </fieldset>
         </details>
         <input type="hidden" name="lang" value="{{.Language}}">
@@ -327,9 +380,23 @@ func (web *setupWizard) render(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{Name: "runquill_language", Value: language, Path: "/", SameSite: http.SameSiteLaxMode, MaxAge: 3600})
 	stage, log := web.progress.snapshot()
 	view := struct {
-		Language, Phase, Step, Install, Target, PanelURL, Stage, Log string
-		KO, K3s, Serve, Funnel, NetworkEnabled, CheckCompose, Error  bool
-	}{language, web.phase, web.step, web.installURL, web.kubeContext, web.panelLink(language), stage, log, language == "ko", web.options.kubernetes, web.network.serve, web.network.funnel, web.networkEnabled, web.checkCompose, web.failed}
+		Language, Phase, Step, Install, Target, PanelURL, Stage, Log, Problem, Field string
+		KO, K3s, Serve, Funnel, NetworkEnabled, CheckCompose, Error, Advanced        bool
+		Form                                                                         wizardForm
+	}{Language: language, Phase: web.phase, Step: web.step, Install: web.installURL, Target: web.kubeContext,
+		PanelURL: web.panelLink(language), Stage: stage, Log: log, KO: language == "ko", K3s: web.options.kubernetes,
+		Serve: web.network.serve, Funnel: web.network.funnel, NetworkEnabled: web.networkEnabled,
+		CheckCompose: web.checkCompose, Error: web.failed}
+	if web.phase == "options" {
+		view.Form = web.form
+		if web.failed && web.issue != nil {
+			view.Field, view.Problem = web.issue.field, web.issue.en
+			if view.KO {
+				view.Problem = web.issue.ko
+			}
+		}
+		view.Advanced = web.form.advanced() || slices.Contains(wizardAdvancedFields, view.Field)
+	}
 	web.mu.Unlock()
 	if !view.K3s {
 		view.Target = "Docker Compose"
@@ -365,6 +432,7 @@ func (web *setupWizard) start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	web.phase, web.failed = "working", false
+	web.form, web.issue = wizardForm{}, nil
 	if r.PostForm.Get("lang") == "ko" {
 		web.language = "ko"
 	} else {
@@ -385,34 +453,72 @@ func (web *setupWizard) setResult(phase string, err error) {
 	}
 }
 
-func (web *setupWizard) configure(form url.Values) {
+// reject returns to the first step with the submitted answers and, when known, the field to correct.
+func (web *setupWizard) reject(form url.Values, err error) {
+	var issue *wizardIssue
+	errors.As(err, &issue)
+	web.mu.Lock()
+	web.form, web.issue = wizardFormValues(form), issue
+	web.mu.Unlock()
+	web.setResult("options", err)
+}
+
+// wizardOptions checks the first-step answers before any GitHub or host change.
+func (web *setupWizard) wizardOptions(form url.Values) (setupOptions, string, error) {
 	opts := setupOptions{
 		panel: true, kubernetes: form.Get("backend") == "k3s", organization: strings.TrimSpace(form.Get("organization")),
 		repositoryScope: form.Get("repositories"), panelURL: strings.TrimSpace(form.Get("panel_url")),
 		webhookURL: strings.TrimSpace(form.Get("webhook_url")),
 	}
-	if raw := form.Get("group"); raw != "" {
+	if opts.organization != "" && !setupLogin.MatchString(opts.organization) {
+		return opts, "", newWizardIssue("organization", "GitHub 조직 로그인 이름을 정확히 입력하세요.", "Enter the GitHub organization's login name.")
+	}
+	if raw := strings.TrimSpace(form.Get("group")); raw != "" {
 		value, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil || value < 1 {
-			web.setResult("options", fmt.Errorf("enter a positive organization runner group ID"))
-			return
+			return opts, "", newWizardIssue("group", "러너 그룹 ID는 1 이상의 숫자여야 합니다.", "Enter a positive organization runner group ID.")
+		}
+		if opts.organization == "" {
+			return opts, "", newWizardIssue("group", "러너 그룹을 쓰려면 GitHub 조직도 입력하세요.", "A runner group needs a GitHub organization.")
 		}
 		opts.runnerGroupID = value
 	}
-	kubeContext := strings.TrimSpace(form.Get("context"))
-	if opts.kubernetes && (kubeContext == "" || strings.HasPrefix(kubeContext, "-") || len(kubeContext) > 200 || strings.ContainsAny(kubeContext, "\r\n")) {
-		web.setResult("options", fmt.Errorf("enter an explicit K3s context"))
-		return
-	}
-	if opts.kubernetes {
-		if _, err := os.Stat(filepath.Join(web.dir, "runquill-k3s.yaml")); err != nil {
-			web.setResult("options", fmt.Errorf("put the matching Runquill release's runquill-k3s.yaml in the installation directory: %w", err))
-			return
+	if opts.panelURL != "" {
+		if _, err := parsePanelURL(opts.panelURL); err != nil {
+			return opts, "", newWizardIssue("panel_url", "패널 주소는 HTTPS 주소 또는 루프백 HTTP 주소(경로·인증 정보 없이)여야 합니다.", "Use an HTTPS origin or a loopback HTTP origin for the panel, without a path or credentials.")
 		}
+	}
+	if opts.webhookURL != "" {
+		if err := (setupOptions{panel: true, webhookURL: opts.webhookURL}).validate(); err != nil {
+			return opts, "", newWizardIssue("webhook_url", "웹훅 주소는 /webhook으로 끝나는 HTTPS 주소여야 하며 인증 정보·쿼리·조각을 포함할 수 없습니다.", "Use an HTTPS URL ending in /webhook without credentials, query, or fragment.")
+		}
+	}
+	kubeContext := strings.TrimSpace(form.Get("context"))
+	if !opts.kubernetes {
+		return opts, kubeContext, nil
+	}
+	if kubeContext == "" || strings.HasPrefix(kubeContext, "-") || len(kubeContext) > 200 || strings.ContainsAny(kubeContext, "\r\n") {
+		return opts, kubeContext, newWizardIssue("context", "배포할 k3s 컨텍스트 이름을 정확히 입력하세요.", "Enter an explicit K3s context.")
+	}
+	if _, err := os.Stat(filepath.Join(web.dir, "runquill-k3s.yaml")); err != nil {
+		return opts, kubeContext, &wizardIssue{
+			ko:    "설치 디렉터리에 같은 Runquill 릴리스의 runquill-k3s.yaml 파일이 없습니다. 파일을 넣은 뒤 다시 시도하세요.",
+			en:    "Put the matching Runquill release's runquill-k3s.yaml in the installation directory, then try again.",
+			cause: err,
+		}
+	}
+	return opts, kubeContext, nil
+}
+
+func (web *setupWizard) configure(form url.Values) {
+	opts, kubeContext, err := web.wizardOptions(form)
+	if err != nil {
+		web.reject(form, err)
+		return
 	}
 	network := wizardNetwork{serve: form.Get("serve") == "on", funnel: form.Get("funnel") == "on"}
 	if err := network.configure(web.ctx, &opts); err != nil {
-		web.setResult("options", err)
+		web.reject(form, err)
 		return
 	}
 	web.mu.Lock()
@@ -420,17 +526,17 @@ func (web *setupWizard) configure(form url.Values) {
 	web.mu.Unlock()
 	ctx := context.WithValue(web.ctx, setupWizardKey{}, web)
 	if err := setup(ctx, web.log, web.dir, web.client, web.apiBase, opts); err != nil {
-		web.setResult("options", err)
+		web.reject(form, err)
 		return
 	}
 	data, err := os.ReadFile(filepath.Join(web.dir, setupEnvFile))
 	if err != nil {
-		web.setResult("options", err)
+		web.reject(form, err)
 		return
 	}
 	values, err := setupValues(data)
 	if err != nil {
-		web.setResult("options", err)
+		web.reject(form, err)
 		return
 	}
 	web.mu.Lock()

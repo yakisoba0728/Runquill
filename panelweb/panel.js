@@ -1,4 +1,4 @@
-import { language, localizeDocument, tr } from "./i18n.js";
+import { language, localizeDocument, serverText, tr } from "./i18n.js";
 
 localizeDocument();
 const el = (id) => document.getElementById(id);
@@ -11,7 +11,7 @@ const navLinks = [...document.querySelectorAll(".sidebar nav a")];
 let view = "queue";
 let selected = null;
 let current = null;
-let refreshError = false;
+let retrySeconds = 0;
 let management = null;
 let user = null;
 
@@ -74,8 +74,8 @@ function githubLink(id, url) {
 }
 
 function tone(status) {
-  if (["RUNNING", "UP", "CLEANED"].includes(status)) return "ok";
-  if (["OFFLINE", "UNAVAILABLE"].includes(status)) return "bad";
+  if (["RUNNING", "UP", "CLEANED", "FINISHED"].includes(status)) return "ok";
+  if (["OFFLINE", "UNAVAILABLE", "FAILED"].includes(status)) return "bad";
   if (["RETRY", "WAITING", "CORDONED", "CLEANUP"].includes(status)) return "warn";
   return "";
 }
@@ -215,6 +215,35 @@ function renderInventory(inventory, jobs) {
   }
 }
 
+function dateStamp(value) {
+  return value ? new Date(value).toLocaleString(language, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
+}
+
+function canChangeJobs() {
+  return !demoMode && !!user && user.role !== "viewer";
+}
+
+// Buttons for a job that waits without a runner. Each asks for confirmation in
+// manage.js; done runs after the server applied the change.
+function jobActionButtons(job, messageID, done) {
+  if (!canChangeJobs()) return [];
+  const actions = [];
+  if (job.retry_at) actions.push(["retry", "Retry now"]);
+  actions.push(["cancel", "Cancel job"]);
+  return actions.map(([kind, label]) => {
+    const control = node("button", label, "button");
+    control.type = "button";
+    control.dataset.jobAction = kind + ":" + job.id;
+    control.setAttribute("aria-label", tr("{action} for job {id}", { action: tr(label), id: job.id }));
+    control.addEventListener("click", async () => {
+      control.disabled = true;
+      if (await management.jobAction(job, kind, messageID)) await done();
+      control.disabled = false;
+    });
+    return control;
+  });
+}
+
 function renderDetails(job) {
   const details = el("job-details");
   details.hidden = !job;
@@ -237,6 +266,14 @@ function renderDetails(job) {
   text("detail-retry", retry);
   el("detail-route").hidden = !job.runner_label;
   text("detail-label", job.runner_label || "");
+  const detailActions = el("detail-actions");
+  const focusedAction = document.activeElement?.dataset.jobAction;
+  detailActions.replaceChildren(...(pendingJob(job) && !job.runner ? jobActionButtons(job, "job-action-message", async () => {
+    selected = null;
+    await refresh();
+  }) : []));
+  detailActions.hidden = !detailActions.childElementCount;
+  if (focusedAction) detailActions.querySelector('[data-job-action="' + CSS.escape(focusedAction) + '"]')?.focus({ preventScroll: true });
   const timings = el("detail-timings");
   timings.replaceChildren();
   for (const [label, seconds] of [
@@ -339,6 +376,102 @@ function renderJobs() {
   if (previouslyFocused) rows.querySelector('[data-job="' + CSS.escape(previouslyFocused) + '"]')?.focus({ preventScroll: true });
 }
 
+const historyPage = 25;
+let historyRows = [];
+let historyCursor = 0;
+let historyLoaded = false;
+
+function historyQuery(more) {
+  const form = new FormData(el("history-form"));
+  const query = new URLSearchParams({ limit: String(historyPage) });
+  const repository = String(form.get("repository") || "").trim();
+  if (repository) query.set("repository", repository);
+  if (form.get("outcome")) query.set("outcome", String(form.get("outcome")));
+  const range = Number(form.get("range"));
+  if (range) query.set("since", String(Math.floor(Date.now() / 1000) - range));
+  if (more && historyCursor) query.set("before", String(historyCursor));
+  return query;
+}
+
+async function loadHistory(more = false, keepMessage = false) {
+  if (!demoMode && !user) return;
+  const query = historyQuery(more);
+  if (!keepMessage) el("history-message").hidden = true;
+  let page;
+  try {
+    page = demoMode ? (await import("./demo.js")).history(query) : await management.panelRequest("./api/jobs?" + query);
+  } catch (error) {
+    if (error.status === 401) {
+      signedOut = true;
+      management.showLogin("Your session ended. Sign in again to view the fleet.");
+      return;
+    }
+    el("history-message").hidden = false;
+    text("history-message", serverText(error.message) || "Request failed.");
+    return;
+  }
+  historyRows = more ? historyRows.concat(page.jobs) : page.jobs;
+  historyCursor = page.next || 0;
+  historyLoaded = true;
+  renderHistory();
+}
+
+function historyState(job) {
+  if (job.outcome === "waiting") return job.retry_at ? "RETRY" : "WAITING";
+  return job.outcome.toUpperCase();
+}
+
+function renderHistory() {
+  const rows = el("history-rows");
+  rows.replaceChildren();
+  el("history-empty").hidden = historyRows.length > 0;
+  text("history-empty", historyLoaded ? "No jobs match these filters." : "Loading job history…");
+  el("history-more").hidden = !historyCursor;
+  for (const job of historyRows) {
+    const row = node("tr");
+    const identity = node("td");
+    if (isGitHubJobURL(job.url)) {
+      const link = node("a", job.repository);
+      link.href = job.url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.setAttribute("aria-label", tr("{repo} job {id} on GitHub", { repo: job.repository, id: job.id }));
+      identity.append(link);
+    } else {
+      identity.append(node("span", job.repository));
+    }
+    identity.append(node("span", "#" + job.id + (job.runner_label ? " · " + job.runner_label : ""), "job-meta"));
+    const state = historyState(job);
+    const outcome = node("td");
+    outcome.append(badge(state));
+    const reason = job.failure || (job.outcome === "waiting" ? job.retry_reason : "");
+    if (reason) outcome.append(node("small", tr(job.failure ? "Reason: {reason}" : "Last retry: {reason}", { reason: tr(reason) }), "row-note"));
+    if (job.retry_at) outcome.append(node("small", tr("Retry time {time}", { time: stamp(job.retry_at) }), "row-note"));
+    const actions = node("td");
+    const buttons = job.outcome === "waiting" ? jobActionButtons(job, "history-message", async () => {
+      await loadHistory(false, true);
+      void refresh();
+    }) : [];
+    if (buttons.length) {
+      const group = node("div", null, "job-actions");
+      group.append(...buttons);
+      actions.append(group);
+    } else {
+      actions.textContent = "—";
+    }
+    row.append(identity, outcome, node("td", job.pool ? poolName(job.pool) : "—"), node("td", job.host || "—"),
+      node("td", dateStamp(job.queued_at), "history-cell"), node("td", dateStamp(job.started_at), "history-cell"),
+      node("td", dateStamp(job.finished_at), "history-cell"), node("td", duration(job.wait_seconds), "numeric"), actions);
+    rows.append(row);
+  }
+}
+
+el("history-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  void loadHistory();
+});
+el("history-more").addEventListener("click", () => void loadHistory(true));
+
 function render() {
   if (!current) return;
   const fleet = current.fleet;
@@ -367,7 +500,8 @@ function render() {
   const hostLabels = ["{n} ready", "{n} offline", "{n} unavailable", "{n} on maintenance"];
   text("host-note", hostsKnown ? hostSummary.map((n, i) => tr(hostLabels[i], { n })).join(" · ") : "");
 
-  let notice = refreshError ? "Panel refresh failed. Showing the last available snapshot." : fleet?.docker_error;
+  let notice = retrySeconds ? tr("Connection lost. Retrying in {n}s. Showing the last available snapshot.", { n: retrySeconds })
+    : serverText(fleet?.docker_error);
   if (!notice && current.poll_failed) notice = "The latest GitHub poll failed. Check the manager logs.";
   el("notice").hidden = !notice;
   text("notice", notice || "");
@@ -420,26 +554,63 @@ for (const button of viewButtons) {
 el("job-search").addEventListener("input", renderJobs);
 el("job-pool").addEventListener("change", renderJobs);
 
+const refreshInterval = 3000;
+const maxRetryInterval = 30000;
+let refreshTimer = null;
+let refreshing = false;
+let failures = 0;
+let signedOut = false;
+
+// Polls every 3s while the tab is visible. Failures back off exponentially up
+// to 30s; a hidden tab stops polling and refreshes as soon as it is shown.
+function scheduleRefresh() {
+  clearTimeout(refreshTimer);
+  refreshTimer = null;
+  if (signedOut || document.hidden) return;
+  const delay = failures ? Math.min(maxRetryInterval, refreshInterval * 2 ** failures) : refreshInterval;
+  refreshTimer = setTimeout(refresh, delay);
+  return delay;
+}
+
 async function refresh() {
+  if (refreshing || signedOut) return;
+  clearTimeout(refreshTimer);
+  refreshTimer = null;
+  refreshing = true;
   try {
     const response = await fetch("./snapshot", { cache: "no-store", signal: AbortSignal.timeout(5000) });
     if (response.status === 401) {
+      signedOut = true;
       management.showLogin("Your session ended. Sign in again to view the fleet.");
       return;
     }
     if (!response.ok) throw new Error("snapshot unavailable");
     current = await response.json();
-    refreshError = false;
+    failures = 0;
+    retrySeconds = 0;
     render();
   } catch {
-    refreshError = true;
-    if (current) render();
-    else {
-      el("notice").hidden = false;
-      text("notice", "No snapshot is available yet. Runquill will try again.");
-    }
+    failures++;
+  } finally {
+    refreshing = false;
   }
-  setTimeout(refresh, 3000);
+  if (signedOut) return;
+  const delay = scheduleRefresh() ?? Math.min(maxRetryInterval, refreshInterval * 2 ** failures);
+  if (!failures) return;
+  retrySeconds = Math.round(delay / 1000);
+  if (current) render();
+  else {
+    el("notice").hidden = false;
+    text("notice", tr("Connection lost. Retrying in {n}s.", { n: retrySeconds }));
+    el("update-dot").dataset.tone = "warn";
+  }
+}
+
+function watchVisibility() {
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) scheduleRefresh();
+    else void refresh();
+  });
 }
 
 if (demoMode) {
@@ -456,11 +627,14 @@ if (demoMode) {
   }
   for (const button of demoButtons) button.addEventListener("click", () => scenario(button.dataset.scenario));
   scenario("first");
+  void loadHistory();
 } else {
   management = await import("./manage.js");
   user = await management.initializeManagement();
   if (user) {
     highlightNavigation();
-    refresh();
+    watchVisibility();
+    void refresh();
+    void loadHistory();
   }
 }

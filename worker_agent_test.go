@@ -251,6 +251,51 @@ func TestWorkerClaimIsRetainedAfterCanceledDispatch(t *testing.T) {
 	}
 }
 
+func TestOutboundWorkerCarriesPoolRuntimeOptions(t *testing.T) {
+	fleet, _ := workerTestFleet(t)
+	dir := workerTestDocker(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	fleet.hosts[0].unprivileged, fleet.hosts[0].cache = true, true
+	if err := fleet.startOn(ctx, testWorkerHost, testWorkerJob, "test-jit"); err == nil {
+		t.Fatal("dispatched a cached runner without a repository")
+	}
+	server := httptest.NewServer(fleet.workers.route(http.NotFoundHandler()))
+	defer server.Close()
+	worker := &workerClient{token: testWorkerToken, engine: "worker-engine", session: rand.Text(),
+		endpoint: server.URL + "/worker/v1/" + testWorkerName + "/poll",
+		target:   docker{image: testWorkerImage, worker: testWorkerName}, client: &http.Client{Timeout: 6 * time.Second}}
+	active, stop := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() { done <- worker.run(active) }()
+	for snapshots, err := fleet.snapshot(ctx); err != nil || snapshots[0].Err != nil || snapshots[0].Containers == nil; snapshots, err = fleet.snapshot(ctx) {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("worker did not connect: %+v (%v)", snapshots, err)
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	err := fleet.startOn(withRunnerRepository(ctx, 42), testWorkerHost, testWorkerJob, "test-jit")
+	stop()
+	if runErr := <-done; err != nil || runErr != nil {
+		t.Fatalf("start: %v, worker: %v", err, runErr)
+	}
+	log, err := os.ReadFile(filepath.Join(dir, "commands"))
+	if err != nil || !strings.Contains(string(log), "--user 1001:1001") || strings.Contains(string(log), "--privileged") ||
+		!strings.Contains(string(log), "type=volume,src=runquill-cache-42,dst=/home/runner/.cache") {
+		t.Fatalf("worker ignored pool runtime options: %s (%v)", log, err)
+	}
+	for _, task := range []workerTask{
+		{ID: "a", Operation: "remove", Name: testWorkerJob, Unprivileged: true, Expires: time.Now()},
+		{ID: "a", Operation: "remove", Name: testWorkerJob, CacheRepository: 42, Expires: time.Now()},
+		{ID: "a", Operation: "start", Name: testWorkerJob, Image: testWorkerImage, JIT: "x", CacheRepository: -1, Expires: time.Now()},
+	} {
+		if validWorkerTask(task) {
+			t.Errorf("accepted invalid worker task %+v", task)
+		}
+	}
+}
+
 func TestWorkerClientDoesNotReplayDockerMutation(t *testing.T) {
 	dir := workerTestDocker(t)
 	task := workerTask{ID: rand.Text(), Operation: "start", Name: testWorkerJob, Image: testWorkerImage,

@@ -10,12 +10,41 @@ repository_scope=
 organization=
 runner_group_id=
 download_only=false
+upgrade=false
 panel=false
 wizard=false
 panel_url=
 
 usage() {
-    printf '%s\n' 'Usage: sh install.sh [--version vX.Y.Z] [--dir PATH] [--webhook-url URL] [--listen-port PORT] [--repository-scope all|selected] [--organization ORG [--runner-group-id ID]] [--download-only] [--wizard] [--panel [--panel-url URL]]'
+    cat <<'EOF_USAGE'
+Usage: sh install.sh [--version vX.Y.Z] [--dir PATH] [--webhook-url URL] [--listen-port PORT] [--repository-scope all|selected] [--organization ORG [--runner-group-id ID]] [--download-only] [--wizard] [--panel [--panel-url URL]]
+       sh install.sh --upgrade [--version vX.Y.Z] [--dir PATH]
+
+  --version vX.Y.Z           Release to install (default: latest release).
+  --dir PATH                 Install directory (default: ./runquill).
+  --webhook-url URL          Subscribe the new GitHub App to webhooks at URL.
+  --listen-port PORT         Local port for the GitHub App setup callback.
+  --repository-scope SCOPE   Install the App on all or selected repositories.
+  --organization ORG         Create the GitHub App under organization ORG.
+  --runner-group-id ID       Register runners in this organization runner group.
+  --download-only            Download and verify the release; skip setup and Compose.
+  --wizard                   Download, then finish setup in the browser wizard.
+  --panel                    Configure the web panel and start Compose with it.
+  --panel-url URL            Browser origin of the panel (requires --panel).
+  --upgrade                  Replace the release files of an existing install in
+                             --dir after verifying checksums. Replaced files are
+                             kept in .previous/. .env, keys and data are untouched.
+  -h, --help                 Show this help.
+EOF_USAGE
+}
+
+fail() {
+    printf 'runquill install: %s\n' "$*" >&2
+    exit 1
+}
+
+require() {
+    command -v "$1" >/dev/null 2>&1 || fail "$1 is required but was not found. $2"
 }
 
 while [ "$#" -gt 0 ]; do
@@ -39,6 +68,7 @@ while [ "$#" -gt 0 ]; do
         --wizard) wizard=true; shift ;;
         --panel) panel=true; shift ;;
         --download-only) download_only=true; shift ;;
+        --upgrade) upgrade=true; shift ;;
         -h|--help) usage; exit 0 ;;
         *) usage >&2; exit 2 ;;
     esac
@@ -58,6 +88,11 @@ if [ "$wizard" = true ] && { [ "$panel" = true ] || [ -n "$webhook$repository_sc
     exit 2
 fi
 
+if [ "$upgrade" = true ] && { [ "$wizard" = true ] || [ "$panel" = true ] || [ -n "$webhook$listen_port$panel_url$repository_scope$organization$runner_group_id" ]; }; then
+    printf '%s\n' '--upgrade only accepts --version and --dir; it never reruns setup.' >&2
+    exit 2
+fi
+
 if [ "$(uname -s)" != Linux ]; then
     printf '%s\n' 'Run the installer on the Linux server that will run Runquill.' >&2
     exit 1
@@ -68,11 +103,17 @@ case "$(uname -m)" in
     *) printf '%s\n' 'Runquill releases support Linux amd64 and arm64.' >&2; exit 1 ;;
 esac
 
-command -v curl >/dev/null
-command -v sha256sum >/dev/null
-if [ "$download_only" = false ] && [ "$wizard" = false ]; then
-    docker compose version >/dev/null
-    docker info >/dev/null
+require curl 'Install curl with your package manager.'
+require sha256sum 'Install GNU coreutils (or BusyBox) to verify checksums.'
+for tool in awk cmp grep mktemp; do
+    require "$tool" 'Install it with your package manager.'
+done
+if [ "$download_only" = false ] && [ "$wizard" = false ] && [ "$upgrade" = false ]; then
+    require docker 'Install Docker Engine: https://docs.docker.com/engine/install/'
+    docker compose version >/dev/null 2>&1 ||
+        fail 'Docker Compose v2 is not available. Install the docker-compose-plugin package.'
+    docker info >/dev/null 2>&1 ||
+        fail 'The Docker daemon is not reachable. Start Docker, or run as a user allowed to use it (for example, a member of the docker group).'
 fi
 if [ -z "$tag" ]; then
     latest=$(curl --proto '=https' --proto-redir '=https' -fsSL -o /dev/null -w '%{url_effective}' "$repo/releases/latest")
@@ -81,6 +122,12 @@ fi
 if ! printf '%s\n' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$'; then
     printf '%s\n' 'Could not select a Runquill release tag. Specify --version vX.Y.Z.' >&2
     exit 1
+fi
+
+if [ "$upgrade" = true ]; then
+    if [ ! -f "$directory/runquill" ] || [ -L "$directory/runquill" ]; then
+        fail "No Runquill install found in $directory. Pass the existing install with --dir."
+    fi
 fi
 
 umask 077
@@ -112,12 +159,67 @@ done
     done
 )
 chmod 700 "$scratch/$binary"
+if [ "$upgrade" = true ]; then
+    # Only release assets are replaced; .env, keys, data and anything else stay as they are.
+    changed=
+    for name in runquill $files; do
+        asset=$name
+        if [ "$name" = runquill ]; then asset=$binary; fi
+        if [ -L "$name" ] || { [ -e "$name" ] && [ ! -f "$name" ]; }; then
+            fail "$name is not a regular file. Move it away and rerun --upgrade."
+        fi
+        if [ ! -e "$name" ] || ! cmp -s "$scratch/$asset" "$name"; then
+            changed="$changed $name"
+        fi
+    done
+    if [ -z "$changed" ]; then
+        printf 'Runquill %s is already installed in %s\n' "$tag" "$(pwd)"
+        exit 0
+    fi
+    if [ -L .previous ] || { [ -e .previous ] && [ ! -d .previous ]; }; then
+        fail '.previous is not a directory. Move it away and rerun --upgrade.'
+    fi
+    backup=$(mktemp -d .runquill-previous.XXXXXX)
+    for name in $changed; do
+        if [ -e "$name" ]; then cp -p -- "$name" "$backup/$name"; fi
+    done
+    rm -rf -- .previous
+    mv -- "$backup" .previous
+    for name in $changed; do
+        asset=$name
+        if [ "$name" = runquill ]; then asset=$binary; fi
+        mv -f -- "$scratch/$asset" "$name"
+    done
+    printf 'Upgraded Runquill to %s in %s\n' "$tag" "$(pwd)"
+    printf 'Replaced:%s\n' "$changed"
+    printf '%s\n' 'Previous copies are in .previous/. To roll back: cp -p .previous/* .'
+    printf '%s\n' 'Your .env, GitHub App key, and data were not changed.'
+    manager_image=
+    runner_image=
+    if [ -f .env ]; then
+        manager_image=$(awk -F= '$1 == "RUNQUILL_MANAGER_IMAGE" {print $2}' .env)
+        runner_image=$(awk -F= '$1 == "RUNQUILL_RUNNER_IMAGE" {print $2}' .env)
+    fi
+    if [ -n "$manager_image" ] || [ -n "$runner_image" ]; then
+        printf '%s\n' 'Point the images in .env at the new release:'
+        if [ -n "$manager_image" ]; then printf '  RUNQUILL_MANAGER_IMAGE=%s:%s\n' "${manager_image%:*}" "$tag"; fi
+        if [ -n "$runner_image" ]; then printf '  RUNQUILL_RUNNER_IMAGE=%s:%s\n' "${runner_image%:*}" "$tag"; fi
+        printf '%s\n' 'Then restart Compose from this directory (add -f compose.yaml -f compose.panel.yaml, or your other overlays, if you started it with them):'
+        if [ -n "$runner_image" ]; then printf '  docker pull %s:%s\n' "${runner_image%:*}" "$tag"; fi
+        printf '%s\n' '  docker compose pull manager' '  docker compose up -d --no-build' '  docker compose exec -T manager runquill doctor'
+    fi
+    if [ -f runquill-k3s.yaml ]; then
+        printf '%s\n' 'On K3s, apply the new manifest instead: kubectl apply -f runquill-k3s.yaml'
+    fi
+    printf 'Release notes: %s/releases/tag/%s\n' "$repo" "$tag"
+    exit 0
+fi
 for name in runquill $files; do
     asset=$name
     if [ "$name" = runquill ]; then asset=$binary; fi
     if [ -e "$name" ] || [ -L "$name" ]; then
         if [ -L "$name" ] || ! cmp -s "$scratch/$asset" "$name"; then
-            printf 'Existing %s differs. Choose an empty --dir for this release.\n' "$name" >&2
+            printf 'Existing %s differs. Choose an empty --dir for this release, or rerun with --upgrade to replace the release files.\n' "$name" >&2
             exit 1
         fi
     fi

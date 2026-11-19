@@ -1,14 +1,28 @@
 const backend = document.querySelector("[name=backend]");
 if (backend) {
   const contextLabel = document.querySelector("[data-k3s]");
-  const updateContext = () => { contextLabel.hidden = backend.value !== "k3s"; };
+  const contextInput = contextLabel.querySelector("input");
+  const updateContext = () => {
+    const k3s = backend.value === "k3s";
+    contextLabel.hidden = !k3s;
+    contextInput.required = k3s;
+  };
   backend.addEventListener("change", updateContext);
   updateContext();
+  for (const field of document.querySelectorAll("[aria-invalid=true]")) {
+    const clear = () => {
+      field.removeAttribute("aria-invalid");
+      field.removeAttribute("aria-describedby");
+    };
+    field.addEventListener("input", clear, { once: true });
+    field.addEventListener("change", clear, { once: true });
+  }
 }
 
 const { phase, step, install, stage } = document.body.dataset;
 const activity = document.getElementById("wizard-activity");
 const log = document.getElementById("wizard-log");
+const connection = document.getElementById("wizard-connection");
 const korean = document.documentElement.lang === "ko";
 const steps = {
   images: ["러너 이미지를 준비하고 있습니다.", "Preparing runner images."],
@@ -17,6 +31,12 @@ const steps = {
   network: ["Tailscale 연결을 적용하고 있습니다.", "Applying Tailscale settings."],
   check: ["서버와 GitHub 연결을 점검하고 있습니다.", "Checking the server and GitHub connection."],
 };
+const pollDelay = 1000;
+const maxPollDelay = 10000;
+let delay = pollDelay;
+let timer = 0;
+let inFlight = false;
+let stopped = false;
 
 function updateStage(next) {
   if (activity && Object.hasOwn(steps, next)) {
@@ -32,28 +52,60 @@ function updateLog(text) {
   if (atEnd) log.scrollTop = log.scrollHeight;
 }
 
-async function refresh() {
+function showConnection(key) {
+  if (!connection) return;
+  const text = key ? connection.dataset[key] || "" : "";
+  if (connection.textContent !== text) connection.textContent = text;
+}
+
+async function poll() {
   try {
     const response = await fetch("/status", { cache: "no-store", signal: AbortSignal.timeout(5000) });
-    if (response.status === 401) {
-      if (activity) activity.textContent = korean ? "설치 세션이 끝났습니다. 새 설치 링크를 열어 주세요." : "This setup session ended. Open a new setup link.";
-      return;
+    if (response.status === 401) return "ended";
+    if (!response.ok) return "failed";
+    const status = await response.json();
+    if (status.phase !== phase || status.step !== step || String(status.install) !== install) {
+      location.reload();
+      return "reload";
     }
-    if (response.ok) {
-      const status = await response.json();
-      if (status.phase !== phase || status.step !== step || String(status.install) !== install) {
-        location.reload();
-        return;
-      }
-      updateStage(status.stage);
-      updateLog(status.log);
-    }
+    updateStage(status.stage);
+    updateLog(status.log);
+    return "ok";
   } catch {
-    // Keep the last visible output while reconnecting to the wizard.
+    // Keep the last visible output while the wizard is unreachable.
+    return "failed";
   }
-  setTimeout(refresh, 1000);
+}
+
+function schedule() {
+  clearTimeout(timer);
+  timer = stopped || document.hidden ? 0 : setTimeout(refresh, delay);
+}
+
+async function refresh() {
+  if (inFlight || stopped) return;
+  inFlight = true;
+  const result = await poll();
+  inFlight = false;
+  if (result === "ended" || result === "reload") {
+    stopped = true;
+    showConnection(result === "ended" ? "ended" : "");
+    return;
+  }
+  // Back off while the wizard is unreachable, and resume the normal pace once it answers.
+  showConnection(result === "failed" ? "reconnecting" : "");
+  delay = result === "ok" ? pollDelay : Math.min(delay * 2, maxPollDelay);
+  schedule();
 }
 
 updateStage(stage);
 if (log) log.scrollTop = log.scrollHeight;
-if (phase === "working" || phase === "deploying") void refresh();
+if (phase === "working" || phase === "deploying") {
+  document.addEventListener("visibilitychange", () => {
+    if (stopped) return;
+    clearTimeout(timer);
+    timer = 0;
+    if (!document.hidden) void refresh();
+  });
+  void refresh();
+}

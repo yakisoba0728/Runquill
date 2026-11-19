@@ -3,9 +3,14 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"maps"
 	"net/http"
+	"regexp"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -69,7 +74,7 @@ func (a *panelAccess) saveOperationSettings(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "Could not save operation settings.", http.StatusServiceUnavailable)
 		return
 	}
-	err = a.change(ctx, user, "settings.update", next.runners.kind, func(tx *sql.Tx) error {
+	err = a.change(ctx, user, "settings.update", settingsChangeSummary(next.runners.kind, old.policy, next.policy), func(tx *sql.Tx) error {
 		for _, host := range removed {
 			var active bool
 			err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM jobs
@@ -170,4 +175,115 @@ func checkChangedWorkers(ctx context.Context, old, next *operationState) error {
 		}
 	}
 	return nil
+}
+
+const settingsSummaryLimit = 1000
+
+var secretSettingName = regexp.MustCompile(`(?i)secret|token|password|credential|key`)
+
+// settingsChangeSummary describes what a settings save changed for the audit
+// trail: field names with old -> new values. Fields whose names suggest a
+// secret are named without their values.
+func settingsChangeSummary(backend string, old, next operationPolicy) string {
+	var changes []string
+	scalar := func(name string, before, after any) {
+		if before != after {
+			changes = append(changes, fmt.Sprintf("%s %v -> %v", name, before, after))
+		}
+	}
+	scalar("slot_limit", old.Limit, next.Limit)
+	scalar("poll_interval", old.PollInterval, next.PollInterval)
+	scalar("runner_image", old.Image, next.Image)
+	for _, host := range next.Hosts {
+		if !slices.Contains(old.Hosts, host) {
+			changes = append(changes, "docker_hosts +"+host)
+		}
+	}
+	for _, host := range old.Hosts {
+		if !slices.Contains(next.Hosts, host) {
+			changes = append(changes, "docker_hosts -"+host)
+		}
+	}
+	for _, host := range sortedUnion(old.HostLimits, next.HostLimits) {
+		before, hadBefore := old.HostLimits[host]
+		after, hasAfter := next.HostLimits[host]
+		if before != after || hadBefore != hasAfter {
+			changes = append(changes, fmt.Sprintf("host_limits[%s] %s -> %s", host, optionalLimit(before, hadBefore), optionalLimit(after, hasAfter)))
+		}
+	}
+	for _, name := range sortedUnion(old.Pools, next.Pools) {
+		before, hadBefore := old.Pools[name]
+		after, hasAfter := next.Pools[name]
+		switch {
+		case !hadBefore:
+			changes = append(changes, "worker_pools +"+name)
+		case !hasAfter:
+			changes = append(changes, "worker_pools -"+name)
+		default:
+			changes = append(changes, poolChanges(name, before, after)...)
+		}
+	}
+	summary := backend
+	if len(changes) == 0 {
+		return summary + ": no changes"
+	}
+	summary += ": " + strings.Join(changes, "; ")
+	if runes := []rune(summary); len(runes) > settingsSummaryLimit {
+		summary = string(runes[:settingsSummaryLimit-1]) + "…"
+	}
+	return summary
+}
+
+func sortedUnion[V any](a, b map[string]V) []string {
+	keys := slices.Collect(maps.Keys(a))
+	for key := range b {
+		if _, ok := a[key]; !ok {
+			keys = append(keys, key)
+		}
+	}
+	slices.Sort(keys)
+	return keys
+}
+
+func optionalLimit(limit int, set bool) string {
+	if !set {
+		return "unset"
+	}
+	return fmt.Sprint(limit)
+}
+
+// poolChanges compares pools field by field through their JSON form, so
+// fields added to workerPool later are summarised without changes here.
+func poolChanges(name string, before, after workerPool) []string {
+	fields := func(pool workerPool) map[string]json.RawMessage {
+		data, _ := json.Marshal(pool)
+		var out map[string]json.RawMessage
+		json.Unmarshal(data, &out)
+		return out
+	}
+	old, next := fields(before), fields(after)
+	var changes []string
+	for _, field := range sortedUnion(old, next) {
+		a, b := string(old[field]), string(next[field])
+		if a == b {
+			continue
+		}
+		label := "worker_pools[" + name + "]." + field
+		if secretSettingName.MatchString(field) {
+			changes = append(changes, label+" changed")
+			continue
+		}
+		changes = append(changes, label+" "+settingValue(a)+" -> "+settingValue(b))
+	}
+	return changes
+}
+
+func settingValue(raw string) string {
+	switch {
+	case raw == "" || raw == "null":
+		return "default"
+	case len(raw) > 80:
+		return "(changed)"
+	}
+	return raw
 }

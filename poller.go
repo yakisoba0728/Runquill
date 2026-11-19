@@ -96,7 +96,7 @@ func (p *poller) sweep(ctx context.Context) (err error) {
 	}()
 	// A selected installation can gain repositories before an issued token expires.
 	selected := p.github.repositoryScope == scopeSelected
-	if selected || p.token.Token == "" || !p.token.ExpiresAt.After(now.Add(5*time.Minute)) {
+	if selected || !p.token.usable(now) {
 		jwt, err := p.github.jwt(now)
 		if err != nil {
 			return err

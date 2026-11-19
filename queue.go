@@ -36,6 +36,7 @@ type job struct {
 	githubCreatedAt, discoveredAt    int64
 	provisionedAt, githubStartedAt   int64
 	discoverySource                  string
+	failure                          string
 }
 
 type queue struct {
@@ -126,6 +127,7 @@ func (q *queue) migrate() error {
 		{"discovery_source", "TEXT"},
 		{"runner_cleaned_at", "INTEGER"},
 		{"runner_cleaned_host", "TEXT"},
+		{"failure", "TEXT"},
 	} {
 		present, err := hasJobColumn(context.Background(), q.DB, column.name)
 		if err != nil {
@@ -152,6 +154,7 @@ func (q *queue) migrate() error {
         PRIMARY KEY (installation_id, repository_id)
     );
     CREATE INDEX IF NOT EXISTS jobs_recent ON jobs(installation_id, changed_at);
+    CREATE INDEX IF NOT EXISTS jobs_repository ON jobs(repository COLLATE NOCASE, sequence);
     CREATE INDEX IF NOT EXISTS jobs_cleaned ON jobs(runner_cleaned_at) WHERE runner_cleaned_at IS NOT NULL;
     CREATE INDEX IF NOT EXISTS jobs_first_workflow ON jobs(runner_cleaned_at)
         WHERE route GLOB '*-first-job'`)
@@ -215,7 +218,7 @@ func (q *queue) jobs(ctx context.Context, condition string, args ...any) ([]job,
 	rows, err := q.QueryContext(ctx, `
         SELECT job_id, repository, repository_id, installation_id, route, phase, changed_at,
                coalesce(runner_name, ''), coalesce(runner_host, ''), coalesce(runner_id, 0),
-               coalesce(launched_at, 0), retry_at
+               coalesce(launched_at, 0), retry_at, retry_reason, coalesce(failure, '')
         FROM jobs `+condition, args...)
 	if err != nil {
 		return nil, err
@@ -225,7 +228,8 @@ func (q *queue) jobs(ctx context.Context, condition string, args ...any) ([]job,
 	for rows.Next() {
 		var j job
 		err := rows.Scan(&j.id, &j.repository, &j.repositoryID, &j.installationID, &j.route, &j.phase,
-			&j.changedAt, &j.runnerName, &j.runnerHost, &j.runnerID, &j.launchedAt, &j.retryAt)
+			&j.changedAt, &j.runnerName, &j.runnerHost, &j.runnerID, &j.launchedAt, &j.retryAt,
+			&j.retryReason, &j.failure)
 		if err != nil {
 			return nil, err
 		}
@@ -240,6 +244,17 @@ func (q *queue) advance(ctx context.Context, id int64, p phase, now time.Time) e
 	return err
 }
 
+// fail completes a job that Runquill will not run and records why.
+func (q *queue) fail(ctx context.Context, id int64, now time.Time, reason string) (bool, error) {
+	result, err := q.ExecContext(ctx, `UPDATE jobs SET phase = ?, changed_at = ?, retry_at = 0, failure = ?
+        WHERE job_id = ? AND phase < ? AND runner_name IS NULL`, completed, now.Unix(), reason, id, completed)
+	if err != nil {
+		return false, err
+	}
+	changed, err := result.RowsAffected()
+	return changed > 0, err
+}
+
 func (q *queue) advanceGitHubJob(ctx context.Context, id int64, p phase, now time.Time, observed workflowJob) error {
 	_, err := q.ExecContext(ctx, `UPDATE jobs SET phase = max(phase, ?),
         changed_at = CASE WHEN phase < ? THEN ? ELSE changed_at END,
@@ -248,4 +263,17 @@ func (q *queue) advanceGitHubJob(ctx context.Context, id int64, p phase, now tim
         WHERE job_id = ?`, p, p, now.Unix(), githubTimestamp(observed.CreatedAt),
 		githubTimestamp(observed.StartedAt), id)
 	return err
+}
+
+// oldestQueuedAge is how long the oldest queued job without a runner has waited, or 0.
+// With capped, jobs of a repository that already has a runner are waiting on
+// their concurrency cap rather than stalled, so they are left out.
+func (q *queue) oldestQueuedAge(ctx context.Context, now time.Time, capped bool) (time.Duration, error) {
+	var oldest int64
+	err := q.QueryRowContext(ctx, `SELECT coalesce(min(coalesce(discovered_at, changed_at)), ?)
+        FROM jobs WHERE phase = ? AND runner_name IS NULL AND (NOT ? OR NOT EXISTS (
+            SELECT 1 FROM jobs AS busy WHERE busy.repository = jobs.repository
+                AND busy.runner_name IS NOT NULL AND busy.phase < ?))`,
+		now.Unix(), queued, capped, completed).Scan(&oldest)
+	return time.Duration(max(0, now.Unix()-oldest)) * time.Second, err
 }

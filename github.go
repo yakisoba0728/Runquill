@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -39,6 +40,80 @@ type github struct {
 	repositoryScope string
 	organization    bool
 	runnerGroupID   int64
+	ready           *readiness
+
+	mu           sync.Mutex
+	tokens       map[string]installationToken
+	blockedUntil time.Time
+}
+
+// Installation tokens are refreshed this long before GitHub expires them.
+const tokenRefreshMargin = 5 * time.Minute
+
+func (t installationToken) usable(now time.Time) bool {
+	return t.Token != "" && t.ExpiresAt.After(now.Add(tokenRefreshMargin))
+}
+
+// backoffUntil reports when GitHub's last rate-limit response ends, or zero if it has.
+func (g *github) backoffUntil(now time.Time) time.Time {
+	if g == nil {
+		return time.Time{}
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.blockedUntil.After(now) {
+		return g.blockedUntil
+	}
+	return time.Time{}
+}
+
+func (g *github) backoff(until time.Time) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if until.After(g.blockedUntil) {
+		g.blockedUntil = until
+	}
+}
+
+// mintCached reuses an installation token with the same scope until it nears expiry.
+func (g *github) mintCached(ctx context.Context, jwt string, id int64, body any) (installationToken, error) {
+	scope, err := json.Marshal(body)
+	if err != nil {
+		return installationToken{}, err
+	}
+	key := strconv.FormatInt(id, 10) + " " + string(scope)
+	g.mu.Lock()
+	cached := g.tokens[key]
+	g.mu.Unlock()
+	if cached.usable(time.Now()) {
+		return cached, nil
+	}
+	out, err := g.mintToken(ctx, jwt, id, body)
+	if err != nil || !out.usable(time.Now()) {
+		return out, err
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.tokens == nil {
+		g.tokens = make(map[string]installationToken)
+	}
+	for key, token := range g.tokens {
+		if !token.usable(time.Now()) {
+			delete(g.tokens, key)
+		}
+	}
+	g.tokens[key] = out
+	return out, nil
+}
+
+func (g *github) forgetToken(token string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for key, cached := range g.tokens {
+		if cached.Token == token {
+			delete(g.tokens, key)
+		}
+	}
 }
 
 func parseRepositoryScope(value string) (string, error) {
@@ -106,9 +181,13 @@ type githubError struct {
 	method, path string
 	status       int
 	retryAt      time.Time
+	deferred     bool
 }
 
 func (e *githubError) Error() string {
+	if e.deferred {
+		return fmt.Sprintf("GitHub %s %s deferred until %s after a GitHub rate limit", e.method, e.path, e.retryAt.UTC().Format(time.RFC3339))
+	}
 	return fmt.Sprintf("GitHub %s %s returned HTTP %d", e.method, e.path, e.status)
 }
 
@@ -132,7 +211,19 @@ func (g *github) request(ctx context.Context, method, path, token string, body, 
 	return nil
 }
 
+type rateGateKey struct{}
+
+// withRateGate makes requests on ctx fail without calling GitHub while a rate limit is in force.
+func withRateGate(ctx context.Context) context.Context {
+	return context.WithValue(ctx, rateGateKey{}, true)
+}
+
 func (g *github) send(ctx context.Context, method, path, token string, body any, etag string) (*http.Response, error) {
+	if gated, _ := ctx.Value(rateGateKey{}).(bool); gated {
+		if until := g.backoffUntil(time.Now()); !until.IsZero() {
+			return nil, &githubError{method: method, path: path, status: http.StatusTooManyRequests, retryAt: until, deferred: true}
+		}
+	}
 	var input io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)
@@ -167,6 +258,10 @@ func (g *github) send(ctx context.Context, method, path, token string, body any,
 		apiErr := &githubError{method: method, path: path, status: res.StatusCode}
 		if res.StatusCode == http.StatusForbidden || res.StatusCode == http.StatusTooManyRequests {
 			apiErr.retryAt = githubRateLimit(res, time.Now())
+			g.backoff(apiErr.retryAt)
+		}
+		if res.StatusCode == http.StatusUnauthorized {
+			g.forgetToken(token)
 		}
 		return nil, apiErr
 	}
@@ -237,6 +332,7 @@ func (g *github) installation(ctx context.Context, jwt string) (githubInstallati
 	}
 	path := accountPath + url.PathEscape(g.owner) + "/installation"
 	err := g.request(ctx, http.MethodGet, path, jwt, nil, &inst)
+	g.observeAuth(err)
 	if githubNotFound(err) {
 		return inst, fmt.Errorf("install the GitHub App on the %s %s: %w", accountLabel, g.owner, err)
 	}
@@ -255,6 +351,7 @@ func (g *github) installation(ctx context.Context, jwt string) (githubInstallati
 func (g *github) repositoryInstallation(ctx context.Context, jwt, name string, installationID int64) (githubInstallation, error) {
 	var inst githubInstallation
 	err := g.request(ctx, http.MethodGet, "/repos/"+name+"/installation", jwt, nil, &inst)
+	g.observeAuth(err)
 	if githubNotFound(err) || err == nil && inst.ID != installationID {
 		return inst, errRepositoryOutsideInstallation
 	}
@@ -290,13 +387,25 @@ type installationToken struct {
 func (g *github) mintToken(ctx context.Context, jwt string, id int64, body any) (installationToken, error) {
 	var out installationToken
 	path := fmt.Sprintf("/app/installations/%d/access_tokens", id)
-	if err := g.request(ctx, http.MethodPost, path, jwt, body, &out); err != nil {
-		return out, err
+	err := g.request(ctx, http.MethodPost, path, jwt, body, &out)
+	if err == nil && out.Token == "" {
+		err = errors.New("GitHub installation token response is empty")
 	}
-	if out.Token == "" {
-		return out, errors.New("GitHub installation token response is empty")
+	g.observeAuth(err)
+	return out, err
+}
+
+// observeAuth records the outcome of a request signed with the App JWT for /readyz.
+func (g *github) observeAuth(err error) {
+	var apiErr *githubError
+	switch {
+	case err == nil:
+		g.ready.markAuth(time.Now(), nil)
+	case errors.As(err, &apiErr) && (apiErr.status == http.StatusUnauthorized ||
+		apiErr.status == http.StatusForbidden && apiErr.retryAt.IsZero()):
+		// Rate limits, network errors and repository-scoped refusals say nothing about the App credentials.
+		g.ready.markAuth(time.Now(), err)
 	}
-	return out, nil
 }
 
 func (g *github) token(ctx context.Context, j job) (string, error) {
@@ -309,7 +418,12 @@ func (g *github) token(ctx context.Context, j job) (string, error) {
 		// Repository reads never use the organization runner-registration token.
 		body["permissions"] = map[string]string{"actions": "read"}
 	}
-	out, err := g.mintToken(ctx, jwt, j.installationID, body)
+	// A fresh mint is how a repository leaving a selected or organization installation is noticed.
+	mint := g.mintCached
+	if g.organization || g.repositoryScope == scopeSelected {
+		mint = g.mintToken
+	}
+	out, err := mint(ctx, jwt, j.installationID, body)
 	var apiErr *githubError
 	if (g.organization || g.repositoryScope == scopeSelected) && errors.As(err, &apiErr) &&
 		(apiErr.status == http.StatusNotFound || apiErr.status == http.StatusUnprocessableEntity ||
@@ -357,46 +471,65 @@ func (g *github) provision(ctx context.Context, j job, name, token string) (int6
 	return out.Runner.ID, out.Config, nil
 }
 
-func (g *github) remove(ctx context.Context, j job) error {
-	var token string
-	var err error
+type githubRunner struct {
+	ID     int64  `json:"id"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	Busy   bool   `json:"busy"`
+}
+
+// runnerToken mints a token that can manage the runner registrations for a job.
+func (g *github) runnerToken(ctx context.Context, j job) (string, error) {
 	if g.runnerGroupID > 0 {
-		token, err = g.organizationJobToken(ctx, j, false)
-	} else {
-		token, err = g.token(ctx, j)
+		return g.organizationJobToken(ctx, j, false)
 	}
+	return g.token(ctx, j)
+}
+
+// findRunner returns the registration named j.runnerName, or a zero ID when GitHub has none.
+func (g *github) findRunner(ctx context.Context, j job, token string) (githubRunner, error) {
+	var out struct {
+		Runners []githubRunner `json:"runners"`
+	}
+	err := g.request(ctx, http.MethodGet, g.runnersPath(j)+"?name="+url.QueryEscape(j.runnerName), token, nil, &out)
+	if err != nil {
+		return githubRunner{}, err
+	}
+	for _, runner := range out.Runners {
+		if runner.Name == j.runnerName && runner.ID > 0 {
+			return runner, nil
+		}
+	}
+	return githubRunner{}, nil
+}
+
+func (g *github) deleteRunner(ctx context.Context, j job, token string, id int64) error {
+	err := g.request(ctx, http.MethodDelete, fmt.Sprintf("%s/%d", g.runnersPath(j), id), token, nil, nil)
+	if githubNotFound(err) {
+		return nil
+	}
+	return err
+}
+
+func (g *github) remove(ctx context.Context, j job) error {
+	token, err := g.runnerToken(ctx, j)
 	if err != nil {
 		if githubNotFound(err) || errors.Is(err, errRepositoryOutsideInstallation) {
 			return nil
 		}
 		return err
 	}
-	path := g.runnersPath(j)
 	id := j.runnerID
 	if id == 0 {
 		// GitHub may have accepted a request before the manager saved the runner ID.
-		var out struct {
-			Runners []struct {
-				ID   int64  `json:"id"`
-				Name string `json:"name"`
-			} `json:"runners"`
-		}
-		err := g.request(ctx, http.MethodGet, path+"?name="+url.QueryEscape(j.runnerName), token, nil, &out)
+		runner, err := g.findRunner(ctx, j, token)
 		if err != nil && !githubNotFound(err) {
 			return err
 		}
-		for _, runner := range out.Runners {
-			if runner.Name == j.runnerName {
-				id = runner.ID
-				break
-			}
-		}
+		id = runner.ID
 	}
 	if id > 0 {
-		err := g.request(ctx, http.MethodDelete, fmt.Sprintf("%s/%d", path, id), token, nil, nil)
-		if err != nil && !githubNotFound(err) {
-			return err
-		}
+		return g.deleteRunner(ctx, j, token, id)
 	}
 	return nil
 }
