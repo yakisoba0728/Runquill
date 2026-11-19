@@ -6,10 +6,10 @@ On your Linux host, run the installer and open the printed setup link.
 sh install.sh --wizard --dir ./runquill
 ```
 
-1. Choose **Connect GitHub**. Approve and install the GitHub App. For a personal account, the wizard uses the installation owner as the first panel administrator.
+1. Choose the repository access, then select **Connect GitHub**. Approve and install the GitHub App using the access shown by the wizard. For a personal account, the wizard uses the installation owner as the first panel administrator.
 2. Choose **Deploy and check installation**. After the manager starts, open the panel or download the first workflow.
 
-The default setup uses local Docker Compose, a personal GitHub account, and the host's recommended runner limits. Open **Advanced** for a GitHub organization, selected repositories, a K3s context, custom addresses, or different limits. For K3s, use the matching release's `runquill-k3s.yaml` and a context authorized to create the resources in it. Use a port-forward for a local panel or supply an existing HTTPS ingress.
+The default setup uses local Docker Compose, a personal GitHub account, and the host's recommended runner limits. Open **Advanced** for a GitHub organization, a K3s context, custom addresses, or different limits. For K3s, use the matching release's `runquill-k3s.yaml` and a context authorized to create the resources in it. Use a port-forward for a local panel or supply an existing HTTPS ingress.
 
 Run `./runquill wizard` from the installation directory if you already have the release files. For an existing Compose installation, `./runquill wizard --check-compose` runs its read-only preflight. Over SSH, use the printed forwarding command and keep the setup link private.
 

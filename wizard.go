@@ -36,6 +36,7 @@ type setupWizard struct {
 	mu               sync.Mutex
 	setupWork        sync.WaitGroup
 	step, installURL string
+	installScope     string
 	handler          http.Handler
 	language, phase  string
 	failed           bool
@@ -102,7 +103,7 @@ func wizardVisibleURL(raw string) string {
 }
 
 func (form wizardForm) advanced() bool {
-	return form.Backend == "k3s" || form.Repositories == "selected" || form.Organization != "" || form.Group != "" ||
+	return form.Backend == "k3s" || form.Organization != "" || form.Group != "" ||
 		form.PanelURL != "" || form.WebhookURL != "" || form.LocalOnly
 }
 
@@ -146,10 +147,10 @@ func wizardStep[T any](ctx context.Context, web *setupWizard, prefix string, han
 	}
 }
 
-func (web *setupWizard) setInstallURL(installURL string) {
+func (web *setupWizard) setInstallURL(installURL, scope string) {
 	web.mu.Lock()
 	defer web.mu.Unlock()
-	web.installURL = installURL
+	web.installURL, web.installScope = installURL, scope
 }
 
 // wizardMark is one row of the setup step list.
@@ -376,6 +377,12 @@ var wizardHome = template.Must(template.Must(template.New("wizard").Parse(wizard
           {{- end}}
         </div>
         {{- end}}
+      <fieldset aria-describedby="help-repositories" data-repository-scope>
+        <legend>{{if .KO}}저장소 접근 범위{{else}}Repository access{{end}}</legend>
+        <label class="check"><input type="radio" name="repositories" value=""{{if ne .Form.Repositories "selected"}} checked{{end}}>{{if .KO}}기본값 (새 설치는 전체 저장소){{else}}Default (all repositories on new installs){{end}}</label>
+        <label class="check"><input type="radio" name="repositories" value="selected"{{if eq .Form.Repositories "selected"}} checked{{end}}>{{if .KO}}선택한 저장소{{else}}Selected repositories{{end}}</label>
+        <p class="hint" id="help-repositories">{{if .KO}}GitHub에서 앱을 설치할 때도 같은 범위를 선택하세요.{{else}}Choose the same access when you install the App on GitHub.{{end}}</p>
+      </fieldset>
       <details class="advanced"{{if .Advanced}} open{{end}}>
         <summary>{{if .KO}}고급 설정{{else}}Advanced settings{{end}}</summary>
         <div class="advanced-body">
@@ -421,14 +428,6 @@ var wizardHome = template.Must(template.Must(template.New("wizard").Parse(wizard
         </div>
         <p class="hint" id="help-limits">{{if .KO}}러너당 제한을 비워 두면 러너가 호스트 자원을 제한 없이 씁니다.{{else}}Leave a per-runner limit empty to let runners use the host without one.{{end}}</p>
       </section>
-      <section class="group" aria-labelledby="group-github">
-        <h2 id="group-github">GitHub</h2>
-        <div class="field">
-          <label for="wizard-repositories">{{if .KO}}저장소 접근 범위{{else}}Repository access{{end}}</label>
-          <select id="wizard-repositories" name="repositories" aria-describedby="help-repositories"><option value="">{{if .KO}}기본값 (새 설치는 전체 저장소){{else}}Default (all repositories on new installs){{end}}</option><option value="selected"{{if eq .Form.Repositories "selected"}} selected{{end}}>{{if .KO}}선택한 저장소{{else}}Selected repositories{{end}}</option></select>
-          <p class="hint" id="help-repositories">{{if .KO}}GitHub에서 앱을 설치할 때도 같은 범위를 선택하세요.{{else}}Choose the same access when you install the App on GitHub.{{end}}</p>
-        </div>
-      </section>
           <div class="form-row">
             <div class="field">
               <label for="wizard-organization">{{if .KO}}GitHub 조직 (선택){{else}}GitHub organization (optional){{end}}</label>
@@ -468,6 +467,7 @@ var wizardHome = template.Must(template.Must(template.New("wizard").Parse(wizard
     </form>
     {{- else if eq .Phase "working"}}
     {{- if .Install}}
+    <p>{{if .KO}}GitHub에서 이 범위를 선택하세요.{{else}}Choose this repository access on GitHub.{{end}} <strong>{{.InstallScope}}</strong></p>
     <div class="actions"><a class="button primary" href="{{.Install}}" rel="noreferrer" target="_blank">{{if .KO}}GitHub에 앱 설치{{else}}Install the GitHub App{{end}}</a><p class="next waiting"><span class="spinner" aria-hidden="true"></span>{{if .KO}}설치를 기다리고 있습니다.{{else}}Waiting for the installation.{{end}}</p></div>
     {{- end}}
     {{- else if eq .Phase "ready"}}
@@ -716,7 +716,7 @@ func (web *setupWizard) render(w http.ResponseWriter, r *http.Request) {
 	stage, log := web.progress.snapshot()
 	view := struct {
 		Language, Phase, Step, Install, Target, PanelURL, Log, Problem, Field, Activity string
-		User, HostMemory, PanelOrigin, PanelForward                                     string
+		User, HostMemory, PanelOrigin, PanelForward, InstallScope                       string
 		KO, K3s, Serve, Funnel, CheckCompose, Error, Advanced, SkipTailscale            bool
 		ServeFailed, FunnelFailed                                                       bool
 		Form                                                                            wizardForm
@@ -726,7 +726,8 @@ func (web *setupWizard) render(w http.ResponseWriter, r *http.Request) {
 		Docker                                                                          wizardDocker
 	}{Language: language, Phase: web.phase, Step: web.step, Install: web.installURL, Target: web.kubeContext,
 		PanelURL: web.panelLink(language), Log: log, KO: language == "ko", K3s: web.options.kubernetes,
-		Serve: web.network.serve, Funnel: web.network.funnel, ServeFailed: web.serveFailed, FunnelFailed: web.funnelFailed,
+		InstallScope: repositoryScopeLabel(web.installScope),
+		Serve:        web.network.serve, Funnel: web.network.funnel, ServeFailed: web.serveFailed, FunnelFailed: web.funnelFailed,
 		CheckCompose: web.checkCompose, Error: web.failed, SkipTailscale: web.skipTailscale,
 		Host: web.host, HostMemory: strconv.FormatFloat(float64(web.host.MemoryMiB)/1024, 'f', 1, 64), Docker: docker}
 	view.Steps = wizardSteps(view.KO, view.Phase, view.Step, view.Install != "", view.Error)

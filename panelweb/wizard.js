@@ -55,6 +55,11 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  // Enter on a scope option must not submit before the user activates Connect GitHub.
+  document.querySelector("[data-repository-scope]")?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") event.preventDefault();
+  });
+
   const backend = document.querySelector("[name=backend]");
   if (backend) {
     const k3sOnly = document.querySelectorAll("[data-k3s]");

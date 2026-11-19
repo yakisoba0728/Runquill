@@ -146,7 +146,10 @@ fi
 		t.Fatalf("GitHub callback without state returned %d", code)
 	}
 	request(http.MethodGet, "/connect/callback?code=wizard-fixture&state="+githubState[1], "", nil)
-	waitPage("/", "https://github.com/apps/runquill-test/installations/new")
+	install := waitPage("/", "https://github.com/apps/runquill-test/installations/new")
+	if !strings.Contains(install, "<strong>Only select repositories</strong>") {
+		t.Fatal("the App installation step did not show the selected access")
+	}
 	installed.Store(true)
 	ready := waitPage("/", "배포 및 사전 점검")
 	if strings.Contains(ready, "example-secret") {
@@ -357,7 +360,7 @@ func TestWizardFirstStepErrorsStayInBrowserWithAnswers(t *testing.T) {
 		t.Fatal("the submitted context was not restored as escaped text")
 	}
 	if !strings.Contains(body, `value="acme"`) || !strings.Contains(body, `<option value="k3s" selected>`) ||
-		!strings.Contains(body, `<option value="selected" selected>`) || !strings.Contains(body, `<details class="advanced" open>`) {
+		!strings.Contains(body, `<input type="radio" name="repositories" value="selected" checked>`) || !strings.Contains(body, `<details class="advanced" open>`) {
 		t.Fatal("the submitted answers were not restored")
 	}
 	if !regexp.MustCompile(`name="context"[^>]*required`).MatchString(body) || strings.Contains(body, "data-k3s hidden") {
@@ -387,8 +390,12 @@ func TestWizardFirstStepErrorsStayInBrowserWithAnswers(t *testing.T) {
 	web.form, web.issue, web.failed = wizardForm{}, nil, false
 	rec := httptest.NewRecorder()
 	web.render(rec, httptest.NewRequest(http.MethodGet, "/?lang=en", nil))
-	if strings.Contains(rec.Body.String(), `id="wizard-error"`) || strings.Contains(rec.Body.String(), `<details class="advanced" open>`) {
+	body = rec.Body.String()
+	if strings.Contains(body, `id="wizard-error"`) || strings.Contains(body, `<details class="advanced" open>`) {
 		t.Fatal("a fresh first step must not show an earlier problem")
+	}
+	if scope, advanced := strings.Index(body, `name="repositories" value="" checked`), strings.Index(body, `<details class="advanced"`); scope < 0 || advanced < scope {
+		t.Fatal("a fresh first step must show repository access outside advanced settings")
 	}
 }
 

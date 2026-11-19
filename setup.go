@@ -401,7 +401,7 @@ func waitForSetupInstallation(ctx context.Context, out io.Writer, api *github) (
 			}
 			installURL := "https://github.com/apps/" + url.PathEscape(app.Slug) + "/installations/new"
 			if web := currentWizard(ctx); web != nil {
-				web.setInstallURL(installURL)
+				web.setInstallURL(installURL, api.repositoryScope)
 			}
 			fmt.Fprintf(out, "Install the App on %s and choose %s:\n  %s\n", api.owner, repositoryScopeLabel(api.repositoryScope), installURL)
 			if api.repositoryScope == scopeSelected {
