@@ -213,7 +213,7 @@ check 'healthy host: ready' exit_is 0
 check 'healthy host: no plan' lacks_out 'will run'
 check 'healthy host: nothing changed' changed_nothing
 check 'healthy host: checklist' has_out 'ok    Docker access  alice can use the daemon'
-check 'healthy host: sizing (24 CPUs, 47 GB)' has_out 'suggest 8 concurrent runners, 2.7 CPUs and 5504 MiB each'
+check 'healthy host: sizing (24 CPUs, 47 GB)' has_out 'suggest 11 concurrent runners, 2.0 CPUs and 4002 MiB each'
 
 check 'healthy host: Tailscale is optional' has_out 'info  Tailscale      not installed'
 

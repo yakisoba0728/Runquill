@@ -730,8 +730,8 @@ host_size() {
         mib = int(m / 1024)
         free_cpu = c - 2; if (free_cpu < 1) free_cpu = 1
         free_mib = mib - 4096; if (free_mib < 1024) free_mib = int(mib / 2)
-        n = int(free_cpu / 2); if (int(free_mib / 4096) < n) n = int(free_mib / 4096)
-        if (n > 8) n = 8; if (n < 1) n = 1
+        n = int(free_cpu / 2); if (int(free_mib / 2048) < n) n = int(free_mib / 2048)
+        if (n < 1) n = 1
         printf "%d %.1f %d %d", n, int(free_cpu * 10 / n) / 10, int(free_mib / n), int(mib / 1024 + 0.5)
     }')
     # shellcheck disable=SC2086 # four numbers

@@ -374,13 +374,14 @@ func TestRecommendCapacityLeavesRoomForTheHost(t *testing.T) {
 		host wizardHost
 		want wizardCapacity
 	}{
-		{wizardHost{CPUs: 16, MemoryMiB: 65536}, wizardCapacity{Runners: 8, CPUs: 1.5, MemoryMiB: 7680}},
-		{wizardHost{CPUs: 64, MemoryMiB: 262144}, wizardCapacity{Runners: 8, CPUs: 7.5, MemoryMiB: 32256}},
-		{wizardHost{CPUs: 4, MemoryMiB: 8192}, wizardCapacity{Runners: 2, CPUs: 1, MemoryMiB: 2048}},
+		{wizardHost{CPUs: 16, MemoryMiB: 65536}, wizardCapacity{Runners: 7, CPUs: 2, MemoryMiB: 8704}},
+		{wizardHost{CPUs: 64, MemoryMiB: 262144}, wizardCapacity{Runners: 31, CPUs: 2, MemoryMiB: 8192}},
+		{wizardHost{CPUs: 4, MemoryMiB: 8192}, wizardCapacity{Runners: 1, CPUs: 2, MemoryMiB: 4096}},
 		{wizardHost{CPUs: 8, MemoryMiB: 6144}, wizardCapacity{Runners: 1, CPUs: 6, MemoryMiB: 3072}},
 		{wizardHost{CPUs: 2, MemoryMiB: 2048}, wizardCapacity{Runners: 1, CPUs: 1, MemoryMiB: 1024}},
 		{wizardHost{CPUs: 1, MemoryMiB: 1024}, wizardCapacity{Runners: 1, CPUs: 0.5, MemoryMiB: 512}},
-		{wizardHost{CPUs: 12}, wizardCapacity{Runners: 8, CPUs: 1}},
+		{wizardHost{CPUs: 12}, wizardCapacity{Runners: 5, CPUs: 2}},
+		{wizardHost{CPUs: 24, MemoryMiB: 48128}, wizardCapacity{Runners: 11, CPUs: 2, MemoryMiB: 3584}},
 		{wizardHost{}, wizardCapacity{Runners: 1, CPUs: 0.5}},
 	} {
 		if got := recommendCapacity(test.host); got != test.want {
@@ -550,12 +551,12 @@ func TestWizardDockerCheckBlocksBeforeGitHub(t *testing.T) {
 	}
 
 	// A fresh first step suggests limits from the host's size.
-	web.form = wizardForm{}
+	web.form, web.host = wizardForm{}, wizardHost{CPUs: 6, MemoryMiB: 8192}
 	body = page("en")
 	if strings.Contains(body, `id="wizard-docker"`) || !strings.Contains(body, "Docker 27.3.1 is reachable.") ||
 		!strings.Contains(body, `name="max_runners" type="number" inputmode="numeric" min="1" max="1000" step="1" value="2"`) ||
 		!strings.Contains(body, `name="runner_memory" type="number" inputmode="decimal" min="0.01" step="any" value="2"`) ||
-		!strings.Contains(body, "Detected 4 CPUs and 8.0 GiB") {
+		!strings.Contains(body, "Detected 6 CPUs and 8.0 GiB") {
 		t.Fatal("a reachable Docker host must show its size and the suggested limits")
 	}
 }

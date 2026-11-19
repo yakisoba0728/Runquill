@@ -59,22 +59,22 @@ type wizardCapacity struct {
 const (
 	wizardHostCPUs      = 2
 	wizardHostMemoryMiB = 4096
-	wizardRunnerMemMiB  = 2048 // the least a runner is planned with when choosing a count
-	wizardMaxRunners    = 8
+	wizardRunnerCPUs    = 2    // what a runner is planned with when choosing a count
+	wizardRunnerMemMiB  = 2048 // the least memory a runner is planned with
 )
 
-// recommendCapacity leaves about two CPUs and 4 GiB for the host, gives every runner at
-// least one CPU and 2 GiB when choosing the count, and caps the count at eight.
+// recommendCapacity leaves about two CPUs and 4 GiB for the host and plans one runner per
+// two CPUs and 2 GiB of what remains; memory beyond that minimum is shared among them.
 func recommendCapacity(host wizardHost) wizardCapacity {
 	cpus := max(host.CPUs, 1)
 	spareCPU := max(float64(cpus-wizardHostCPUs), float64(cpus)/2)
-	runners := int(spareCPU)
+	runners := int(spareCPU / wizardRunnerCPUs)
 	var spareMem int64
 	if host.MemoryMiB > 0 {
 		spareMem = max(host.MemoryMiB-wizardHostMemoryMiB, host.MemoryMiB/2)
 		runners = min(runners, int(spareMem/wizardRunnerMemMiB))
 	}
-	runners = min(max(runners, 1), wizardMaxRunners)
+	runners = max(runners, 1)
 	capacity := wizardCapacity{Runners: runners, CPUs: max(math.Floor(spareCPU/float64(runners)*2)/2, 0.5)}
 	if spareMem > 0 {
 		capacity.MemoryMiB = max(spareMem/int64(runners)/512*512, 512)

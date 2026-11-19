@@ -423,7 +423,7 @@ var wizardHome = template.Must(template.Must(template.New("wizard").Parse(wizard
       <section class="group" aria-labelledby="group-capacity">
         <h2 id="group-capacity">{{if .KO}}러너 용량{{else}}Runner capacity{{end}}</h2>
         {{- if .Host.CPUs}}
-        <p class="host" id="help-capacity">{{if .KO}}이 서버의 CPU {{.Host.CPUs}}개{{if .Host.MemoryMiB}}, 메모리 {{.HostMemory}}GiB{{end}}를 감지했습니다. 호스트용으로 CPU 약 2개{{if .Host.MemoryMiB}}와 메모리 약 4GiB{{end}}를 남기고 나머지를 러너에 나눈 값입니다.{{else}}Detected {{.Host.CPUs}} CPUs{{if .Host.MemoryMiB}} and {{.HostMemory}} GiB of memory{{end}} on this server. The suggestion keeps about 2 CPUs{{if .Host.MemoryMiB}} and 4 GiB{{end}} for the host and divides the rest among runners.{{end}}</p>
+        <p class="host" id="help-capacity">{{if .KO}}이 서버의 CPU {{.Host.CPUs}}개{{if .Host.MemoryMiB}}, 메모리 {{.HostMemory}}GiB{{end}}를 감지했습니다. 호스트용으로 CPU 약 2개{{if .Host.MemoryMiB}}와 메모리 약 4GiB{{end}}를 남기고, 러너 하나에 CPU 2개와 메모리 2GiB 이상을 잡아 나눈 값입니다.{{else}}Detected {{.Host.CPUs}} CPUs{{if .Host.MemoryMiB}} and {{.HostMemory}} GiB of memory{{end}} on this server. The suggestion keeps about 2 CPUs{{if .Host.MemoryMiB}} and 4 GiB{{end}} for the host and plans one runner per 2 CPUs with at least 2 GiB each.{{end}}</p>
         {{- else}}
         <p class="host" id="help-capacity">{{if .KO}}이 서버의 크기를 읽지 못했습니다. 동시 러너 수를 정하고, 러너당 제한은 비워 두거나 직접 입력하세요.{{else}}The server's size could not be read. Set how many runners run at once; leave the per-runner limits empty or set them yourself.{{end}}</p>
         {{- end}}
