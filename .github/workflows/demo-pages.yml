@@ -29,8 +29,13 @@ jobs:
       - name: Stage the sample panel
         run: |
           grep -Fq 'data-mode="demo"' panelweb/index.html
+          # The panel is ES modules: top-level files, views/ and demo/ fixtures.
+          # The setup wizard's files are not part of the sample panel.
           mkdir _site
-          cp panelweb/{index.html,panel.css,panel.js,i18n.js,demo.js} LICENSE _site/
+          cp -R panelweb/. _site/
+          rm -f _site/wizard.js _site/wizard.css
+          test -f _site/app.js && test -f _site/views/overview.js && test -f _site/demo/jobs.js
+          cp LICENSE _site/
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: _site

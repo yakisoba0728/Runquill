@@ -1,0 +1,46 @@
+/* Styles used only by the migrate screen. */
+
+.migrate-fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
+.migrate-repo { max-width: 420px; }
+.migrate-hint { margin-top: 6px; font-size: 12px; }
+.migrate-mapping { max-width: 720px; }
+.migrate-mapping td { padding-top: 2px; padding-bottom: 2px; }
+.migrate-mapping td.migrate-labels { width: 100%; min-width: 180px; }
+.migrate-mapping td.migrate-labels input { width: 100%; }
+.migrate-mapping td.migrate-arrow { color: var(--muted); padding: 0 2px; }
+.migrate-mapping select { min-width: 140px; }
+.migrate-mapping tbody tr:hover { background: transparent; }
+@media (max-width: 560px) {
+  .migrate-mapping td.migrate-labels { min-width: 110px; }
+  .migrate-mapping select { min-width: 0; max-width: 112px; }
+  .migrate-mapping th, .migrate-mapping td { padding-left: 6px; padding-right: 6px; }
+}
+
+.migrate-note-text { display: grid; gap: 4px; margin-top: 8px; border-left-color: var(--waiting); }
+
+.migrate-preview { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.migrate-file { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.migrate-preview > *, .migrate-file > * { min-width: 0; }
+.migrate-preview > .kv { max-width: 520px; }
+.migrate-file-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.migrate-file-head h3 { font-size: 12px; overflow-wrap: anywhere; }
+
+/* Unified diff: one row per line, the -/+ marker carries the meaning and
+   the state colour repeats it. */
+.migrate-diff th, .migrate-diff td { height: 20px; padding: 0 8px; border-bottom: 0; }
+.migrate-diff thead th { height: 26px; border-bottom: 1px solid var(--border); }
+.migrate-diff td { font-family: var(--mono); font-size: 12px; line-height: 20px; }
+.migrate-diff td.num { width: 1%; color: var(--muted); user-select: none; }
+.migrate-diff td.migrate-marker { width: 1%; padding: 0 4px; user-select: none; }
+.migrate-diff td.migrate-code { white-space: pre; width: 100%; }
+.migrate-diff tbody tr:hover { background: transparent; }
+.migrate-diff tr[data-state="failed"] { background: color-mix(in srgb, var(--failed) 9%, transparent); }
+.migrate-diff tr[data-state="ok"] { background: color-mix(in srgb, var(--ok) 9%, transparent); }
+.migrate-diff tr[data-state="failed"] td.migrate-marker,
+.migrate-diff tr[data-state="failed"] td.migrate-code { color: var(--failed); }
+.migrate-diff tr[data-state="ok"] td.migrate-marker,
+.migrate-diff tr[data-state="ok"] td.migrate-code { color: var(--ok); }
+.migrate-diff tr.migrate-hunk td { color: var(--muted); background: var(--bg-nav); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.migrate-diff tr.migrate-note td { color: var(--muted); font-style: italic; }
+
+.migrate-summary { margin-bottom: 4px; overflow-wrap: anywhere; }

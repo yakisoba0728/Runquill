@@ -4,320 +4,99 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Runquill's operations panel for GitHub Actions jobs, runner capacity and team access.">
-  <title>Runquill · Runner overview</title>
+  <title>Runquill</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="./panel.css">
-  <script src="./panel.js" type="module"></script>
+  <script src="./theme.js"></script>
+  <script src="./app.js" type="module"></script>
 </head>
 <body data-mode="demo">
-  <a class="skip" href="#overview">Skip to overview</a>
-  <main class="login" id="sign-in" hidden>
-    <section class="login-card" aria-labelledby="login-title">
-      <header class="login-header">
-        <span class="wordmark"><span class="mark" aria-hidden="true"></span>runquill</span>
-        <div class="login-settings">
-          <a class="language-toggle" href="?lang=ko" lang="ko">한국어</a>
-          <select data-theme-control aria-label="Appearance">
+  <a class="skip" href="#main" id="skip">Skip to content</a>
+
+  <div class="signin" id="sign-in" hidden>
+    <main class="signin-box" aria-labelledby="signin-title">
+      <p class="brand">runquill</p>
+      <h1 id="signin-title" tabindex="-1">Sign in to Runquill</h1>
+      <p class="muted">Use the GitHub account your Runquill administrator enrolled.</p>
+      <p id="signin-message" class="signin-message" role="alert" hidden></p>
+      <a class="button primary signin-button" href="./auth/github">Continue with GitHub</a>
+      <dl class="signin-meta">
+        <dt>Panel address</dt><dd id="signin-host" class="mono"></dd>
+      </dl>
+      <div class="signin-controls">
+        <a class="language-toggle" href="?lang=ko" lang="ko">한국어</a>
+        <label><span class="visually-hidden">Appearance</span>
+          <select data-theme-control>
             <option value="system">System</option>
             <option value="light">Light</option>
             <option value="dark">Dark</option>
           </select>
-        </div>
-      </header>
-      <div class="login-content">
-        <h1 id="login-title" tabindex="-1">Sign in to Runquill</h1>
-        <p class="login-description">Use the GitHub account your Runquill administrator enrolled.</p>
-        <p id="login-message" role="status" hidden></p>
-        <a class="login-button" href="./auth/github">
-          <span>Continue with GitHub</span><span aria-hidden="true">↗</span>
-        </a>
+        </label>
       </div>
-    </section>
-    <footer class="login-footer">
-      <span id="login-host"></span>
-      <a href="https://github.com/yakisoba0728/Runquill" target="_blank" rel="noopener noreferrer">Source on GitHub ↗</a>
-    </footer>
-  </main>
-  <div class="panel-shell">
-    <aside class="sidebar">
-      <a class="wordmark" href="#overview"><span class="mark" aria-hidden="true"></span>runquill</a>
-      <nav aria-label="Panel">
-        <a href="#overview" aria-current="location">Overview</a>
-        <a href="#fleet-jobs">Queue and jobs</a>
-        <a href="#fleet-runners">Runners</a>
-        <a href="#history">Job history</a>
-        <a href="#fleet-hosts">Hosts</a>
-        <a href="#fleet-pools">Worker pools</a>
-        <a href="#first-job">First job setup</a>
-        <a id="access-nav" href="#access" hidden>Manage access</a>
-        <a id="settings-nav" href="#settings" hidden>Settings</a>
-      </nav>
-      <a class="sidebar-source" href="https://github.com/yakisoba0728/Runquill" target="_blank" rel="noopener noreferrer">Source on GitHub ↗</a>
-    </aside>
-    <div class="workspace">
-      <header class="toolbar">
-        <span class="toolbar-label">GitHub Actions</span>
-        <div class="toolbar-controls">
-          <span id="mode" class="mode">Sample data</span>
-          <a class="language-toggle" href="?lang=ko" lang="ko">한국어</a>
-          <select data-theme-control aria-label="Appearance">
+    </main>
+  </div>
+
+  <div class="shell" id="shell" hidden>
+    <header class="topbar">
+      <a class="brand" href="#/overview">runquill</a>
+      <button class="button menu-toggle" id="menu-toggle" type="button" aria-expanded="false" aria-controls="nav">Menu</button>
+      <p class="connection">
+        <span class="state" id="connection-state" data-state="" role="status">Connecting</span>
+        <span class="muted" id="connection-age"></span>
+      </p>
+      <div class="topbar-controls">
+        <button class="palette-open" id="palette-open" type="button" aria-haspopup="dialog" aria-controls="palette"><span>Commands</span> <kbd id="palette-key">Ctrl K</kbd></button>
+        <a class="language-toggle" href="?lang=ko" lang="ko">한국어</a>
+        <label><span class="visually-hidden">Appearance</span>
+          <select data-theme-control>
             <option value="system">System</option>
             <option value="light">Light</option>
             <option value="dark">Dark</option>
           </select>
-          <button class="button" id="signout" type="button" hidden>Sign out</button>
-        </div>
-      </header>
-      <main class="frame" id="overview" tabindex="-1">
-        <header class="page-head">
-          <h1>Runner overview</h1>
-          <div class="updated"><span class="signal-dot" id="update-dot" aria-hidden="true"></span><span id="updated">Loading fleet</span></div>
-        </header>
+        </label>
+        <span class="who" id="who" hidden></span>
+        <button class="button" id="signout" type="button" hidden>Sign out</button>
+      </div>
+    </header>
 
-        <section id="demo-controls" class="demo-strip" aria-label="Demo scenarios" hidden>
-          <div>
-            <strong>Demo scenarios</strong>
-            <p id="scenario-note"></p>
-            <a class="guide" href="https://github.com/yakisoba0728/Runquill#install-a-public-release">Install Runquill ↗</a>
-          </div>
-          <div class="segments" aria-label="Choose a sample scenario">
-            <button data-scenario="first" aria-pressed="true">First job</button>
-            <button data-scenario="missed" aria-pressed="false">Webhook missed</button>
-            <button data-scenario="offline" aria-pressed="false">Worker offline</button>
-          </div>
-        </section>
-        <p id="notice" class="notice" role="status" hidden></p>
-
-        <dl class="metrics" aria-label="Fleet capacity">
-          <div><dt>Running runners</dt><dd id="running">—</dd></div>
-          <div><dt>Queued jobs</dt><dd id="waiting">—</dd><small id="queue-note"></small></div>
-          <div><dt>Used slots</dt><dd id="slots">—</dd><small id="slot-note">Used and reserved capacity</small></div>
-          <div><dt id="host-count-label">Worker hosts</dt><dd id="host-count">—</dd><small id="host-note"></small></div>
-        </dl>
-
-        <div class="columns">
-          <div class="work-list">
-            <section class="surface jobs" id="fleet-jobs" aria-labelledby="jobs-title">
-              <div class="section-head">
-                <div><h2 id="jobs-title">Queue and jobs</h2><p id="jobs-summary">Waiting for a fleet snapshot…</p></div>
-                <div class="segments" aria-label="Choose a job list">
-                  <button data-view="queue" aria-pressed="true">Queue</button>
-                  <button data-view="active" aria-pressed="false">Assigned</button>
-                  <button data-view="recent" aria-pressed="false">Cleaned up</button>
-                </div>
-              </div>
-              <div class="filters">
-                <input type="search" id="job-search" aria-label="Filter jobs" placeholder="Repository or job ID">
-                <select id="job-pool" aria-label="Filter by worker pool"><option value="">All pools</option></select>
-              </div>
-              <div id="job-table" class="table-scroll" tabindex="0" aria-label="Job results">
-                <table>
-                  <thead><tr><th scope="col">Position</th><th scope="col">Repository / job</th><th scope="col">State</th><th scope="col">Queue time</th><th scope="col">Host</th></tr></thead>
-                  <tbody id="job-rows"></tbody>
-                </table>
-                <p class="empty" id="job-empty">Waiting for a fleet snapshot…</p>
-              </div>
-              <p id="job-action-message" class="inline-note" role="status" hidden></p>
-              <p id="job-diagnose" class="inline-note" hidden>Missing a job? Run <code>runquill diagnose OWNER/REPO</code> to check GitHub App access, its job label, and delivery.</p>
-              <div id="job-details" class="job-details" hidden>
-                <div class="detail-head"><h3 id="detail-title">Job details</h3><a id="detail-link" target="_blank" rel="noopener noreferrer" hidden>Open in GitHub ↗</a></div>
-                <p id="detail-reason"></p>
-                <p id="detail-retry" hidden></p>
-                <p id="detail-route" hidden>Runner label <code id="detail-label"></code></p>
-                <div id="detail-actions" class="job-actions" hidden></div>
-                <dl id="detail-timings" class="timings" aria-label="Job timings" hidden></dl>
-                <ol id="detail-timeline" class="timeline" aria-label="Observed job events"></ol>
-              </div>
-            </section>
-            <section class="surface first-job" id="first-job" aria-labelledby="first-job-title">
-              <div class="section-head">
-                <div><h2 id="first-job-title">First job setup</h2><p id="check-summary">Follow your first Runquill workflow from GitHub to cleanup.</p></div>
-                <a class="guide" href="https://github.com/yakisoba0728/Runquill#verify-your-first-job" target="_blank" rel="noopener noreferrer">Setup guide ↗</a>
-              </div>
-              <ol class="checklist">
-                <li><span class="check" data-check="app" aria-hidden="true"></span><div><h3>Connect the GitHub App</h3><p id="check-app">Run setup and install the App on your personal account.</p></div></li>
-                <li><span class="check" data-check="seen" aria-hidden="true"></span><div><h3>Run the first workflow</h3><p id="check-seen-instruction">In a private repository, run <code>runquill workflow init</code>. Commit the workflow and select <strong>Run workflow</strong> on GitHub.</p><p id="check-seen" hidden>Runquill discovered the first-job workflow.</p></div></li>
-                <li><span class="check" data-check="clean" aria-hidden="true"></span><div><h3>Confirm cleanup</h3><p id="check-clean">When the job finishes, Runquill removes its runner. Check the job result on GitHub.</p><a id="check-link" target="_blank" rel="noopener noreferrer" hidden>View first job on GitHub ↗</a></div></li>
-              </ol>
-            </section>
-          </div>
-          <aside class="side">
-            <section class="surface" id="fleet-pools" aria-labelledby="pools-title">
-              <div class="section-head"><div><h2 id="pools-title">Worker pools</h2><p>Host capacity before the fleet limit</p></div></div>
-              <div id="pool-rows"><p class="empty">Waiting for a fleet snapshot…</p></div>
-            </section>
-            <section class="surface" aria-labelledby="signals-title">
-              <div class="section-head"><div><h2 id="signals-title">GitHub connection</h2><p>Observed delivery and polling</p></div></div>
-              <dl class="signals">
-                <div id="access-scope" hidden><dt>Configured access</dt><dd id="access-scope-value"></dd></div>
-                <div><dt>App connection</dt><dd id="app-signal">Awaiting evidence</dd></div>
-                <div><dt>Last matched webhook</dt><dd id="webhook-signal">—</dd></div>
-                <div><dt>Last successful poll</dt><dd id="poll-signal">—</dd></div>
-              </dl>
-            </section>
-          </aside>
-        </div>
-
-        <section class="surface fleet-section" id="fleet-hosts" aria-labelledby="hosts-title">
-          <div class="section-head"><div><h2 id="hosts-title">Hosts</h2><p id="host-description">Capacity by Docker engine</p></div></div>
-          <div class="table-scroll" tabindex="0" aria-label="Worker inventory">
-            <table>
-              <thead><tr><th scope="col">Host</th><th scope="col">Pool</th><th scope="col">State</th><th scope="col">Slot limit</th><th scope="col">Occupied</th><th scope="col">Reserved</th><th scope="col">Available slots</th><th scope="col">Actions</th></tr></thead>
-              <tbody id="host-rows"></tbody>
-            </table>
-            <p class="empty" id="host-empty">Waiting for a fleet snapshot…</p>
-          </div>
-          <p id="host-action" class="inline-note" role="status" hidden></p>
-        </section>
-        <section class="surface fleet-section" id="fleet-runners" aria-labelledby="runners-title">
-          <div class="section-head"><div><h2 id="runners-title">Runners</h2><p id="runner-summary">Waiting for a fleet snapshot…</p></div></div>
-          <div class="table-scroll" tabindex="0" aria-label="Runner inventory">
-            <table>
-              <thead><tr><th scope="col">Runner</th><th scope="col">Host</th><th scope="col">Pool</th><th scope="col">Runtime state</th><th scope="col">GitHub job</th></tr></thead>
-              <tbody id="runner-rows"></tbody>
-            </table>
-            <p id="runner-empty" class="empty">Waiting for a fleet snapshot…</p>
-          </div>
-        </section>
-
-        <section class="surface fleet-section" id="history" aria-labelledby="history-title">
-          <div class="section-head"><div><h2 id="history-title">Job history</h2><p>Runquill keeps finished jobs for seven days. Job logs stay on GitHub.</p></div></div>
-          <form id="history-form" class="filters history-filters">
-            <input type="search" name="repository" aria-label="Filter by repository" placeholder="OWNER/REPO" maxlength="140">
-            <select name="outcome" aria-label="Filter by outcome">
-              <option value="">All outcomes</option>
-              <option value="waiting">Waiting</option>
-              <option value="running">Running</option>
-              <option value="finished">Finished</option>
-              <option value="failed">Failed</option>
-            </select>
-            <select name="range" aria-label="Filter by time range">
-              <option value="">Any time</option>
-              <option value="3600">Last hour</option>
-              <option value="86400">Last 24 hours</option>
-              <option value="604800">Last 7 days</option>
-            </select>
-            <button class="button" type="submit">Apply filters</button>
-          </form>
-          <div class="table-scroll" tabindex="0" aria-label="Job history results">
-            <table>
-              <thead><tr><th scope="col">Repository / job</th><th scope="col">Outcome</th><th scope="col">Pool</th><th scope="col">Host</th><th scope="col">Queued</th><th scope="col">Started</th><th scope="col">Finished</th><th scope="col">Queue time</th><th scope="col">Actions</th></tr></thead>
-              <tbody id="history-rows"></tbody>
-            </table>
-            <p class="empty" id="history-empty">Loading job history…</p>
-          </div>
-          <div class="history-footer"><button class="button" id="history-more" type="button" hidden>Load older jobs</button></div>
-          <p id="history-message" class="inline-note" role="status" hidden></p>
-        </section>
-
-        <section class="management" id="access" aria-labelledby="access-title" hidden>
-          <div class="management-heading"><h2 id="access-title">Manage access</h2><p id="current-user"></p></div>
-          <div class="management-grid">
-            <section class="surface" id="token-panel" aria-labelledby="tokens-title">
-              <div class="section-head"><div><h2 id="tokens-title">API tokens</h2><p>Scoped credentials for scripts and integrations</p></div></div>
-              <form id="token-form" class="control-form">
-                <label>Token name<input name="name" maxlength="80" required placeholder="Metrics collector"></label>
-                <label>Scope<select name="scope"><option value="fleet:read">Read fleet status</option><option id="maint-scope" value="hosts:write">Manage host maintenance</option><option id="jobs-scope" value="jobs:write">Cancel and retry jobs</option></select></label>
-                <label>Valid for days<input name="days" type="number" min="1" max="90" value="30" required></label>
-                <button class="button primary" type="submit">Create token</button>
-              </form>
-              <div id="issued-token" class="issued" hidden>
-                <label for="token-secret">Copy your token now. Its value is shown once.</label>
-                <input id="token-secret" type="text" readonly>
-                <button class="button" id="hide-token" type="button">Hide token</button>
-              </div>
-              <ul class="control-list" id="token-list"></ul>
-              <p id="token-message" class="inline-note" role="status" hidden></p>
-            </section>
-            <section class="surface" id="team-panel" aria-labelledby="team-title" hidden>
-              <div class="section-head"><div><h2 id="team-title">Team</h2><p>Enroll a teammate by GitHub login or numeric account ID</p></div></div>
-              <form id="team-form" class="control-form">
-                <label>GitHub login or ID<input name="account" maxlength="40" placeholder="octocat" autocomplete="off" required></label>
-                <label>Role<select name="role" aria-label="Role"><option value="viewer">Viewer</option><option value="operator">Operator</option><option value="admin">Admin</option></select></label>
-                <button class="button primary" type="submit">Save team member</button>
-              </form>
-              <ul class="control-list" id="team-list"></ul>
-              <p id="team-message" class="inline-note" role="status" hidden></p>
-            </section>
-          </div>
-          <section class="surface" id="operations-panel" aria-labelledby="operations-title" hidden>
-            <div class="section-head"><div><h2 id="operations-title">Operations</h2><p>Check repository access or download the queue.</p></div><button id="download-backup" class="button" type="button">Download queue backup</button></div>
-            <form id="diagnose-form" class="control-form">
-              <label>GitHub repository<input name="repository" required maxlength="140" placeholder="OWNER/REPO"></label>
-              <button class="button" type="submit">Diagnose repository</button>
-            </form>
-            <p id="operations-message" class="inline-note" role="status" hidden></p>
-            <pre id="diagnose-result" class="diagnose-result" aria-live="polite" hidden></pre>
-          </section>
-          <section class="surface" id="audit-panel" aria-labelledby="audit-title" hidden>
-            <div class="section-head"><div><h2 id="audit-title">Audit history</h2><p>Recent sign-ins and management actions</p></div><button class="button" id="refresh-audit" type="button">Refresh</button></div>
-            <form id="audit-form" class="filters">
-              <select name="action" aria-label="Filter by action">
-                <option value="">All actions</option>
-                <option value="session.">Sign-ins</option>
-                <option value="user.">Team changes</option>
-                <option value="token.">API tokens</option>
-                <option value="host.">Host maintenance</option>
-                <option value="job.">Job actions</option>
-                <option value="settings.update">Settings changes</option>
-                <option value="queue.backup">Queue backups</option>
-              </select>
-              <input type="search" name="actor" aria-label="Filter by actor" placeholder="Login or GitHub ID" maxlength="100">
-              <button class="button" type="submit">Apply filters</button>
-            </form>
-            <ul class="control-list" id="audit-list"></ul>
-            <div class="history-footer"><button class="button" id="audit-more" type="button" hidden>Load older entries</button></div>
-            <p id="audit-message" class="inline-note" role="status" hidden></p>
-          </section>
-        </section>
-        <section class="surface fleet-section" id="settings" aria-labelledby="settings-title" hidden>
-          <div class="section-head">
-            <div><h2 id="settings-title">Settings</h2><p>Changes apply without restarting the manager.</p></div>
-            <button class="button" id="settings-reload" type="button">Reload saved settings</button>
-          </div>
-          <form id="settings-form" class="settings-form" hidden>
-            <div class="settings-fields">
-              <label>Fleet slot limit<input name="slot_limit" inputmode="numeric" type="number" min="1" required></label>
-              <label>GitHub polling interval<input name="poll_interval" placeholder="30s" maxlength="32" required></label>
-              <label>Default runner image<input name="runner_image" maxlength="256" required></label>
-            </div>
-            <p class="settings-hint" id="settings-webhook"></p>
-            <div id="settings-docker" hidden>
-              <div class="settings-heading"><h3>Docker workers</h3><button class="button" id="settings-add-host" type="button">Add worker</button></div>
-              <p class="settings-hint">SSH workers use the manager's configured SSH credentials. Outbound agents use deployment credentials.</p>
-              <div class="settings-entries" id="settings-hosts"></div>
-              <div class="settings-heading"><h3>Worker pools</h3><button class="button" id="settings-add-pool" type="button">Add pool</button></div>
-              <div class="settings-entries" id="settings-pools"></div>
-            </div>
-            <button class="button primary" type="submit">Save settings</button>
-          </form>
-          <p id="settings-message" class="inline-note" role="status" hidden></p>
-          <template id="settings-host">
-            <div class="settings-entry settings-host">
-              <label>Worker address<input name="address" placeholder="local or ssh://user@host" maxlength="260" required></label>
-              <label>Worker slot limit<input name="limit" type="number" min="1" placeholder="Use fleet limit"></label>
-              <button class="button" type="button" data-remove>Remove</button>
-            </div>
-          </template>
-          <template id="settings-pool">
-            <fieldset class="settings-entry settings-pool">
-              <div class="settings-fields">
-                <label>Pool name<input name="pool_name" pattern="[a-z0-9][a-z0-9-]{0,31}" required></label>
-                <label>CPU limit<input name="cpus" type="number" min="0.01" step="any"></label>
-                <label>Memory limit (MiB)<input name="memory" type="number" min="6"></label>
-              </div>
-              <label>Pool runner image<input name="image" maxlength="256" placeholder="Use default image"></label>
-              <label>Worker addresses<textarea name="hosts" rows="2" placeholder="One worker address per line"></textarea></label>
-              <label class="settings-check"><input name="privileged" type="checkbox" checked>Run Docker-in-Docker (privileged)</label>
-              <label class="settings-check"><input name="cache" type="checkbox">Keep a shared build cache</label>
-              <label class="settings-check"><input name="restrict" type="checkbox">Restrict repositories</label>
-              <label>Allowed repositories<textarea name="repositories" rows="2" placeholder="One OWNER/REPO per line"></textarea></label>
-              <button class="button" type="button" data-remove>Remove pool</button>
-            </fieldset>
-          </template>
-        </section>
-      </main>
+    <div class="demo-bar" id="demo-bar" hidden>
+      <label>Scenario
+        <select id="scenario">
+          <option value="first">First job</option>
+          <option value="missed">Webhook missed</option>
+          <option value="offline">Worker offline</option>
+        </select>
+      </label>
+      <span class="muted" id="scenario-note"></span>
+      <a href="https://github.com/yakisoba0728/Runquill#install-a-public-release" target="_blank" rel="noopener noreferrer">Install Runquill</a>
     </div>
+
+    <nav class="nav" id="nav" aria-label="Panel"></nav>
+
+    <main class="main" id="main" tabindex="-1">
+      <div class="notices" id="notices"></div>
+      <div class="view" id="view"></div>
+    </main>
   </div>
+
+  <dialog class="dialog" id="confirm-dialog" aria-labelledby="confirm-text">
+    <p id="confirm-text"></p>
+    <div class="dialog-actions">
+      <button class="button" type="button" id="confirm-cancel">Cancel</button>
+      <button class="button primary" type="button" id="confirm-ok">Confirm</button>
+    </div>
+  </dialog>
+  <dialog class="palette" id="palette" role="dialog" aria-modal="true" aria-labelledby="palette-title">
+    <h2 class="visually-hidden" id="palette-title">Commands</h2>
+    <input class="palette-input" id="palette-input" type="text" role="combobox" aria-expanded="true" aria-autocomplete="list"
+      aria-controls="palette-list" aria-label="Search screens, commands, runners, jobs and hosts" placeholder="Type a screen, command, runner, job or host"
+      autocomplete="off" autocapitalize="off" spellcheck="false">
+    <ul class="palette-list" id="palette-list" role="listbox" aria-label="Commands"></ul>
+    <div class="palette-foot">
+      <p id="palette-status" role="status" aria-live="polite"></p>
+      <p class="palette-hint" aria-hidden="true">↑ ↓ to move, Enter to open, Esc to close</p>
+    </div>
+  </dialog>
+  <div class="toasts" id="toasts" aria-live="polite"></div>
 </body>
 </html>

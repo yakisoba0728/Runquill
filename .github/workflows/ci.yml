@@ -35,6 +35,9 @@ jobs:
         run: |
           docker build -t runquill-manager:ci .
           docker run --rm runquill-manager:ci --version
+          # The panel's screens live in subdirectories that .dockerignore must let through.
+          docker run --rm --entrypoint sh runquill-manager:ci -c \
+            'runquill panel --demo --port 8081 & sleep 2; wget -q -O /dev/null http://127.0.0.1:8081/views/overview.js'
           docker build -t runquill-runner:ci runner
       - name: Build the other runner base variants
         if: matrix.os == 'ubuntu-24.04'

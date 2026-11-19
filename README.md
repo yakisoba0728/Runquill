@@ -4,7 +4,7 @@ English · [한국어](README.ko.md)
 
 Runquill runs GitHub Actions jobs from private repositories in a personal account or a GitHub organization on your Linux Docker servers or K3s cluster. Install one GitHub App, then opt jobs in through `runs-on`. The default **All repositories** installation discovers new private repositories automatically. You can also [connect selected repositories](#connect-selected-repositories).
 
-[Quickstart](#quickstart) · [First job](#verify-your-first-job) · [Sample panel](#sample-panel) · [Team panel](#web-panel-and-team-access) · [Release downloads](https://github.com/yakisoba0728/Runquill/releases)
+[Quickstart](#quickstart) · [First job](#verify-your-first-job) · [Sample panel](#sample-panel) · [Team panel](#web-panel-and-team-access) · [Remote CLI](docs/remote-cli.md) · [Release downloads](https://github.com/yakisoba0728/Runquill/releases)
 
 ## Quickstart
 
@@ -43,7 +43,7 @@ sh install.sh --dir "$HOME/runquill"
 2. Wait for the installer to start Compose and report `Preflight passed.`
 3. [Run your first job](#verify-your-first-job) from a private repository you own.
 
-The installer verifies release checksums and pulls matching manager and runner images. The command above installs into `$HOME/runquill`. Use `--version v0.2.0` to pin a release, or `--download-only` to fetch the binary and deployment files before setup.
+The installer verifies release checksums and pulls matching manager and runner images. The command above installs into `$HOME/runquill`. Use `--version v0.3.0` to pin a release, or `--download-only` to fetch the binary and deployment files before setup.
 
 ### Create and install the GitHub App
 
@@ -251,6 +251,14 @@ When slots free up, Runquill starts the next job from the repository with the fe
 
 `RUNQUILL_SCHEDULER_WORKERS` sets how many runner launches and cleanups one scheduler pass runs in parallel, from `1` (serial) to `32`. The default is `4`. Calls to one Docker host stay serial. Under Compose, pass these settings through an [overlay](#add-manager-settings).
 
+### Runner images and container engines
+
+Releases publish the runner image as `runquill-runner:<version>` on Ubuntu 24.04 and as `-ubuntu22.04` and `-debian12` variants. Runners start with `--pull never`, so pull or build the image on every host yourself. `RUNQUILL_CONTAINER_ENGINE=podman` selects the Podman CLI for the `local` and `ssh://` hosts, and runners on a rootless engine start without Docker-in-Docker. Podman and rootless engines have not yet been exercised on a real host. [Engines and images](docs/container-engines.md)
+
+### Elastic runner limits
+
+With `RUNQUILL_ELASTIC=observe` or `apply`, a busy runner on the `local` Docker host can borrow CPU and memory that no other runner or free slot has been promised, up to a multiple of its pool's `cpus` and `memory_mib`. Limits never fall below the pool's values, and memory is never lowered. `observe` only records the decisions, which the **Hosts & pools** screen shows. Elastic limits have not yet been exercised on a real host under load. [Elastic limits](docs/elastic-limits.md)
+
 ## Choose a runner
 
 The [smoke workflow](examples/runquill-smoke.yml) runs on Runquill by default. On **Run workflow**, select `github_hosted` to use `ubuntu-latest`. The [parallel jobs example](examples/runquill-parallel.yml) applies the same switch to one standalone job and two matrix jobs. Copy it into `.github/workflows/` and run it to see the runner name in each job's log.
@@ -274,6 +282,12 @@ Pass the expression as the job's single `runs-on` label. Start the suffix with a
 Copy the [cached build example](examples/runquill-build-cache.yml) into `.github/workflows/` in a repository with a root `Dockerfile`. It builds the committed Git revision on the default branch and keeps the resulting image available for later steps in the same job. A new runner can restore layers through the GitHub Actions cache. Choose a distinct `scope` for each image and use it in both cache settings. Cache export failures leave the build usable. [Docker GitHub Actions cache](https://docs.docker.com/build/cache/backends/gha/)
 
 The example pins both actions to exact commits, uses read-only repository permissions, and writes cache from the default branch. Pass build secrets through BuildKit secret mounts so they stay out of cached image layers. [Docker build secrets](https://docs.docker.com/build/building/secrets/)
+
+### Move existing workflows
+
+Administrators can open a pull request that moves jobs from GitHub-hosted labels to Runquill labels from the panel's **Migrate** screen. It needs Contents, Pull requests and Workflows write access, which only `runquill setup --migrate` requests for a new App. Runquill previews the diff first, changes only `runs-on`, leaves jobs it cannot rewrite safely alone with a reason, and never merges. Migration has not yet been exercised against real GitHub. [Workflow migration](docs/workflow-migration.md)
+
+`runquill workflow check` checks local workflow files for malformed Runquill labels, unknown pools, risky triggers on self-hosted runners, missing permissions and timeouts, and unpinned actions. It exits with status 1 for a high-severity finding, or for any finding with `--strict`, and `--json` prints the findings. [Check codes](docs/workflow-migration.md#check-workflows-offline)
 
 ## Run on K3s
 
@@ -312,20 +326,43 @@ For release installs, omit the image override and use `--no-build` with the same
 
 | Role | Panel access |
 | --- | --- |
-| Viewer | View job, runner, and host status and job history. Create a scoped fleet-reader API token. |
-| Operator | Viewer access plus pause and resume host assignments, and cancel or retry waiting jobs. |
-| Admin | Operator access plus enroll or disable team users, manage tokens, change settings, download queue backups, and read audit history. |
+| Viewer | View the overview, queue, job history, runners, hosts and pools, and usage. Create `fleet:read` API tokens. |
+| Operator | Viewer access plus pause and resume host assignments, cancel or retry waiting jobs, read runner logs, and create `hosts:write` and `jobs:write` tokens. |
+| Admin | Operator access plus enroll or disable team users, see and revoke every token, change settings, migrate workflows, view backup status, download queue backups, check repositories, and read audit history. |
 
-Team users sign in with their enrolled GitHub account. Administrators add a teammate by GitHub login or numeric account ID. The panel resolves a login to its account ID through GitHub's public users API and accepts only user accounts. Tokens expire after 1–90 days, have one scope, and can be revoked from the panel. The secret is shown only when issued. Send `Authorization: Bearer <token>` with `GET /snapshot` or `GET /api/jobs` for `fleet:read`, or `POST /api/hosts/cordon` for `hosts:write`. The latter accepts `{"host":"local","cordoned":true}`. You can pause new work on a host without interrupting its active runners.
+Team users sign in with their enrolled GitHub account. Administrators add a teammate by GitHub login or numeric account ID. The panel resolves a login to its account ID through GitHub's public users API and accepts only user accounts. Tokens expire after 1–90 days, have one scope, and can be revoked from the panel. The secret is shown only when issued. Send it as `Authorization: Bearer <token>`. A token reaches only the routes of its own scope, so reading and changing the fleet needs two tokens. Tokens never reach runner logs, migration, backups or other administrator routes. The [API description](api/openapi.yaml) documents every route.
+
+| Scope | Routes |
+| --- | --- |
+| `fleet:read` | `GET /snapshot`, `GET /api/events`, `GET /api/jobs`, `GET /api/elastic`, `GET /api/usage`, `POST /mcp` |
+| `hosts:write` | `POST /api/hosts/cordon` with `{"host":"local","cordoned":true}`. Pausing a host does not interrupt its active runners. |
+| `jobs:write` | `POST /api/jobs/{id}/cancel`, `POST /api/jobs/{id}/retry` |
 
 **Job history** lists jobs newest first with their outcome: waiting, running, finished or failed. Filter it by repository, outcome, and the last hour, 24 hours or 7 days. Runquill keeps finished jobs for seven days, and job logs stay on GitHub. `GET /api/jobs` returns the same rows and accepts `repository`, `outcome`, `since` and `until` (Unix seconds), `limit` (up to 100), and the `next` cursor as `before`.
 
-Signed-in operators and administrators can act on a job that waits without a runner. API tokens cannot. **Retry now** clears a retry delay so the next scheduler pass tries the job. **Cancel job** marks it failed with `cancelled by @LOGIN`, and Runquill starts no runner for it. The run stays queued on GitHub until you cancel or rerun it there.
+Operators and administrators can act on a job that waits without a runner, in the panel or with a `jobs:write` token. **Retry now** clears a retry delay so the next scheduler pass tries the job. **Cancel job** marks it failed with `cancelled by @LOGIN`, and Runquill starts no runner for it. The run stays queued on GitHub until you cancel or rerun it there.
 
-Audit history records sign-ins, team, token, host, job, settings and backup changes with the actor's login. Filter it by action type or by actor login or ID, and load older entries page by page. Settings changes list each changed field with its old and new value, and omit values whose names suggest a secret.
+Audit history records sign-ins, team, token, host, job, settings and backup changes, runner log views and workflow migrations with the actor's login. Filter it by action type or by actor login or ID, and load older entries page by page. Settings changes list each changed field with its old and new value, and omit values whose names suggest a secret.
 
+The panel updates live over Server-Sent Events and falls back to polling when the stream is unavailable. Press Cmd+K or Ctrl+K for the command palette, and pick a light, dark or system theme. The [panel guide](docs/panel.md) describes each screen and who can use it.
 
 Select a job in the panel to see its runner label, current queue or startup explanation, and latest retry reason. The configured GitHub App access scope is shown in **GitHub connection**. The panel displays discovered jobs. For a missing job, use `runquill diagnose OWNER/REPO` to check the App installation, the job's GitHub label and discovery. `runquill status --json` exposes the same job explanation as the optional `diagnostic` object with a `code` and `message`.
+
+### Usage statistics
+
+The **Usage** screen and `GET /api/usage` report finished jobs, failures, runner time and queue wait by UTC day, repository, pool or host. A job counts once, on the UTC day it finished. Failures are jobs Runquill gave up on or that were cancelled in the panel, not GitHub job conclusions. Daily totals are kept for 400 days in the queue database but are not included in queue backups. [Details](docs/panel.md#usage-statistics)
+
+### Runner logs
+
+Operators and administrators can read or follow the container output of a runner that holds a job, from the **Logs** screen. These are the runner process logs, not GitHub step logs. Only runners on the `local` host and `ssh://` hosts are supported, and API tokens cannot read them. Log streaming has not yet been exercised on a real fleet. [Details](docs/panel.md#runner-logs)
+
+### Remote CLI
+
+Run `runquill jobs list`, `runners list`, `hosts list`, `pools list`, `hosts cordon`, `hosts uncordon`, `jobs cancel` and `jobs retry` from any machine against the panel API. Set `RUNQUILL_URL` to the panel origin and pass a token through `RUNQUILL_TOKEN` or `--token-file`, and add `--json` for scripts. Each command needs the matching token scope, and `audit tail` always needs the web panel because no token can read the audit log. [Remote CLI guide](docs/remote-cli.md)
+
+### MCP for coding agents
+
+`POST /mcp` serves read-only [Model Context Protocol](https://modelcontextprotocol.io/) tools for fleet status, jobs, hosts, usage and elastic decisions. Use a `fleet:read` token over HTTP, or run `runquill mcp` as a local stdio server that forwards to the panel. Browser sessions are always refused. The endpoint has not yet been tried with a real MCP client. [MCP guide](docs/mcp.md)
 
 ### Status and upgrades
 
@@ -355,6 +392,8 @@ To clean up, run `docker compose exec manager runquill gc --remove-orphans`. It 
 - `GET /healthz` on port 8080 returns HTTP 200 when the queue database answers. `GET /readyz` also requires a successful scheduler pass within the last 2 minutes and no current GitHub App authentication failure. It returns HTTP 503 otherwise, with a JSON body whose `scheduler` is `starting`, `failing` or `stalled`, and whose `database` and `github_auth` show the other checks. Error details stay in the manager log.
 - Runners are ephemeral, repository-scoped JIT runners. In the default pool, each job gets a new container with its own Docker daemon, so `docker build`, `services:` and `container:` work. After the job, the container with its inner images, volumes and work directory is deleted. Only the per-repository cache volume of a pool with `cache` enabled remains.
 - Run one manager per fleet. Preserve the Compose `queue` volume during upgrades, including upgrades from the original Python version. A manager restart continues tracking existing runners.
+- Runquill polls the GitHub API on startup and waits `RUNQUILL_POLL_INTERVAL` (default `30s`) after each scan. Each scan checks queued and in-progress runs in every eligible repository, giving recent activity priority. The poller rotates requested, waiting, and pending runs so each repository receives a full scan within four successful passes if the repository list stays stable. Webhooks and polling share one queue record per GitHub job ID. Set the interval to `0` to run with webhooks alone.
+- Job timing records the first discovery source, successful GitHub runner registration, and GitHub’s reported job start when available. The discovery delay measures GitHub job creation to Runquill discovery when GitHub provides a creation timestamp. The Runquill queue duration measures discovery to first registration, or elapsed wait for a queued job. Missing timestamps and durations are omitted in `status --json`.
 
 ### Upgrade
 
@@ -373,7 +412,7 @@ For a release without `--upgrade` or a manual install, set both image tags in `.
 
 ### Add manager settings
 
-Compose passes only the variables listed in `compose.yaml` to the manager. For optional settings such as `RUNQUILL_MAX_PER_REPOSITORY`, `RUNQUILL_SCHEDULER_WORKERS`, `RUNQUILL_LOG_FORMAT`, `RUNQUILL_LOG_LEVEL` and the [notification](#send-notifications) variables, keep the values in `.env` and save an overlay such as `compose.settings.yaml` beside `compose.yaml`. `--upgrade` replaces `compose.yaml` but leaves this file in place.
+Compose passes only the variables listed in `compose.yaml` to the manager. For optional settings such as `RUNQUILL_MAX_PER_REPOSITORY`, `RUNQUILL_SCHEDULER_WORKERS`, `RUNQUILL_LOG_FORMAT`, `RUNQUILL_LOG_LEVEL`, the [notification](#send-notifications) variables, `RUNQUILL_ELASTIC*`, `RUNQUILL_BACKUP_*` and `RUNQUILL_METRICS_*`, keep the values in `.env` and save an overlay such as `compose.settings.yaml` beside `compose.yaml`. `--upgrade` replaces `compose.yaml` but leaves this file in place.
 
 ```yaml
 services:
@@ -389,7 +428,7 @@ services:
       RUNQUILL_NOTIFY_STALL_AFTER: ${RUNQUILL_NOTIFY_STALL_AFTER:-}
 ```
 
-Apply it with `docker compose -f compose.yaml -f compose.settings.yaml up -d`, adding your other overlays and `--no-build` for published images. On K3s, the manager reads every variable in the `runquill-config` Secret, so add them to `.env`, recreate the Secret, and restart the Deployment.
+Apply it with `docker compose -f compose.yaml -f compose.settings.yaml up -d`, adding your other overlays and `--no-build` for published images. Scheduled backups also need a mounted directory and a passphrase file, so use the overlay in the [backup guide](docs/backups.md#compose). The [elastic limits guide](docs/elastic-limits.md#compose) lists its variables. `RUNQUILL_CONTAINER_ENGINE=podman` cannot be used under Compose because the manager image contains only the Docker CLI. On K3s, the manager reads every variable in the `runquill-config` Secret, so add them to `.env`, recreate the Secret, and restart the Deployment.
 
 ### Send notifications
 
@@ -404,8 +443,6 @@ Set `RUNQUILL_NOTIFY_URL` to an incoming webhook, such as a Slack webhook, to re
 When a per-repository cap is configured, jobs of a repository that already has an active runner are left out of the stalled-queue age, so a cap alone does not raise `queue_stalled`. A condition that persists is repeated after `RUNQUILL_NOTIFY_COOLDOWN` (default `30m`). Recovery is sent once and only after its problem was notified.
 
 `RUNQUILL_NOTIFY_FORMAT=slack` (the default) posts `text` plus `source`, `kind`, `host`, `repository`, `job` (the runner label), `job_id`, `reason`, `waiting_seconds` and `timestamp`. Use `text` for receivers that accept only `{"text": ...}`. Each event gets up to three attempts with a 10-second timeout, retrying on network errors, HTTP 429 and 5xx. Up to 64 events wait in memory, and the oldest is dropped when the queue is full. On shutdown, the manager waits up to 10 seconds for pending deliveries. With [metrics](docs/metrics.md) enabled, the `runquill_notifications_*` counters track the results.
-- Runquill polls the GitHub API on startup and waits `RUNQUILL_POLL_INTERVAL` (default `30s`) after each scan. Each scan checks queued and in-progress runs in every eligible repository, giving recent activity priority. The poller rotates requested, waiting, and pending runs so each repository receives a full scan within four successful passes if the repository list stays stable. Webhooks and polling share one queue record per GitHub job ID. Set the interval to `0` to run with webhooks alone.
-- Job timing records the first discovery source, successful GitHub runner registration, and GitHub’s reported job start when available. The discovery delay measures GitHub job creation to Runquill discovery when GitHub provides a creation timestamp. The Runquill queue duration measures discovery to first registration, or elapsed wait for a queued job. Missing timestamps and durations are omitted in `status --json`.
 
 ### Back up and recover the queue
 
@@ -439,6 +476,10 @@ docker compose up -d
 
 With SSH workers or the panel overlay, use your usual Compose files. With K3s, prepare and activate the new file on the manager PVC while the old manager is stopped, then set the deployment's `RUNQUILL_DB` to the new path. The recovery retains the original file for rollback. Each fleet needs exactly one running manager.
 
+### Schedule, seal and upload backups
+
+Set `RUNQUILL_BACKUP_INTERVAL` and `RUNQUILL_BACKUP_DIR` to take backups automatically, and `RUNQUILL_BACKUP_PASSPHRASE` or `RUNQUILL_BACKUP_PASSPHRASE_FILE` to encrypt them. `runquill backup --seal` writes the same sealed format by hand, and `runquill restore --from` opens it with the passphrase. With the `RUNQUILL_BACKUP_S3_*` variables, the manager also copies each backup to an S3-compatible bucket and `runquill restore --from-s3` restores from it. Runquill refuses to upload unsealed backups unless you set `RUNQUILL_BACKUP_S3_ALLOW_PLAINTEXT=true`. The S3 upload has not yet been exercised against a real bucket. [Backup guide](docs/backups.md)
+
 ### Uninstall
 
 Cordon the hosts and let running jobs finish first. [Back up the queue](#back-up-and-recover-the-queue) if you might reinstall. From the installation directory, stop the manager with the Compose files you use. `-v` deletes the `queue` volume with every queued job, lease and saved panel setting, and `--rmi all` removes the manager image.
@@ -453,7 +494,7 @@ Compose does not manage runner containers, cache volumes or the runner image. Ch
 docker ps -a --filter label=io.runquill.runner=1
 docker rm -f $(docker ps -aq --filter label=io.runquill.runner=1)
 docker volume rm $(docker volume ls -q -f label=io.runquill.cache=1)
-docker image rm ghcr.io/yakisoba0728/runquill-runner:v0.2.0
+docker image rm ghcr.io/yakisoba0728/runquill-runner:v0.3.0
 ```
 
 Then delete the installation directory, which holds `.env`, the GitHub App key and any token files. Turn off a Tailscale Funnel or Serve listener you created, and stop `runquill worker` on outbound workers.
@@ -461,6 +502,20 @@ Then delete the installation directory, which holds `.env`, the GitHub App key a
 On K3s, `kubectl delete -f runquill-k3s.yaml` removes both Runquill namespaces with the manager, runner Pods, Secrets and the queue PVC.
 
 Finally, delete the GitHub App in **Settings → Developer settings → GitHub Apps → *your App* → Advanced → Delete GitHub App**, under the organization's settings for an organization App. This uninstalls it everywhere. Delete a separate panel OAuth App the same way, and remove any leftover `runquill-` runners in the repository's **Settings → Actions → Runners**. [Deleting a GitHub App](https://docs.github.com/en/apps/maintaining-github-apps/deleting-a-github-app)
+
+## Feature status
+
+The Go tests cover the features in this README, and CI runs real containers in the nested Docker test and the K3s lifecycle check. The features below are implemented and tested only against fakes or recorded output. They have not yet been run in a real environment:
+
+- Podman and rootless container engines
+- uploads to and restores from real S3 buckets
+- workflow migration against real GitHub repositories
+- the MCP endpoint and `runquill mcp` with a real MCP client
+- scheduler parallelism (`RUNQUILL_SCHEDULER_WORKERS`) on K3s, SSH and outbound workers
+- elastic limits on a real Docker host under load (they apply to the `local` host only)
+- runner log streaming from a real fleet
+
+Report problems with these features as issues.
 
 ## Develop and release
 
@@ -472,7 +527,7 @@ go vet ./...
 CGO_ENABLED=0 go build -o runquill .
 ```
 
-The runner Dockerfile pins the upstream GitHub Actions runner image by digest. Use `--build-arg RUNQUILL_RUNNER_BASE=IMAGE` to extend a compatible image with your own toolchain. Keep the runner files in `/home/runner` and its user at UID 1001 for Kubernetes plain mode and pools with `privileged: false`.
+The runner Dockerfile pins the upstream GitHub Actions runner image by digest. Use `--build-arg RUNQUILL_RUNNER_BASE=IMAGE` to extend a compatible image with your own toolchain. Pass `--build-arg RUNQUILL_RUNNER_OS=ubuntu22.04` or `debian12` to build another base. Keep the runner files in `/home/runner` and its user at UID 1001 for Kubernetes plain mode and pools with `privileged: false`.
 
 Run the nested Docker smoke test with `RUNQUILL_TEST_DOCKER_IMAGE=runquill-runner:local go test -run '^TestDockerRunner$' -v` after building the runner image. It checks Docker build, PostgreSQL, bind mounts, and removal with a local stand-in for the GitHub listener.
 

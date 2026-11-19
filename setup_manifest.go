@@ -35,22 +35,58 @@ type manifestApp struct {
 
 var appManifestPage = template.Must(template.New("manifest").Parse(`<!doctype html>
 <html lang="{{if .Korean}}ko{{else}}en{{end}}">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Runquill setup</title></head>
-{{if .InWizard}}<link rel="stylesheet" href="/wizard.css">{{end}}
-<body><main{{if .InWizard}} class="wizard-card"{{end}}>
-{{if .InWizard}}<header class="wizard-header"><span class="brand"><span class="brand-mark" aria-hidden="true"></span>runquill</span><a class="language" href="/">{{if .Korean}}설치 상태{{else}}Setup status{{end}}</a></header><div class="wizard-content">{{end}}
-<h1>{{if .Korean}}Runquill과 GitHub 연결{{else}}Connect Runquill to GitHub{{end}}</h1>
-{{if .Korean}}<p>GitHub에서 Runquill의 비공개 앱 등록을 승인하세요. 승인 후 이 마법사로 돌아옵니다.</p>{{else}}
-<p>Create a private GitHub App with Actions read and {{.RunnerPermission}} write permissions.
-{{if .Webhook}}GitHub will send workflow job events to your HTTPS webhook.{{else}}Runquill will discover jobs by polling GitHub.{{end}}</p>{{end}}
-{{if .Migrate}}<p>{{if .Korean}}워크플로 이전 PR을 열 수 있도록 Contents, Pull requests, Workflows 쓰기 권한도 요청합니다.{{else}}It also requests Contents, Pull requests and Workflows write access so Runquill can open workflow migration pull requests.{{end}}</p>{{end}}
-{{if .Panel}}<p>{{if .Korean}}이 앱으로 러너를 등록하고 운영 패널에 로그인합니다.{{else}}Runquill uses this app for runner registration and panel sign-in.{{end}}</p>{{end}}
-<form method="post" action="{{.Action}}?state={{.State}}">
-  <input type="hidden" name="manifest" value="{{.Manifest}}">
-  <button type="submit" class="primary">{{if .Korean}}GitHub App 등록{{else}}Create GitHub App{{end}}</button>
-</form>
-{{if .InWizard}}</div>{{end}}
-</main></body>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Runquill · {{if .Korean}}GitHub 연결{{else}}Connect GitHub{{end}}</title>
+  {{- if .InWizard}}
+  <link rel="stylesheet" href="/wizard.css">
+  <script src="/wizard.js"></script>
+  {{- end}}
+</head>
+<body>
+{{- if .InWizard}}
+<header class="topbar">
+  <span class="brand">runquill</span>
+  <span class="topbar-title">{{if .Korean}}설치 마법사{{else}}Setup wizard{{end}}</span>
+  <div class="topbar-controls">
+    <a href="/">{{if .Korean}}설치 상태{{else}}Setup status{{end}}</a>
+    <label data-theme-field hidden><span class="visually-hidden">{{if .Korean}}화면 테마{{else}}Appearance{{end}}</span>
+      <select data-theme-control><option value="system">{{if .Korean}}시스템{{else}}System{{end}}</option><option value="light">{{if .Korean}}밝게{{else}}Light{{end}}</option><option value="dark">{{if .Korean}}어둡게{{else}}Dark{{end}}</option></select>
+    </label>
+  </div>
+</header>
+{{- end}}
+<main{{if .InWizard}} class="wizard"{{end}}>
+  {{- if .InWizard}}
+  <ol class="steps" aria-label="{{if .Korean}}설치 단계{{else}}Setup steps{{end}}">
+    <li data-state="ok">{{if .Korean}}설치 옵션{{else}}Options{{end}}<span class="visually-hidden"> ({{if .Korean}}완료{{else}}done{{end}})</span></li>
+    <li data-state="current" aria-current="step">{{if .Korean}}GitHub 연결{{else}}GitHub{{end}} <span class="detail">· {{if .Korean}}앱 등록{{else}}App registration{{end}}</span></li>
+    <li data-state="pending">{{if .Korean}}배포{{else}}Deploy{{end}}<span class="visually-hidden"> ({{if .Korean}}대기{{else}}pending{{end}})</span></li>
+    <li data-state="pending">{{if .Korean}}첫 작업{{else}}First job{{end}}<span class="visually-hidden"> ({{if .Korean}}대기{{else}}pending{{end}})</span></li>
+  </ol>
+  {{- end}}
+  <h1>{{if .Korean}}Runquill과 GitHub 연결{{else}}Connect Runquill to GitHub{{end}}</h1>
+  <p>{{if .Korean}}Actions 읽기 권한과 {{.RunnerPermission}} 쓰기 권한이 있는 비공개 GitHub App을 만듭니다.
+    {{- if .Webhook}} GitHub가 워크플로 작업 이벤트를 HTTPS 웹훅으로 보냅니다.{{else}} Runquill이 GitHub를 폴링해 작업을 찾습니다.{{end}}
+    {{- else}}Create a private GitHub App with Actions read and {{.RunnerPermission}} write permissions.
+    {{- if .Webhook}} GitHub will send workflow job events to your HTTPS webhook.{{else}} Runquill will discover jobs by polling GitHub.{{end}}{{end}}</p>
+  {{- if .Migrate}}
+  <p>{{if .Korean}}워크플로 이전 PR을 열 수 있도록 Contents, Pull requests, Workflows 쓰기 권한도 요청합니다.{{else}}It also requests Contents, Pull requests and Workflows write access so Runquill can open workflow migration pull requests.{{end}}</p>
+  {{- end}}
+  {{- if .Panel}}
+  <p>{{if .Korean}}이 앱으로 러너를 등록하고 운영 패널에 로그인합니다.{{else}}Runquill uses this app for runner registration and panel sign-in.{{end}}</p>
+  {{- end}}
+  {{- if .InWizard}}
+  <p class="hint">{{if .Korean}}GitHub에서 등록을 승인하면 이 마법사로 돌아옵니다.{{else}}After you approve the registration on GitHub, you return to this wizard.{{end}}</p>
+  {{- end}}
+  <form method="post" action="{{.Action}}?state={{.State}}">
+    <input type="hidden" name="manifest" value="{{.Manifest}}">
+    <div class="actions"><button type="submit" class="button primary">{{if .Korean}}GitHub App 등록{{else}}Create GitHub App{{end}}</button></div>
+  </form>
+</main>
+</body>
 </html>`))
 
 // migrationPermissions are what opening a workflow migration pull request needs.

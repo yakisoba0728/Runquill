@@ -9,14 +9,24 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
-//go:embed panelweb/index.html panelweb/panel.css panelweb/panel.js panelweb/i18n.js panelweb/demo.js panelweb/manage.js
+// The panel is plain HTML, CSS and ES modules: shared top-level modules (each
+// routed by name in panelHandler), views/<id>.js for each screen, and demo/
+// fixtures that only the sample panel serves. wizard.* belong to the setup
+// wizard and are not served here.
+//
+//go:embed panelweb
 var panelAssets embed.FS
+
+// panelAssetName limits served files to flat, lower-case module and style
+// names, so nothing outside the panel's own files can be requested.
+var panelAssetName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*\.(?:js|css)$`)
 
 type panelSnapshot struct {
 	Fleet         *statusReport    `json:"fleet"`
@@ -187,13 +197,38 @@ func panelHandler(panel *panelState, access *panelAccess) http.Handler {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprint(w, strings.Replace(string(page), `data-mode="demo"`, `data-mode="live"`, 1))
 	})
-	mux.Handle("GET /panel.css", files)
-	mux.Handle("GET /panel.js", files)
-	mux.Handle("GET /i18n.js", files)
+	// serve answers one embedded file: a shared top-level module named by its
+	// route, or views/{file} and demo/{file}. Live panels never send sample data.
+	serve := func(dir string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			name := r.PathValue("file")
+			if dir == "" {
+				name = strings.TrimPrefix(r.URL.Path, "/")
+			}
+			if !panelAssetName.MatchString(name) {
+				http.Error(w, "Use a panel file name.", http.StatusBadRequest)
+				return
+			}
+			if _, err := fs.Stat(assets, dir+name); err != nil || dir == "demo/" && panel != nil {
+				http.NotFound(w, r)
+				return
+			}
+			http.ServeFileFS(w, r, assets, dir+name)
+		}
+	}
+	mux.HandleFunc("GET /panel.css", serve(""))
+	mux.HandleFunc("GET /theme.js", serve(""))
+	mux.HandleFunc("GET /app.js", serve(""))
+	mux.HandleFunc("GET /api.js", serve(""))
+	mux.HandleFunc("GET /ui.js", serve(""))
+	mux.HandleFunc("GET /fleet.js", serve(""))
+	mux.HandleFunc("GET /i18n.js", serve(""))
+	mux.HandleFunc("GET /views/{file}", serve("views/"))
+	mux.HandleFunc("GET /demo/{file}", serve("demo/"))
 	if panel == nil {
-		mux.Handle("GET /demo.js", files)
-	} else if access != nil {
-		mux.Handle("GET /manage.js", files)
+		mux.HandleFunc("GET /demo.js", serve(""))
+	}
+	if panel != nil && access != nil {
 		access.register(mux, panel)
 		registerElasticRoutes(mux, access, panel.elastic)
 	}

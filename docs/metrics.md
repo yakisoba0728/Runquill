@@ -50,7 +50,7 @@ scrape_configs:
 
 For K3s, add `RUNQUILL_METRICS_ADDR=127.0.0.1:9090` to the manager configuration and restart it. Use a collector in the same Pod or `kubectl -n runquill-system port-forward deployment/runquill 9090:9090` for local inspection. To scrape a non-loopback address, mount the token as a Kubernetes Secret and restrict network access to the collector.
 
-Metric values describe the fleet as a whole. Samples carry no repository, job, runner, or host identifiers.
+Metric values describe the fleet as a whole. Samples carry no repository, job or runner identifiers, and only the elastic gauges below carry a host label.
 
 | Gauge | Meaning |
 | --- | --- |
@@ -63,6 +63,8 @@ Metric values describe the fleet as a whole. Samples carry no repository, job, r
 Counters `runquill_runner_starts_total`, `runquill_runner_launch_errors_total`, `runquill_runner_lease_releases_total`, and `runquill_scheduler_tick_errors_total` reset on manager restart. Lease releases include cleanup before a retry and can include jobs that did not finish successfully.
 
 With [notifications](../README.md#send-notifications) configured, `runquill_notifications_sent_total`, `runquill_notifications_failed_total` and `runquill_notifications_dropped_total` count events delivered to the webhook, events not delivered after all attempts, and events discarded because the in-memory queue was full or the manager was stopping. These counters are absent without `RUNQUILL_NOTIFY_URL` and also reset on manager restart.
+
+The [elastic limits](elastic-limits.md) loop adds `runquill_elastic_changes_total{applied="true"|"false"}` for applied and observed-only decisions and `runquill_elastic_update_errors_total` for changes Docker rejected. With `RUNQUILL_ELASTIC` set to `observe` or `apply`, the gauges `runquill_elastic_surplus_cpus`, `runquill_elastic_lent_cpus`, `runquill_elastic_surplus_memory_bytes`, `runquill_elastic_extra_memory_bytes` and `runquill_elastic_held_slots` report each managed local host, labelled `host`, when its pool sets `cpus` or `memory_mib`. The counters reset on manager restart.
 
 For example, this query finds managers with ready jobs and all configured slots occupied or reserved. Use `time() - runquill_fleet_snapshot_timestamp_seconds` to detect stale values.
 

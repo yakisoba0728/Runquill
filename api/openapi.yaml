@@ -6,7 +6,7 @@ openapi: 3.1.0
 info:
   title: Runquill panel API
   version: '1'
-  description: 'JSON API of the Runquill web panel. Errors are plain text (text/plain; charset=utf-8): the body is one English sentence followed by a newline. Every response carries Cache-Control no-store. A request whose Host header differs from the configured RUNQUILL_PANEL_URL host is refused with 403 before routing.'
+  description: 'JSON API of the Runquill web panel. Errors are plain text (text/plain; charset=utf-8): the body is one English sentence followed by a newline. Exceptions are documented per operation: workflow migration failures and unavailable runner logs answer JSON with an error field, and /mcp answers JSON-RPC error objects. Every response carries Cache-Control no-store. A request whose Host header differs from the configured RUNQUILL_PANEL_URL host is refused with 403 before routing.'
 servers:
   - url: '{origin}'
     variables:
@@ -22,6 +22,11 @@ tags:
   - name: team
   - name: tokens
   - name: operations
+  - name: usage
+  - name: logs
+  - name: migrate
+  - name: backups
+  - name: mcp
 components:
   securitySchemes:
     sessionCookie:
@@ -33,7 +38,7 @@ components:
       type: http
       scheme: bearer
       bearerFormat: rqk_ followed by 43 base64url characters
-      description: 'API token from POST /api/tokens. A token has exactly one scope and may call only operations whose x-runquill-permission equals that scope; the owner must still hold a role that grants it. Tokens are exempt from the Origin check.'
+      description: 'API token from POST /api/tokens. A token has exactly one scope and may call only operations whose x-runquill-permission equals that scope; the owner must still hold a role that grants it. Tokens are exempt from the Origin check. Operations with permission browser or admin never accept a token.'
   responses:
     Unauthorized:
       description: 'No valid session or token. Body "Sign in to Runquill."'
@@ -66,7 +71,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     Busy:
-      description: 'Another backup or diagnosis is running. Body "Another operation is running. Try again shortly."'
+      description: 'Another backup, diagnosis or workflow migration is running. Body "Another operation is running. Try again shortly."'
       content:
         text/plain:
           schema:
@@ -163,8 +168,8 @@ components:
           description: Unix seconds.
     TokenScope:
       type: string
-      enum: [fleet:read, hosts:write, jobs:write]
-      description: 'fleet:read can call GET /snapshot and GET /api/jobs; hosts:write can call POST /api/hosts/cordon; jobs:write can call POST /api/jobs/{id}/cancel and POST /api/jobs/{id}/retry. hosts:write and jobs:write need an operator or admin owner.'
+      enum: ['fleet:read', 'hosts:write', 'jobs:write']
+      description: 'fleet:read can call GET /snapshot, GET /api/events, GET /api/jobs, GET /api/elastic, GET /api/usage and POST /mcp; hosts:write can call POST /api/hosts/cordon; jobs:write can call POST /api/jobs/{id}/cancel and POST /api/jobs/{id}/retry. A token reaches only its own scope, so a hosts:write or jobs:write token cannot read the fleet. hosts:write and jobs:write need an operator or admin owner.'
     TokenCreate:
       type: object
       additionalProperties: false
@@ -562,6 +567,449 @@ components:
           type: boolean
         max_per_repository:
           type: integer
+    ElasticReport:
+      type: object
+      description: State of the elastic runner limits loop. With RUNQUILL_ELASTIC unset or off, mode is off and the lists are empty.
+      required: [mode, interval_seconds, hosts, runners, decisions]
+      properties:
+        mode:
+          type: string
+          enum: ['off', observe, apply]
+        interval_seconds:
+          type: number
+          description: Configured sampling interval, reported even when mode is off.
+        hosts:
+          type: array
+          description: Local Docker hosts whose pool sets cpus or memory_mib, ordered by host.
+          items:
+            $ref: '#/components/schemas/ElasticHostPlan'
+        runners:
+          type: array
+          items:
+            $ref: '#/components/schemas/ElasticRunner'
+        decisions:
+          type: array
+          description: Up to 200 recent decisions, newest first.
+          items:
+            $ref: '#/components/schemas/ElasticDecision'
+    ElasticHostPlan:
+      type: object
+      required: [host, cpus, memory_mib, held_slots, surplus_cpus, lent_cpus, surplus_memory_mib, extra_memory_mib]
+      properties:
+        host:
+          type: string
+        cpus:
+          type: number
+          description: CPUs the host reports.
+        memory_mib:
+          type: integer
+          format: int64
+        held_slots:
+          type: integer
+          description: Free slots whose guarantees are held back for queued jobs.
+        surplus_cpus:
+          type: number
+          description: CPUs beyond every runner guarantee, held slot and the host reserve; negative when overcommitted.
+        lent_cpus:
+          type: number
+          description: CPUs currently lent to runners above their guarantee.
+        surplus_memory_mib:
+          type: integer
+          format: int64
+        extra_memory_mib:
+          type: integer
+          format: int64
+          description: Memory granted to runners above their guarantee.
+        memory_overcommitted:
+          type: boolean
+          description: Present and true when granted extra memory exceeds the surplus. Memory is never taken back.
+    ElasticRunner:
+      type: object
+      required: [host, runner, cpus, guarantee_cpus, memory_mib, guarantee_memory_mib, cpu_usage, memory_usage_mib]
+      properties:
+        host:
+          type: string
+        runner:
+          type: string
+        cpus:
+          type: number
+          description: Current CPU limit; 0 is unlimited.
+        guarantee_cpus:
+          type: number
+          description: The pool's cpus value; 0 when the pool sets none.
+        memory_mib:
+          type: integer
+          format: int64
+          description: Current memory limit; 0 is unlimited.
+        guarantee_memory_mib:
+          type: integer
+          format: int64
+        cpu_usage:
+          type: number
+          description: Cores used over the last sample window.
+        memory_usage_mib:
+          type: number
+    ElasticDecision:
+      type: object
+      required: [at, host, runner, resource, from, to, reason, applied]
+      properties:
+        at:
+          type: string
+          format: date-time
+        host:
+          type: string
+        runner:
+          type: string
+        resource:
+          type: string
+          enum: [cpu, memory]
+          description: cpu values are cores, memory values are MiB.
+        from:
+          type: number
+        to:
+          type: number
+        reason:
+          type: string
+        forced:
+          type: boolean
+          description: Present and true for a CPU reclaim that restores the host reserve and skips the cooldown.
+        applied:
+          type: boolean
+          description: False in observe mode or when Docker rejected the update.
+        error:
+          type: string
+          description: Why Docker rejected the update.
+    UsageTotals:
+      type: object
+      description: Finished jobs only. failed counts jobs Runquill gave up on or that were cancelled in the panel, not GitHub job conclusions. runner_seconds run from provisioning to runner cleanup. Waits run from queueing to provisioning (or to the failure for jobs that never got a runner); percentiles are interpolated within fixed histogram buckets.
+      required: [jobs, failed, runner_seconds, wait_count, wait_avg_seconds, wait_p50_seconds, wait_p95_seconds]
+      properties:
+        jobs:
+          type: integer
+          format: int64
+        failed:
+          type: integer
+          format: int64
+        runner_seconds:
+          type: integer
+          format: int64
+        wait_count:
+          type: integer
+          format: int64
+          description: Jobs with a known wait.
+        wait_avg_seconds:
+          type: integer
+          format: int64
+        wait_p50_seconds:
+          type: integer
+          format: int64
+        wait_p95_seconds:
+          type: integer
+          format: int64
+    UsageGroup:
+      allOf:
+        - $ref: '#/components/schemas/UsageTotals'
+        - type: object
+          required: [key]
+          properties:
+            key:
+              type: string
+              description: A UTC day (YYYY-MM-DD), a lowercase owner/name, a pool or a host, by group. Pool and host are empty when unknown.
+    UsageReport:
+      type: object
+      required: [from, to, group, totals, series]
+      properties:
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+        group:
+          type: string
+          enum: [day, repository, pool, host]
+        totals:
+          $ref: '#/components/schemas/UsageTotals'
+        series:
+          type: array
+          description: By day, every day in the range in date order (days without jobs are zero). Otherwise busiest first, at most 500 groups.
+          items:
+            $ref: '#/components/schemas/UsageGroup'
+        truncated:
+          type: boolean
+          description: Present and true when series was cut to 500 groups; totals still cover every group.
+    MigrationError:
+      type: object
+      required: [error, code]
+      properties:
+        error:
+          type: string
+          description: One English sentence.
+        code:
+          type: string
+          enum: [permissions, stale, nothing, branch_exists, repository, scope, public, installation_scope, too_many, mapping, hash, github]
+        pull_request:
+          type: string
+          description: With branch_exists, the URL of the open pull request for that branch, if any.
+    MigrationStatus:
+      type: object
+      required: [ready, required, missing]
+      properties:
+        ready:
+          type: boolean
+          description: True when the installation grants every required permission.
+        required:
+          type: array
+          items:
+            type: string
+          examples:
+            - [contents, pull_requests, workflows]
+        missing:
+          type: array
+          description: Required permissions the installation does not grant with write access.
+          items:
+            type: string
+    RunsOnMapping:
+      type: object
+      additionalProperties: false
+      required: [from]
+      properties:
+        from:
+          type: array
+          description: The runs-on label set to match, compared case-insensitively and in any order. GitHub-hosted labels only; self-hosted and runquill- labels and expressions are refused.
+          minItems: 1
+          maxItems: 10
+          items:
+            type: string
+            minLength: 1
+            maxLength: 100
+        pool:
+          type: string
+          description: Target worker pool; omit for default.
+    MigrationRequest:
+      type: object
+      additionalProperties: false
+      required: [repository, mapping]
+      properties:
+        repository:
+          type: string
+          description: OWNER/REPO owned by the configured account.
+        mapping:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/RunsOnMapping'
+    MigrationOpenRequest:
+      type: object
+      additionalProperties: false
+      required: [repository, mapping, hash]
+      properties:
+        repository:
+          type: string
+        mapping:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/RunsOnMapping'
+        hash:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: The hash of the preview the administrator reviewed.
+    MigrationJob:
+      type: object
+      required: [job, line, changed, code]
+      properties:
+        file:
+          type: string
+        job:
+          type: string
+        line:
+          type: integer
+        labels:
+          type: array
+          items:
+            type: string
+        changed:
+          type: boolean
+        runs_on:
+          type: string
+          description: The generated runs-on expression for a changed job.
+        code:
+          type: string
+          enum: [changed, unmapped, expression, mapping, anchor, self-hosted, runquill, reusable-call, workflow-call, no-runs-on, unparseable, job-id]
+        reason:
+          type: string
+    MigrationFile:
+      type: object
+      required: [path, changed, jobs]
+      properties:
+        path:
+          type: string
+          description: A .yml or .yaml file directly under .github/workflows.
+        changed:
+          type: boolean
+        diff:
+          type: string
+          description: Unified diff of the proposed change.
+        refused:
+          type: string
+          description: Why the whole file is left alone.
+        jobs:
+          type: [array, 'null']
+          items:
+            $ref: '#/components/schemas/MigrationJob'
+    MigrationPreview:
+      type: object
+      required: [repository, base, head, hash, files]
+      properties:
+        repository:
+          type: string
+        base:
+          type: string
+          description: The default branch.
+        head:
+          type: string
+          description: The default branch commit that was read.
+        hash:
+          type: string
+          description: Covers the mapping and the proposed file contents; send it to POST /api/migrate/open.
+        files:
+          type: [array, 'null']
+          description: Null when the repository has no workflow files.
+          items:
+            $ref: '#/components/schemas/MigrationFile'
+    MigrationPullRequest:
+      type: object
+      required: [url, number, branch]
+      properties:
+        url:
+          type: string
+        number:
+          type: integer
+        branch:
+          type: string
+          description: runquill/migrate-runs-on- followed by 12 characters of the preview hash.
+    BackupStatus:
+      type: object
+      required: [scheduled, sealing, remote, last]
+      properties:
+        scheduled:
+          type: boolean
+          description: True when RUNQUILL_BACKUP_INTERVAL is a duration of at least 1m.
+        interval_seconds:
+          type: number
+        directory:
+          type: string
+          description: Absolute RUNQUILL_BACKUP_DIR as the manager sees it.
+        keep:
+          type: integer
+          description: Local copies kept.
+        sealing:
+          type: boolean
+          description: True when a backup passphrase or passphrase file is configured.
+        remote:
+          $ref: '#/components/schemas/BackupRemote'
+        last:
+          $ref: '#/components/schemas/BackupRun'
+    BackupRemote:
+      type: object
+      description: S3-compatible upload settings, reported only when scheduled. No credentials are included.
+      required: [configured, keep]
+      properties:
+        configured:
+          type: boolean
+        bucket:
+          type: string
+        endpoint_host:
+          type: string
+        region:
+          type: string
+        prefix:
+          type: string
+        keep:
+          type: integer
+          description: Remote copies kept; 0 never prunes.
+    BackupRun:
+      type: object
+      description: Outcome of the latest scheduled backup since the manager started. Empty apart from sealed before the first run.
+      required: [sealed]
+      properties:
+        last_attempt:
+          type: string
+          format: date-time
+        last_success:
+          type: string
+          format: date-time
+        name:
+          type: string
+          examples: [runquill-queue-20260101T000000Z.sqlite3.sealed]
+        size:
+          type: integer
+          format: int64
+        sealed:
+          type: boolean
+        error:
+          type: string
+          description: The latest failure, with secrets redacted.
+        remote:
+          type: string
+          enum: [uploaded, failed]
+        remote_at:
+          type: string
+          format: date-time
+        remote_error:
+          type: string
+        remote_pending:
+          type: integer
+          description: Local backups still waiting for upload after a failure.
+    RunnerLogUnavailable:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+    JSONRPCMessage:
+      type: object
+      description: One JSON-RPC 2.0 request or notification. Batches (arrays) are refused.
+      required: [jsonrpc, method]
+      properties:
+        jsonrpc:
+          type: string
+          enum: ['2.0']
+        id:
+          description: A string of at most 256 characters or an integer of at most 16 digits. Omit it for a notification.
+          type: [string, integer]
+        method:
+          type: string
+          examples: [initialize, ping, server/discover, tools/list, tools/call]
+        params:
+          type: object
+    JSONRPCResponse:
+      type: object
+      required: [jsonrpc]
+      properties:
+        jsonrpc:
+          type: string
+          enum: ['2.0']
+        id:
+          type: [string, integer]
+          description: Absent when the request id could not be read.
+        result:
+          type: object
+          description: A tool failure is a result with isError true, not a JSON-RPC error.
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: integer
+              description: 'JSON-RPC error code: -32700 parse error, -32600 invalid request, -32601 method not found, -32602 invalid params, -32603 internal or busy, -32020 header mismatch, -32022 unsupported protocol version.'
+            message:
+              type: string
+            data:
+              description: For -32022, the supported and requested versions.
 paths:
   /:
     get:
@@ -581,15 +1029,57 @@ paths:
     get:
       operationId: getPanelCSS
       tags: [assets]
+      summary: Panel stylesheet.
       x-runquill-permission: public
       security: []
       responses:
         '200':
           $ref: '#/components/responses/Asset'
-  /panel.js:
+  /theme.js:
     get:
-      operationId: getPanelJS
+      operationId: getPanelThemeJS
       tags: [assets]
+      summary: Applies the saved light or dark theme before the page paints.
+      x-runquill-permission: public
+      security: []
+      responses:
+        '200':
+          $ref: '#/components/responses/Asset'
+  /app.js:
+    get:
+      operationId: getPanelAppJS
+      tags: [assets]
+      summary: The panel shell with sign-in, navigation, routing and live updates.
+      x-runquill-permission: public
+      security: []
+      responses:
+        '200':
+          $ref: '#/components/responses/Asset'
+  /api.js:
+    get:
+      operationId: getPanelApiJS
+      tags: [assets]
+      summary: Panel API client module.
+      x-runquill-permission: public
+      security: []
+      responses:
+        '200':
+          $ref: '#/components/responses/Asset'
+  /ui.js:
+    get:
+      operationId: getPanelUIJS
+      tags: [assets]
+      summary: Shared panel interface helpers.
+      x-runquill-permission: public
+      security: []
+      responses:
+        '200':
+          $ref: '#/components/responses/Asset'
+  /fleet.js:
+    get:
+      operationId: getPanelFleetJS
+      tags: [assets]
+      summary: Fleet snapshot helpers shared by panel screens.
       x-runquill-permission: public
       security: []
       responses:
@@ -599,16 +1089,7 @@ paths:
     get:
       operationId: getI18nJS
       tags: [assets]
-      x-runquill-permission: public
-      security: []
-      responses:
-        '200':
-          $ref: '#/components/responses/Asset'
-  /manage.js:
-    get:
-      operationId: getManageJS
-      tags: [assets]
-      summary: Management script, served only by a live panel.
+      summary: Korean and English panel text.
       x-runquill-permission: public
       security: []
       responses:
@@ -618,12 +1099,54 @@ paths:
     get:
       operationId: getDemoJS
       tags: [assets]
-      summary: Example data script, served only by runquill panel --demo.
+      summary: Example fleet snapshots, served only by runquill panel --demo.
       x-runquill-permission: public
       security: []
       responses:
         '200':
           $ref: '#/components/responses/Asset'
+  /views/{file}:
+    get:
+      operationId: getPanelView
+      tags: [assets]
+      summary: One panel screen as an ES module (views/<id>.js).
+      x-runquill-permission: public
+      security: []
+      parameters:
+        - name: file
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[a-z0-9][a-z0-9-]*\.(js|css)$'
+      responses:
+        '200':
+          $ref: '#/components/responses/Asset'
+        '400':
+          description: Not a panel file name.
+        '404':
+          description: No such panel view.
+  /demo/{file}:
+    get:
+      operationId: getPanelDemoData
+      tags: [assets]
+      summary: Sample responses for one panel screen, served only by runquill panel --demo.
+      x-runquill-permission: public
+      security: []
+      parameters:
+        - name: file
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[a-z0-9][a-z0-9-]*\.(js|css)$'
+      responses:
+        '200':
+          $ref: '#/components/responses/Asset'
+        '400':
+          description: Not a panel file name.
+        '404':
+          description: No such sample data, or a live panel.
   /auth/github:
     get:
       operationId: startGitHubSignIn
@@ -1317,5 +1840,473 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/AccessUnavailable'
+  /api/events:
+    get:
+      operationId: streamSnapshots
+      tags: [fleet]
+      summary: Server-Sent Events stream of the fleet snapshot.
+      description: 'Sends "retry: 3000", then a snapshot event (an id line, "event: snapshot" and one data line holding the same JSON as GET /snapshot) whenever the snapshot changes; changes are checked every 2 seconds. A ": ping" comment follows every 15 seconds without a change. The server ends each stream after 10 minutes so the client reconnects and is authorized again. At most 64 streams are open per manager and 4 per user. Event ids increase across manager restarts.'
+      x-runquill-permission: fleet:read
+      security:
+        - sessionCookie: []
+        - bearerToken: []
+      parameters:
+        - name: Last-Event-ID
+          in: header
+          description: The last event id received; an event with this id is not sent again.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The event stream. X-Accel-Buffering is no.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              examples:
+                snapshot:
+                  value: "retry: 3000\n\nid: 1784000000001\nevent: snapshot\ndata: {\"fleet\":null}\n\n"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          description: 'Body "Too many live connections. Close another panel tab and try again."'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          $ref: '#/components/responses/AccessUnavailable'
+  /api/runners/{name}/logs:
+    get:
+      operationId: getRunnerLogs
+      tags: [logs]
+      summary: Container output of an active runner on a local or ssh:// Docker host. Audited as runner.logs.
+      description: 'Runs docker logs --timestamps for a runner that currently holds a job in the queue. Requires a signed-in operator or administrator; viewers and API tokens are refused. Without follow the last tail lines are returned at once (20 second limit). With follow the response streams new lines for up to 15 minutes. Output stops at 8 MiB with a marker line, and runs of 200 or more base64 characters are replaced by [redacted]. At most 8 log requests run at once. Kubernetes and agent:// runners have no logs here. These are the runner process logs, not the GitHub step logs.'
+      x-runquill-permission: browser
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: Runner name from runner_inventory.
+          schema:
+            type: string
+            pattern: '^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$'
+        - name: tail
+          in: query
+          description: Lines to return from the end of the log; values above 2000 are reduced to 2000.
+          schema:
+            type: integer
+            minimum: 0
+            default: 200
+        - name: follow
+          in: query
+          schema:
+            type: string
+            enum: ['0', '1', 'false', 'true']
+            default: '0'
+      responses:
+        '200':
+          description: Log lines, each prefixed with its timestamp.
+          content:
+            text/plain:
+              schema:
+                type: string
+        '400':
+          description: 'Body "Use a tail between 0 and 2000 lines." or "Use follow=1 or follow=0."'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: 'A viewer, an API token, or a session whose role changed ("You do not have access to this operation." or "Could not authorize the runner logs."), or the Forbidden cases common to every route.'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: 'Body "This runner is not active in Runquill."'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: 'Body "Too many runner log streams are open. Try again shortly."'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '501':
+          description: The runner runs on Kubernetes, an agent:// worker or another unsupported host.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunnerLogUnavailable'
+        '502':
+          description: 'The docker command failed. Body "Could not read the runner logs."'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 'Body "Could not read the runner." or "Could not check panel access."'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/elastic:
+    get:
+      operationId: getElastic
+      tags: [hosts]
+      summary: Elastic runner limits on local Docker hosts and the recent resize decisions. Read-only.
+      x-runquill-permission: fleet:read
+      security:
+        - sessionCookie: []
+        - bearerToken: []
+      responses:
+        '200':
+          description: The current report.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ElasticReport'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/AccessUnavailable'
+  /api/usage:
+    get:
+      operationId: getUsage
+      tags: [usage]
+      summary: Finished-job statistics by UTC day, repository, pool or host.
+      description: Combines the daily rollup, kept for 400 UTC days, with finished jobs not yet rolled up. A job counts on the UTC day it finished.
+      x-runquill-permission: fleet:read
+      security:
+        - sessionCookie: []
+        - bearerToken: []
+      parameters:
+        - name: from
+          in: query
+          description: First UTC day; defaults to 29 days before to.
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          description: Last UTC day, inclusive; defaults to today. The range covers at most 400 days.
+          schema:
+            type: string
+            format: date
+        - name: group
+          in: query
+          schema:
+            type: string
+            enum: [day, repository, pool, host]
+            default: day
+        - name: repository
+          in: query
+          description: Only this owner/name, matched case-insensitively.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Totals and one row per group.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UsageReport'
+        '400':
+          description: 'Body "Use dates as YYYY-MM-DD at most 400 days apart, group day, repository, pool or host, and a valid repository."'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          description: 'Body "Could not read usage statistics." or "Could not check panel access."'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/migrate/status:
+    get:
+      operationId: getMigrationStatus
+      tags: [migrate]
+      summary: Whether the GitHub App installation grants the permissions workflow migration needs.
+      x-runquill-permission: admin
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: Required and missing permissions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MigrationStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '502':
+          description: GitHub could not be reached or answered an error (code github).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MigrationError'
+        '503':
+          description: 'Body "GitHub is not configured." or "Could not check panel access."'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/migrate/preview:
+    post:
+      operationId: previewMigration
+      tags: [migrate]
+      summary: Reads the default branch's workflow files and shows how the mapping would rewrite their runs-on values. Writes nothing.
+      x-runquill-permission: admin
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MigrationRequest'
+      responses:
+        '200':
+          description: The proposed changes and their hash.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MigrationPreview'
+        '400':
+          description: 'An invalid JSON body (plain text "Invalid JSON request."), or a JSON MigrationError with code mapping, repository, public or too_many.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MigrationError'
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: 'The Forbidden cases common to every route (plain text), or a JSON MigrationError with code scope when the repository is outside the App installation.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MigrationError'
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Code permissions or installation_scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MigrationError'
+        '415':
+          $ref: '#/components/responses/NotJSON'
+        '429':
+          $ref: '#/components/responses/Busy'
+        '502':
+          description: Code github.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MigrationError'
+        '503':
+          description: 'Body "GitHub is not configured.", "Could not prepare the request." or "Could not check panel access."'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/migrate/open:
+    post:
+      operationId: openMigration
+      tags: [migrate]
+      summary: Recomputes the preview and, if its hash still matches, opens one pull request on a new branch. Audited as migrate.request, then migrate.open or migrate.failed.
+      description: Creates the branch from the default branch head, commits each changed workflow file, and opens a pull request against the default branch. It never merges, never pushes to an existing branch and never writes outside .github/workflows. If a commit or the pull request fails, the new branch is deleted. Allowed up to 90 seconds.
+      x-runquill-permission: admin
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MigrationOpenRequest'
+      responses:
+        '201':
+          description: The pull request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MigrationPullRequest'
+        '400':
+          description: 'An invalid JSON body (plain text "Invalid JSON request."), or a JSON MigrationError with code mapping, repository, hash, public or too_many.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MigrationError'
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: 'The Forbidden cases common to every route (plain text), or a JSON MigrationError with code scope.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MigrationError'
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Code permissions, stale, nothing, branch_exists or installation_scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MigrationError'
+        '415':
+          $ref: '#/components/responses/NotJSON'
+        '429':
+          $ref: '#/components/responses/Busy'
+        '502':
+          description: Code github; the new branch, if any, was removed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MigrationError'
+        '503':
+          description: 'Body "GitHub is not configured.", "Could not prepare the request.", "Could not record the request." or "Could not check panel access."'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/backups/status:
+    get:
+      operationId: getBackupStatus
+      tags: [backups]
+      summary: Scheduled backup settings and the latest run. No passphrase, key or endpoint credential is included.
+      x-runquill-permission: admin
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: Status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/AccessUnavailable'
+  /mcp:
+    post:
+      operationId: callMCP
+      tags: [mcp]
+      summary: Read-only Model Context Protocol endpoint for agents. API tokens with the fleet:read scope only; browser sessions are always refused.
+      description: 'Accepts one JSON-RPC message per request (body at most 64 KiB) and answers application/json; there is no event stream and no session, so GET and DELETE answer 405. Protocol revision 2026-07-28 is served statelessly: each request carries _meta io.modelcontextprotocol/protocolVersion and io.modelcontextprotocol/clientCapabilities, the MCP-Protocol-Version and Mcp-Method headers, and Mcp-Name for tools/call. Clients that start with initialize get revision 2025-11-25 and must send MCP-Protocol-Version on later requests. Tools are fleet_status, list_jobs, get_job, list_hosts, usage_summary and elastic_decisions. At most 4 requests run at once and each is limited to 5 seconds. A present Origin header must equal the panel origin. The security list names sessionCookie only because the permission is fleet:read; a request without an Authorization header, cookie or not, gets 401.'
+      x-runquill-permission: fleet:read
+      security:
+        - bearerToken: []
+        - sessionCookie: []
+      parameters:
+        - name: MCP-Protocol-Version
+          in: header
+          schema:
+            type: string
+            enum: ['2026-07-28', '2025-11-25']
+        - name: Mcp-Method
+          in: header
+          description: Required with revision 2026-07-28; must equal the JSON-RPC method.
+          schema:
+            type: string
+        - name: Mcp-Name
+          in: header
+          description: Required for tools/call with revision 2026-07-28; the tool name, base64 encoded as =?base64?...?= when not plain ASCII.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JSONRPCMessage'
+      responses:
+        '200':
+          description: A JSON-RPC response. Legacy-revision protocol errors such as an unknown method also use 200.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JSONRPCResponse'
+        '202':
+          description: A notification was accepted; no body.
+        '400':
+          description: Malformed JSON-RPC, a batch, invalid params, a missing _meta field, a header that does not match the message, or an unsupported protocol version.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JSONRPCResponse'
+        '401':
+          description: 'No Authorization header, including any cookie-only request (JSON-RPC error "Use a Runquill API token with the fleet:read scope."), or an invalid or expired token (plain text "Sign in to Runquill.").'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JSONRPCResponse'
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 'A foreign Origin (JSON-RPC error), or a token whose scope is not fleet:read or a wrong Host header (plain text).'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JSONRPCResponse'
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Unknown method with revision 2026-07-28 (code -32601).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JSONRPCResponse'
+        '413':
+          description: The body is larger than 64 KiB.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JSONRPCResponse'
+        '415':
+          description: The Content-Type is not application/json.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JSONRPCResponse'
+        '429':
+          description: Four MCP requests are already running.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JSONRPCResponse'
         '503':
           $ref: '#/components/responses/AccessUnavailable'

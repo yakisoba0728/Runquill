@@ -78,10 +78,20 @@ func TestPanelRoutesAndFirstJobEvidence(t *testing.T) {
 	}{
 		{live, "GET", "http://localhost:8081/", "data-mode=\"live\"", 200},
 		{live, "GET", "http://localhost:8081/demo.js", "", 404},
+		{live, "GET", "http://localhost:8081/demo/jobs.js", "", 404},
+		{live, "GET", "http://localhost:8081/app.js", "VIEW CONTRACT", 200},
+		{live, "GET", "http://localhost:8081/views/queue.js", "mount", 200},
+		{live, "GET", "http://localhost:8081/views/", "", 404},
+		{live, "GET", "http://localhost:8081/views/missing.js", "", 404},
+		{live, "GET", "http://localhost:8081/views/..%2fpanel.css", "", 400},
+		{live, "GET", "http://localhost:8081/wizard.js", "", 404},
+		{live, "GET", "http://localhost:8081/index.html", "", 404},
 		{live, "POST", "http://localhost:8081/snapshot", "", 405},
 		{live, "GET", "http://public.example/snapshot", "", 403},
 		{demo, "GET", "http://127.0.0.1:8081/", "data-mode=\"demo\"", 200},
 		{demo, "GET", "http://127.0.0.1:8081/demo.js", "", 200},
+		{demo, "GET", "http://127.0.0.1:8081/demo/jobs.js", "", 200},
+		{demo, "GET", "http://127.0.0.1:8081/views/overview.js", "", 200},
 		{demo, "GET", "http://127.0.0.1:8081/snapshot", "", 404},
 		{webhook(q, &github{owner: "owner"}, []byte("key"), p), "GET", "http://localhost:8080/snapshot", "", 404},
 	} {
@@ -96,55 +106,217 @@ func TestPanelRoutesAndFirstJobEvidence(t *testing.T) {
 // Server messages reach the browser as plain text and are translated by using
 // the English sentence as a key in panelweb/i18n.js. A message or audit action
 // without a key would silently show untranslated text.
-func TestPanelServerMessagesHaveTranslations(t *testing.T) {
+// panelTranslations reads panelweb/i18n.js: every key of the words table
+// (failing on a key written twice, since the later one silently wins) and the
+// templates listed in serverPatterns.
+func panelTranslations(t *testing.T) (keys, patterns map[string]bool) {
+	t.Helper()
 	source, err := os.ReadFile("panelweb/i18n.js")
 	if err != nil {
 		t.Fatal(err)
 	}
-	keys := make(map[string]bool)
-	for _, match := range regexp.MustCompile(`(?m)^\s*("(?:[^"\\]|\\.)*"):`).FindAllStringSubmatch(string(source), -1) {
+	text := string(source)
+	start := strings.Index(text, "const serverPatterns = [")
+	end := strings.Index(text[max(start, 0):], "].map(")
+	if start < 0 || end < 0 {
+		t.Fatal("panelweb/i18n.js has no serverPatterns list")
+	}
+	entry := regexp.MustCompile(`(?m)^\s*("(?:[^"\\]|\\.)*")[:,]`)
+	unquote := func(match []string) string {
 		key, err := strconv.Unquote(match[1])
 		if err != nil {
 			t.Fatalf("i18n key %s: %v", match[1], err)
 		}
+		return key
+	}
+	keys, patterns = make(map[string]bool), make(map[string]bool)
+	for _, match := range entry.FindAllStringSubmatch(text[:start], -1) {
+		key := unquote(match)
+		if keys[key] {
+			t.Errorf("panelweb/i18n.js defines %q more than once", key)
+		}
 		keys[key] = true
 	}
+	for _, match := range entry.FindAllStringSubmatch(text[start:start+end], -1) {
+		patterns[unquote(match)] = true
+	}
+	return keys, patterns
+}
 
-	// Handlers may pass a non-literal message to http.Error only here, and only
-	// for errors whose text is either a checked sentinel or a dynamic detail
-	// handled by serverPatterns in i18n.js.
-	dynamic := map[string]bool{"setTeamUser": true, "saveOperationSettings": true}
+// The sample panel must never change anything or open a live connection:
+// fixtures answer GETs only, and screens reach the network only through the
+// api.js client (which refuses everything else in the sample panel), never
+// with their own fetch, EventSource or beacon.
+func TestPanelSamplePanelIsReadOnly(t *testing.T) {
+	fixture := regexp.MustCompile(`"([A-Z]+) /api/[^"]*"\s*:`)
+	network := regexp.MustCompile(`\b(fetch|EventSource|XMLHttpRequest|sendBeacon|WebSocket)\b`)
+	for _, pattern := range []string{"panelweb/demo/*.js", "panelweb/views/*.js", "panelweb/demo.js", "panelweb/fleet.js", "panelweb/ui.js", "panelweb/i18n.js"} {
+		names, err := filepath.Glob(pattern)
+		if err != nil || len(names) == 0 {
+			t.Fatalf("%s: %v", pattern, err)
+		}
+		for _, name := range names {
+			source, err := os.ReadFile(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, match := range fixture.FindAllStringSubmatch(string(source), -1) {
+				if match[1] != "GET" {
+					t.Errorf("%s: sample fixtures answer GET only, not %s", name, match[0])
+				}
+			}
+			for _, line := range strings.Split(string(source), "\n") {
+				code, _, _ := strings.Cut(line, "//")
+				if network.MatchString(code) {
+					t.Errorf("%s: use the ctx.api client instead of %q", name, strings.TrimSpace(line))
+				}
+			}
+		}
+	}
+}
+
+func TestPanelTranslationsHaveNoDuplicateKeys(t *testing.T) {
+	keys, patterns := panelTranslations(t)
+	if len(keys) < 500 || len(patterns) < 10 {
+		t.Fatalf("read too few keys (%d) or server patterns (%d)", len(keys), len(patterns))
+	}
+	for pattern := range patterns {
+		if !keys[pattern] {
+			t.Errorf("serverPatterns lists %q without a translation", pattern)
+		}
+	}
+}
+
+func TestPanelServerMessagesHaveTranslations(t *testing.T) {
+	keys, patterns := panelTranslations(t)
+
+	// Each file is scanned where the panel can see its messages: whole files
+	// for handlers, the route layer only where the rest of the file is
+	// configuration or command-line output.
+	files := map[string]func(fn *ast.FuncDecl) bool{
+		"panel.go":            nil,
+		"panel_controls.go":   nil,
+		"panel_settings.go":   nil,
+		"panel_operations.go": nil,
+		"panel_jobs.go":       nil,
+		"panel_team.go":       nil,
+		"panel_backups.go":    nil,
+		"panel_migrate.go":    nil,
+		"events.go":           nil,
+		// The rest of usage.go is the rollup, which reports to the log.
+		"usage.go": func(fn *ast.FuncDecl) bool {
+			return fn == nil || fn.Name.Name == "registerUsageRoutes" || fn.Name.Name == "parseUsageQuery"
+		},
+		// panel_access.go serves OAuth pages and startup errors outside the
+		// panel script; its audit actions still count.
+		"panel_access.go": func(*ast.FuncDecl) bool { return false },
+		"operations.go":   func(fn *ast.FuncDecl) bool { return fn != nil && fn.Name.Name == "resolve" },
+		"elastic.go":      func(fn *ast.FuncDecl) bool { return fn != nil && strings.HasPrefix(fn.Name.Name, "register") },
+		// errRunnerLogLimit only ends a copy; the client sees the limit marker.
+		"runner_logs.go": func(fn *ast.FuncDecl) bool { return fn != nil },
+		// Migrate previews show refusal reasons and mapping errors from these
+		// two functions; the sentinel errors are mapped to sentences in
+		// writeMigrateFailure.
+		"migrate.go": func(fn *ast.FuncDecl) bool {
+			return fn != nil && (fn.Name.Name == "validateRunsOnMapping" || fn.Name.Name == "runquillRunsOn")
+		},
+		"migrate_github.go": func(*ast.FuncDecl) bool { return false },
+	}
+	// Handlers may send a non-literal message only here, and only when its
+	// text is a checked sentinel or a dynamic detail handled by serverPatterns.
+	dynamic := map[string]bool{
+		"panel_controls.go:setTeamUser":           true,
+		"panel_settings.go:saveOperationSettings": true,
+		"events.go:serve":                         true, // errPanelEventsFull
+		"usage.go:registerUsageRoutes":            true, // errUsageQuery
+		"panel_migrate.go:preview":                true, // validateRunsOnMapping
+		"panel_migrate.go:open":                   true, // validateRunsOnMapping
+		"runner_logs.go:runnerLogUnavailable":     true, // its callers' literals
+	}
+	// Refusal reasons are shown wherever they are produced, in every file.
+	refusalFields := map[string]bool{"Refused": true, "refusal": true}
 	roles := []string{"viewer", "operator", "admin"}
-	var messages, actions []string
+	var messages, formats, actions []string
 	fset := token.NewFileSet()
-	for _, name := range []string{"panel.go", "panel_controls.go", "panel_settings.go", "panel_operations.go", "panel_jobs.go", "panel_team.go", "panel_access.go", "operations.go"} {
+	literal := func(expr ast.Expr) (string, bool) {
+		lit, ok := expr.(*ast.BasicLit)
+		if !ok || lit.Kind != token.STRING {
+			return "", false
+		}
+		value, err := strconv.Unquote(lit.Value)
+		return value, err == nil
+	}
+	// text collects a literal, or the format of fmt.Sprintf/Errorf, and
+	// reports whether expr was either.
+	text := func(expr ast.Expr) bool {
+		if value, ok := literal(expr); ok {
+			messages = append(messages, value)
+			return true
+		}
+		if call, ok := expr.(*ast.CallExpr); ok && len(call.Args) > 0 {
+			if sel, ok := call.Fun.(*ast.SelectorExpr); ok && (sel.Sel.Name == "Sprintf" || sel.Sel.Name == "Errorf") {
+				if value, ok := literal(call.Args[0]); ok {
+					formats = append(formats, value)
+					return true
+				}
+			}
+		}
+		return false
+	}
+	for name, scope := range files {
 		file, err := parser.ParseFile(fset, name, nil, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
-		literal := func(expr ast.Expr) (string, bool) {
-			lit, ok := expr.(*ast.BasicLit)
-			if !ok || lit.Kind != token.STRING {
-				return "", false
-			}
-			value, err := strconv.Unquote(lit.Value)
-			return value, err == nil
-		}
 		for _, decl := range file.Decls {
 			fn, isFunc := decl.(*ast.FuncDecl)
-			// panel_access.go serves OAuth pages and startup errors outside the
-			// panel script, and operations.go only exposes resolve to the panel.
-			userFacing := name != "panel_access.go" && (name != "operations.go" || isFunc && fn.Name.Name == "resolve")
+			userFacing := scope == nil || scope(fn)
+			function := ""
+			if isFunc {
+				function = name + ":" + fn.Name.Name
+			}
 			assigned := make(map[string][]ast.Expr)
 			ast.Inspect(decl, func(n ast.Node) bool {
-				if assign, ok := n.(*ast.AssignStmt); ok && len(assign.Lhs) == len(assign.Rhs) {
-					for i, lhs := range assign.Lhs {
-						if id, ok := lhs.(*ast.Ident); ok {
-							assigned[id.Name] = append(assigned[id.Name], assign.Rhs[i])
+				switch node := n.(type) {
+				case *ast.AssignStmt:
+					if len(node.Lhs) != len(node.Rhs) {
+						return true
+					}
+					for i, lhs := range node.Lhs {
+						switch target := lhs.(type) {
+						case *ast.Ident:
+							assigned[target.Name] = append(assigned[target.Name], node.Rhs[i])
+						case *ast.SelectorExpr:
+							if target.Sel.Name == "DockerError" && userFacing || refusalFields[target.Sel.Name] {
+								text(node.Rhs[i])
+							}
 						}
-						if sel, ok := lhs.(*ast.SelectorExpr); ok && sel.Sel.Name == "DockerError" && userFacing {
-							if value, ok := literal(assign.Rhs[i]); ok {
-								messages = append(messages, value)
+					}
+				case *ast.ValueSpec:
+					// const reasonX = "..." in migrate.go
+					for i, id := range node.Names {
+						if strings.HasPrefix(id.Name, "reason") && i < len(node.Values) {
+							text(node.Values[i])
+						}
+					}
+				case *ast.CompositeLit:
+					// {Error: "..."} and map[string]string{"error": "..."} JSON bodies.
+					for _, elt := range node.Elts {
+						pair, ok := elt.(*ast.KeyValueExpr)
+						if !ok {
+							continue
+						}
+						key, _ := literal(pair.Key)
+						if id, ok := pair.Key.(*ast.Ident); ok {
+							key = id.Name
+						}
+						if refusalFields[key] {
+							text(pair.Value)
+							continue
+						}
+						if (key == "Error" || key == "error") && userFacing {
+							if !text(pair.Value) && !dynamic[function] {
+								t.Errorf("%s: a JSON error needs a literal message with an i18n key", fset.Position(pair.Pos()))
 							}
 						}
 					}
@@ -169,24 +341,29 @@ func TestPanelServerMessagesHaveTranslations(t *testing.T) {
 				}
 				position := fset.Position(call.Pos())
 				switch {
-				case callee == "http.Error" && userFacing:
-					if value, ok := literal(call.Args[1]); ok {
-						messages = append(messages, value)
-					} else if !isFunc || !dynamic[fn.Name.Name] {
-						t.Errorf("%s: http.Error needs a literal message with an i18n key", position)
+				case (callee == "http.Error" || callee == "runnerLogUnavailable") && userFacing:
+					if !text(call.Args[1]) && !dynamic[function] {
+						t.Errorf("%s: %s needs a literal message with an i18n key", position, callee)
 					}
 				case callee == "errors.New" && userFacing:
-					if value, ok := literal(call.Args[0]); ok {
-						messages = append(messages, value)
+					text(call.Args[0])
+				case callee == "fmt.Errorf" && userFacing && name == "migrate.go":
+					text(call)
+				case strings.HasSuffix(callee, ".refuse") || callee == "refuse":
+					if len(call.Args) == 2 && !text(call.Args[1]) {
+						if id, ok := call.Args[1].(*ast.Ident); !ok || !strings.HasPrefix(id.Name, "reason") {
+							t.Errorf("%s: a refusal reason must be a literal or a reason constant", position)
+						}
 					}
-				case callee == "auditPanel" && len(call.Args) == 5, strings.HasSuffix(callee, ".change") && len(call.Args) == 5:
+				case callee == "auditPanel" && len(call.Args) == 5, strings.HasSuffix(callee, ".change") && len(call.Args) == 5,
+					callee == ".recordAudit" && len(call.Args) == 4:
 					arg := call.Args[3]
 					if callee != "auditPanel" {
 						arg = call.Args[2]
 					}
 					candidates := []ast.Expr{arg}
 					if id, ok := arg.(*ast.Ident); ok {
-						if isFunc && fn.Name.Name == "change" {
+						if isFunc && (fn.Name.Name == "change" || fn.Name.Name == "recordAudit") {
 							return true // forwards its callers' actions
 						}
 						candidates = assigned[id.Name]
@@ -214,12 +391,28 @@ func TestPanelServerMessagesHaveTranslations(t *testing.T) {
 			})
 		}
 	}
-	if len(messages) < 30 || len(actions) < 10 {
-		t.Fatalf("scanned too few messages (%d) or audit actions (%d)", len(messages), len(actions))
+	if len(messages) < 80 || len(formats) < 10 || len(actions) < 15 {
+		t.Fatalf("scanned too few messages (%d), formats (%d) or audit actions (%d)", len(messages), len(formats), len(actions))
 	}
 	for _, value := range append(messages, actions...) {
 		if !keys[value] {
 			t.Errorf("panelweb/i18n.js has no translation for %q", value)
+		}
+	}
+	// A message with values filled in must match a serverPatterns template:
+	// each Go verb stands where the template has a {placeholder}.
+	verb := regexp.MustCompile(`%[-+# 0-9.]*[a-zA-Z]`)
+	placeholder := regexp.MustCompile(`\{[a-z]+\}`)
+	normalize := func(value string, wildcard *regexp.Regexp) string {
+		return wildcard.ReplaceAllString(value, "\x00")
+	}
+	templates := make(map[string]bool)
+	for pattern := range patterns {
+		templates[normalize(pattern, placeholder)] = true
+	}
+	for _, format := range formats {
+		if !templates[normalize(format, verb)] {
+			t.Errorf("panelweb/i18n.js serverPatterns has no template for %q", format)
 		}
 	}
 }

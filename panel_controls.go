@@ -95,6 +95,8 @@ func (a *panelAccess) register(mux *http.ServeMux, panel *panelState) {
 	registerUsageRoutes(mux, a, panel.usagePools)
 	registerMigrateRoutes(mux, a, migrateDeps{})
 	registerRunnerLogRoutes(mux, a)
+	registerBackupRoutes(mux, a)
+	registerMCPRoutes(mux, a, panel)
 }
 
 func panelJSON(w http.ResponseWriter, status int, value any) {

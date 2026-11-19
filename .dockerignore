@@ -12,3 +12,8 @@ examples/*
 !panelweb/*.html
 !panelweb/*.css
 !panelweb/*.js
+!panelweb/views/
+!panelweb/views/*.js
+!panelweb/views/*.css
+!panelweb/demo/
+!panelweb/demo/*.js

@@ -21,15 +21,7 @@ import (
 // in api/openapi.yaml, keyed "METHOD /path" with the reason. Add an entry only
 // to land a route before its documentation; the test fails once the route is
 // documented or removed, so an entry cannot go stale.
-var pendingRoutes = map[string]string{
-	"GET /api/events":              "documented with the panel redesign",
-	"GET /api/runners/{name}/logs": "documented with the panel redesign",
-	"GET /api/elastic":             "documented with the panel redesign",
-	"GET /api/usage":               "documented with the panel redesign",
-	"GET /api/migrate/status":      "documented with the panel redesign",
-	"POST /api/migrate/preview":    "documented with the panel redesign",
-	"POST /api/migrate/open":       "documented with the panel redesign",
-}
+var pendingRoutes = map[string]string{}
 
 const openAPIPath = "api/openapi.yaml"
 

@@ -22,7 +22,7 @@ var version = "dev"
 func main() {
 	showVersion := flag.Bool("version", false, "print the Runquill version")
 	flag.Usage = func() {
-		fmt.Fprintln(flag.CommandLine.Output(), "Usage: runquill [--version] | runquill setup | runquill wizard | runquill workflow {init|check [--json] [--strict] [PATH...]} | runquill doctor | runquill diagnose OWNER/REPO | runquill status [--json] | runquill gc (--dry-run | --remove-orphans [--grace DURATION]) | runquill host {cordon|uncordon} HOST | runquill panel --demo | runquill worker | runquill backup (--output FILE [--seal] | --upload) [--passphrase-file FILE] | runquill restore (--from FILE | --from-s3 KEY | --activate) [--passphrase-file FILE] | runquill {jobs|runners|pools|hosts|audit} ... --help")
+		fmt.Fprintln(flag.CommandLine.Output(), "Usage: runquill [--version] | runquill setup | runquill wizard | runquill workflow {init|check [--json] [--strict] [PATH...]} | runquill doctor | runquill diagnose OWNER/REPO | runquill status [--json] | runquill gc (--dry-run | --remove-orphans [--grace DURATION]) | runquill host {cordon|uncordon} HOST | runquill panel --demo | runquill worker | runquill backup (--output FILE [--seal] | --upload) [--passphrase-file FILE] | runquill restore (--from FILE | --from-s3 KEY | --activate) [--passphrase-file FILE] | runquill {jobs|runners|pools|hosts|audit} ... --help | runquill mcp")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -39,6 +39,9 @@ func main() {
 		slog.SetDefault(slog.New(handler))
 	} else {
 		slog.SetLogLoggerLevel(level)
+	}
+	if flag.Arg(0) == "mcp" {
+		os.Exit(mcpCommand(flag.Args()[1:], os.Stdin, os.Stdout, os.Stderr))
 	}
 	if handled, code := remoteCommand(flag.Args(), os.Stdout, os.Stderr); handled {
 		os.Exit(code)

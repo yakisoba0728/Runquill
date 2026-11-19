@@ -301,8 +301,9 @@ func TestWizardFirstStepErrorsStayInBrowserWithAnswers(t *testing.T) {
 		return rec.Body.String()
 	}
 	invalid := func(body, name string) bool {
-		return regexp.MustCompile(`name="` + name + `"[^>]*aria-invalid="true" aria-describedby="wizard-error"`).MatchString(body)
+		return regexp.MustCompile(`name="` + name + `"[^>]*aria-invalid="true" aria-describedby="wizard-error[ "]`).MatchString(body)
 	}
+	errorText := func(body string) int { return strings.Count(body, `id="wizard-error"`) }
 
 	body := page(url.Values{"backend": {"k3s"}, "repositories": {"selected"}, "context": {`-x"<b>`}, "organization": {"acme"}}, "ko")
 	if !strings.Contains(body, "배포할 k3s 컨텍스트 이름을 정확히 입력하세요.") || !strings.Contains(body, `id="wizard-error"`) ||
@@ -311,6 +312,9 @@ func TestWizardFirstStepErrorsStayInBrowserWithAnswers(t *testing.T) {
 	}
 	if !invalid(body, "context") || invalid(body, "organization") {
 		t.Fatal("only the K3s context field should be marked invalid")
+	}
+	if errorText(body) != 1 || !regexp.MustCompile(`name="context"[^>]*>\s*<p class="field-error" id="wizard-error" role="alert"><strong>오류:</strong>`).MatchString(body) {
+		t.Fatal("the K3s context problem must be shown once, right below its field, with a text prefix")
 	}
 	if !strings.Contains(body, `value="-x&#34;&lt;b&gt;"`) || strings.Contains(body, `-x"<b>`) {
 		t.Fatal("the submitted context was not restored as escaped text")
@@ -345,7 +349,7 @@ func TestWizardFirstStepErrorsStayInBrowserWithAnswers(t *testing.T) {
 
 	body = page(url.Values{"backend": {"k3s"}, "context": {"fixture"}}, "ko")
 	if !strings.Contains(body, "runquill-k3s.yaml 파일이 없습니다") || strings.Contains(body, `aria-invalid="true"`) ||
-		!strings.Contains(body, `value="fixture"`) {
+		!strings.Contains(body, `value="fixture"`) || errorText(body) != 1 || !strings.Contains(body, `<p class="notice" data-state="failed" role="alert" id="wizard-error">`) {
 		t.Fatal("a missing K3s manifest was not explained in the browser")
 	}
 

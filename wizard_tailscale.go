@@ -53,7 +53,7 @@ func (network *wizardNetwork) configure(ctx context.Context, opts *setupOptions)
 		return newWizardIssue("panel_url", "Tailscale Serve를 쓰려면 패널 주소를 비워 두세요.", "Clear the panel origin when Tailscale Serve provides it.")
 	}
 	if network.funnel && opts.webhookURL != "" {
-		return newWizardIssue("webhook_url", "Tailscale Funnel을 쓰려면 외부 웹훅 주소를 비워 두세요.", "Clear the public webhook URL when Tailscale Funnel provides it.")
+		return newWizardIssue("webhook_url", "Tailscale Funnel을 쓰려면 공개 웹훅 URL을 비워 두세요.", "Clear the public webhook URL when Tailscale Funnel provides it.")
 	}
 	addr, err := readTailscaleName(ctx)
 	if err != nil {
@@ -75,7 +75,7 @@ func (network *wizardNetwork) configure(ctx context.Context, opts *setupOptions)
 	for _, route := range network.routes() {
 		if exists, matches := mappings.routeState(addr, route); exists && !matches {
 			return &wizardIssue{field: route.command,
-				ko: "Tailscale 포트 " + route.port + "을(를) 다른 연결이 이미 쓰고 있습니다.",
+				ko: "다른 리스너가 이미 Tailscale 포트 " + route.port + "을 사용하고 있습니다.",
 				en: "Tailscale port " + route.port + " is already used by a different listener."}
 		}
 	}

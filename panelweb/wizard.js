@@ -1,111 +1,153 @@
-const backend = document.querySelector("[name=backend]");
-if (backend) {
-  const contextLabel = document.querySelector("[data-k3s]");
-  const contextInput = contextLabel.querySelector("input");
-  const updateContext = () => {
-    const k3s = backend.value === "k3s";
-    contextLabel.hidden = !k3s;
-    contextInput.required = k3s;
-  };
-  backend.addEventListener("change", updateContext);
-  updateContext();
-  for (const field of document.querySelectorAll("[aria-invalid=true]")) {
-    const clear = () => {
-      field.removeAttribute("aria-invalid");
-      field.removeAttribute("aria-describedby");
-    };
-    field.addEventListener("input", clear, { once: true });
-    field.addEventListener("change", clear, { once: true });
-  }
-}
-
-const { phase, step, install, stage } = document.body.dataset;
-const activity = document.getElementById("wizard-activity");
-const log = document.getElementById("wizard-log");
-const connection = document.getElementById("wizard-connection");
-const korean = document.documentElement.lang === "ko";
-const steps = {
-  images: ["러너 이미지를 준비하고 있습니다.", "Preparing runner images."],
-  resources: ["k3s 리소스를 적용하고 있습니다.", "Applying k3s resources."],
-  manager: ["매니저를 시작하고 있습니다.", "Starting the manager."],
-  network: ["Tailscale 연결을 적용하고 있습니다.", "Applying Tailscale settings."],
-  check: ["서버와 GitHub 연결을 점검하고 있습니다.", "Checking the server and GitHub connection."],
-};
-const pollDelay = 1000;
-const maxPollDelay = 10000;
-let delay = pollDelay;
-let timer = 0;
-let inFlight = false;
-let stopped = false;
-
-function updateStage(next) {
-  if (activity && Object.hasOwn(steps, next)) {
-    const label = steps[next][korean ? 0 : 1];
-    if (activity.textContent !== label) activity.textContent = label;
-  }
-}
-
-function updateLog(text) {
-  if (!log || log.textContent === text) return;
-  const atEnd = log.scrollHeight - log.scrollTop - log.clientHeight < 24;
-  log.textContent = text;
-  if (atEnd) log.scrollTop = log.scrollHeight;
-}
-
-function showConnection(key) {
-  if (!connection) return;
-  const text = key ? connection.dataset[key] || "" : "";
-  if (connection.textContent !== text) connection.textContent = text;
-}
-
-async function poll() {
+// Loaded without defer from <head>: the theme is applied before the first
+// paint, then the rest waits for the document. The appearance choice uses the
+// same storage key and values as the panel's theme.js and app.js.
+(() => {
+  let choice = "system";
   try {
-    const response = await fetch("/status", { cache: "no-store", signal: AbortSignal.timeout(5000) });
-    if (response.status === 401) return "ended";
-    if (!response.ok) return "failed";
-    const status = await response.json();
-    if (status.phase !== phase || status.step !== step || String(status.install) !== install) {
-      location.reload();
-      return "reload";
+    choice = localStorage.getItem("runquill-theme") || localStorage.getItem("runquill-login-theme") || "system";
+  } catch {}
+  document.documentElement.dataset.theme = choice === "light" || choice === "dark" ? choice : "system";
+})();
+
+document.addEventListener("DOMContentLoaded", () => {
+  for (const control of document.querySelectorAll("[data-theme-control]")) {
+    control.value = document.documentElement.dataset.theme || "system";
+    control.addEventListener("change", () => {
+      document.documentElement.dataset.theme = control.value;
+      try { localStorage.setItem("runquill-theme", control.value); } catch {}
+    });
+    const field = control.closest("[data-theme-field]");
+    if (field) field.hidden = false;
+  }
+
+  const backend = document.querySelector("[name=backend]");
+  if (backend) {
+    const contextField = document.querySelector("[data-k3s]");
+    const contextInput = contextField.querySelector("input");
+    const updateContext = () => {
+      const k3s = backend.value === "k3s";
+      contextField.hidden = !k3s;
+      contextInput.required = k3s;
+    };
+    backend.addEventListener("change", updateContext);
+    updateContext();
+    for (const field of document.querySelectorAll("[aria-invalid=true]")) {
+      const clear = () => {
+        field.removeAttribute("aria-invalid");
+        // Keep the field's own help text described after the error is dismissed.
+        const rest = (field.getAttribute("aria-describedby") || "").split(" ").filter((id) => id && id !== "wizard-error");
+        if (rest.length) field.setAttribute("aria-describedby", rest.join(" "));
+        else field.removeAttribute("aria-describedby");
+      };
+      field.addEventListener("input", clear, { once: true });
+      field.addEventListener("change", clear, { once: true });
     }
-    updateStage(status.stage);
-    updateLog(status.log);
-    return "ok";
-  } catch {
-    // Keep the last visible output while the wizard is unreachable.
-    return "failed";
   }
-}
 
-function schedule() {
-  clearTimeout(timer);
-  timer = stopped || document.hidden ? 0 : setTimeout(refresh, delay);
-}
+  const { phase, step, install, stage } = document.body.dataset;
+  const activity = document.getElementById("wizard-activity");
+  const stages = document.getElementById("wizard-stages");
+  const log = document.getElementById("wizard-log");
+  const connection = document.getElementById("wizard-connection");
+  const korean = document.documentElement.lang === "ko";
+  // The same sentences as wizardActivity in wizard.go.
+  const sentences = {
+    images: ["러너 이미지를 준비하고 있습니다.", "Preparing runner images."],
+    resources: ["K3s 리소스를 적용하고 있습니다.", "Applying K3s resources."],
+    manager: ["매니저를 시작하고 있습니다.", "Starting the manager."],
+    network: ["Tailscale 경로를 적용하고 있습니다.", "Applying Tailscale routes."],
+    check: ["서버와 GitHub 연결을 점검하고 있습니다.", "Checking the server and GitHub connection."],
+  };
+  const pollDelay = 1000;
+  const maxPollDelay = 10000;
+  let delay = pollDelay;
+  let timer = 0;
+  let inFlight = false;
+  let stopped = false;
 
-async function refresh() {
-  if (inFlight || stopped) return;
-  inFlight = true;
-  const result = await poll();
-  inFlight = false;
-  if (result === "ended" || result === "reload") {
-    stopped = true;
-    showConnection(result === "ended" ? "ended" : "");
-    return;
+  function updateStage(next) {
+    if (activity && Object.hasOwn(sentences, next)) {
+      const label = sentences[next][korean ? 0 : 1];
+      if (activity.textContent !== label) activity.textContent = label;
+    }
+    if (!stages || phase !== "deploying") return;
+    const items = [...stages.querySelectorAll("li[data-stage]")];
+    const at = items.findIndex((item) => item.dataset.stage === next);
+    if (at < 0) return;
+    items.forEach((item, index) => {
+      const state = index < at ? "ok" : index === at ? "current" : "pending";
+      if (item.dataset.state === state) return;
+      item.dataset.state = state;
+      if (state === "current") item.setAttribute("aria-current", "step");
+      else item.removeAttribute("aria-current");
+      const text = item.querySelector(".state-text");
+      if (text) text.textContent = stages.dataset[state] || "";
+    });
   }
-  // Back off while the wizard is unreachable, and resume the normal pace once it answers.
-  showConnection(result === "failed" ? "reconnecting" : "");
-  delay = result === "ok" ? pollDelay : Math.min(delay * 2, maxPollDelay);
-  schedule();
-}
 
-updateStage(stage);
-if (log) log.scrollTop = log.scrollHeight;
-if (phase === "working" || phase === "deploying") {
-  document.addEventListener("visibilitychange", () => {
-    if (stopped) return;
+  function updateLog(text) {
+    if (!log || log.textContent === text) return;
+    const atEnd = log.scrollHeight - log.scrollTop - log.clientHeight < 24;
+    log.textContent = text;
+    if (atEnd) log.scrollTop = log.scrollHeight;
+  }
+
+  function showConnection(key) {
+    if (!connection) return;
+    const text = key ? connection.dataset[key] || "" : "";
+    connection.dataset.state = key === "ended" ? "failed" : "waiting";
+    if (connection.textContent !== text) connection.textContent = text;
+  }
+
+  async function poll() {
+    try {
+      const response = await fetch("/status", { cache: "no-store", signal: AbortSignal.timeout(5000) });
+      if (response.status === 401) return "ended";
+      if (!response.ok) return "failed";
+      const status = await response.json();
+      if (status.phase !== phase || status.step !== step || String(status.install) !== install) {
+        location.reload();
+        return "reload";
+      }
+      updateStage(status.stage);
+      updateLog(status.log);
+      return "ok";
+    } catch {
+      // Keep the last visible output while the wizard is unreachable.
+      return "failed";
+    }
+  }
+
+  function schedule() {
     clearTimeout(timer);
-    timer = 0;
-    if (!document.hidden) void refresh();
-  });
-  void refresh();
-}
+    timer = stopped || document.hidden ? 0 : setTimeout(refresh, delay);
+  }
+
+  async function refresh() {
+    if (inFlight || stopped) return;
+    inFlight = true;
+    const result = await poll();
+    inFlight = false;
+    if (result === "ended" || result === "reload") {
+      stopped = true;
+      showConnection(result === "ended" ? "ended" : "");
+      return;
+    }
+    // Back off while the wizard is unreachable, and resume the normal pace once it answers.
+    showConnection(result === "failed" ? "reconnecting" : "");
+    delay = result === "ok" ? pollDelay : Math.min(delay * 2, maxPollDelay);
+    schedule();
+  }
+
+  updateStage(stage);
+  if (log) log.scrollTop = log.scrollHeight;
+  if (phase === "working" || phase === "deploying") {
+    document.addEventListener("visibilitychange", () => {
+      if (stopped) return;
+      clearTimeout(timer);
+      timer = 0;
+      if (!document.hidden) void refresh();
+    });
+    void refresh();
+  }
+});

@@ -46,6 +46,8 @@ Pending runner Pods can show scheduling, image pull, volume mount and container 
 
 For DinD, use a dedicated cluster with trusted workflows. Label the approved worker nodes, set `RUNQUILL_K8S_NODE_SELECTOR` to select them, and allow privileged Pods in the runner namespace only. Keep the manager namespace restricted. Leave `RUNQUILL_DOCKER_HOSTS`, `RUNQUILL_DOCKER_HOST_LIMITS`, and `RUNQUILL_WORKER_POOLS` empty for this backend. `RUNQUILL_MAX_PER_REPOSITORY`, `RUNQUILL_SCHEDULER_WORKERS`, the `RUNQUILL_LOG_*` and `RUNQUILL_NOTIFY_*` settings apply here as well. Add them to `.env`, recreate `runquill-config`, and restart the Deployment. Use `runquill host cordon kubernetes` to pause new assignments without interrupting active jobs.
 
+Leave `RUNQUILL_CONTAINER_ENGINE` unset; this backend refuses any value other than `docker`. [Elastic limits](../../docs/elastic-limits.md) and [runner logs](../../docs/panel.md#runner-logs) do not apply to Kubernetes runners. [Scheduled backups](../../docs/backups.md) work here too: point `RUNQUILL_BACKUP_DIR` at a path on a persistent volume, preferably not the queue PVC, or upload them to S3.
+
 The default K3s local-path volume persists manager restarts on its storage node. Use cluster-appropriate persistent storage and backups for recovery from node loss. Keep the manager at one replica. Drain existing jobs before switching the runner backend.
 
 The bundled manifest probes `/healthz`, which checks only the queue database. `GET /readyz` on port 8080 also reports a stalled scheduler or failing GitHub App authentication if you want to probe or alert on it. `runquill gc --remove-orphans` supports Docker hosts only and skips this backend.

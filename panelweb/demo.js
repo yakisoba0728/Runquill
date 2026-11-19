@@ -1,3 +1,14 @@
+// Sample fleet snapshots for the demo panel (`runquill panel --demo` and the
+// published sample). Live panels never serve this file. Per-view sample API
+// responses live in demo/<view id>.js.
+// focus is the screen (and job) each scenario is about; switching scenario
+// opens it.
+const focus = {
+  first: { route: "overview" },
+  missed: { route: "queue", params: { job: "4831" } },
+  offline: { route: "queue", params: { job: "4835" } },
+};
+
 const notes = {
   first: "The first job finished on your server and its runner was removed.",
   missed: "GitHub's queued webhook was missed. Polling discovered the job and started its runner.",
@@ -67,6 +78,7 @@ export function sample(name) {
   }
   return {
     note: notes[name],
+    focus: focus[name],
     snapshot: {
       webhook: true, polling: true, last_webhook: match, last_poll: at(3), sampled_at: at(0),
       first_job_seen: firstSeen, first_job_clean: firstClean,
@@ -85,33 +97,5 @@ export function sample(name) {
         },
       },
     },
-  };
-}
-
-// Sample job history with the same shape as GET /api/jobs.
-export function history(query) {
-  const at = (seconds) => new Date(Date.now() - seconds * 1000).toISOString();
-  const row = (id, repository, outcome, extra = {}) => ({
-    id, repository: "garden-lab/" + repository, outcome, runner_label: "runquill-18062-1-" + repository,
-    url: "https://github.com/garden-lab/" + repository + "/actions/runs/18062/job/" + id, ...extra,
-  });
-  const rows = [
-    row(4828, "pattern-kit", "waiting", { pool: "build", queued_at: at(58), wait_seconds: 58,
-      retry_at: at(-12), retry_reason: "Waiting to retry runner provisioning." }),
-    row(4826, "papertrail", "running", { pool: "default", host: "local", queued_at: at(119), started_at: at(110), wait_seconds: 5 }),
-    row(4821, "forecast", "failed", { pool: "default", queued_at: at(90000), finished_at: at(3600), wait_seconds: 86400,
-      failure: "not started within 24 hours" }),
-    row(4819, "pattern-kit", "failed", { pool: "build", queued_at: at(5400), finished_at: at(5100), wait_seconds: 300,
-      failure: "cancelled by @garden-admin" }),
-    row(4817, "first-workflow", "finished", { pool: "default", host: "local", queued_at: at(506), started_at: at(494),
-      finished_at: at(479), cleaned_at: at(475), wait_seconds: 6 }),
-  ];
-  const outcome = query.get("outcome");
-  const repository = query.get("repository");
-  const since = Number(query.get("since")) * 1000;
-  return {
-    jobs: rows.filter((job) => (!outcome || job.outcome === outcome) &&
-      (!repository || job.repository === repository.toLowerCase()) &&
-      (!since || Date.parse(job.queued_at) >= since)),
   };
 }

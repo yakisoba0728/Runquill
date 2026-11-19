@@ -1,0 +1,2 @@
+/* Styles used only by the backups screen. */
+[data-view="backups"] .kv.wide dt code { background: none; padding: 0; }

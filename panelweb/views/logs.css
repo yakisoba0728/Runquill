@@ -1,0 +1,24 @@
+/* Styles used only by the logs screen. */
+
+.logs-toolbar { align-items: center; gap: 6px 10px; }
+.logs-toolbar select { height: 24px; }
+.logs-meta { margin-left: auto; display: inline-flex; gap: 12px; white-space: nowrap; }
+.logs-note { margin-bottom: 8px; font-size: 12px; }
+.logs-dropped { margin-top: 6px; font-size: 12px; }
+
+.log-frame { position: relative; }
+.log-output {
+  height: min(60vh, 560px); min-height: 240px; overflow: auto;
+  padding: 6px 0; background: var(--bg-code); border: 1px solid var(--border); border-radius: 2px;
+  font: 12px/18px var(--mono); color: var(--text); white-space: pre; overscroll-behavior: contain;
+}
+.log-output.wrap { white-space: pre-wrap; overflow-wrap: anywhere; }
+.log-line { padding: 0 10px; min-height: 18px; }
+.log-line:hover { background: var(--bg-hover); }
+.log-time { color: var(--muted); user-select: none; }
+.log-jump { position: absolute; right: 16px; bottom: 10px; }
+
+@media (max-width: 600px) {
+  .logs-meta { margin-left: 0; flex-basis: 100%; }
+  .log-output { height: 55vh; }
+}

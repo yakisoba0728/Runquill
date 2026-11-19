@@ -4,7 +4,7 @@
 
 개인 GitHub 계정이나 [조직](#github-조직-연결)의 비공개 저장소에서 요청한 Actions 작업을 내 서버에서 실행합니다. 기본 설치 범위인 **All repositories**를 고르면 이후에 만드는 비공개 저장소도 자동으로 감지합니다. 원한다면 [선택한 저장소만 연결](#선택한-저장소만-연결)할 수 있습니다.
 
-[빠른 시작](#빠른-시작) · [첫 작업](#첫-작업-확인) · [샘플 패널](#샘플-패널) · [팀 패널](#웹-패널과-팀-권한) · [릴리스 다운로드](https://github.com/yakisoba0728/Runquill/releases)
+[빠른 시작](#빠른-시작) · [첫 작업](#첫-작업-확인) · [샘플 패널](#샘플-패널) · [팀 패널](#웹-패널과-팀-권한) · [원격 CLI](docs/remote-cli.md) · [릴리스 다운로드](https://github.com/yakisoba0728/Runquill/releases)
 
 ## 빠른 시작
 
@@ -43,7 +43,7 @@ sh install.sh --dir "$HOME/runquill"
 2. 설치 프로그램이 Compose를 시작하고 `Preflight passed.`를 출력할 때까지 기다립니다.
 3. 내 비공개 저장소에서 [첫 작업을 실행합니다](#첫-작업-확인).
 
-설치 스크립트는 다운로드 체크섬을 확인하고 같은 버전의 매니저와 러너 이미지를 받습니다. 위 명령은 `$HOME/runquill`에 설치합니다. `--version v0.2.0`로 버전을 지정하거나 `--download-only`로 바이너리와 배포 파일을 먼저 받을 수 있습니다.
+설치 스크립트는 다운로드 체크섬을 확인하고 같은 버전의 매니저와 러너 이미지를 받습니다. 위 명령은 `$HOME/runquill`에 설치합니다. `--version v0.3.0`로 버전을 지정하거나 `--download-only`로 바이너리와 배포 파일을 먼저 받을 수 있습니다.
 
 ### GitHub App 연결
 
@@ -251,6 +251,14 @@ RUNQUILL_WORKER_POOLS='{"lint":{"hosts":["local"],"privileged":false,"cache":tru
 
 `RUNQUILL_SCHEDULER_WORKERS`는 스케줄링 한 번에 병렬로 처리할 러너 시작과 정리 작업 수입니다. `1`(순차)부터 `32`까지 설정할 수 있고 기본값은 `4`입니다. Docker 호스트 하나에 대한 호출은 순서대로 처리합니다. Compose에서는 [오버레이](#매니저-설정-추가)로 이 값을 전달합니다.
 
+### 러너 이미지와 컨테이너 엔진
+
+릴리스는 Ubuntu 24.04 기반 `runquill-runner:<버전>`과 `-ubuntu22.04`, `-debian12` 변형 이미지를 게시합니다. 러너는 `--pull never`로 시작하므로 모든 호스트에서 이미지를 직접 받거나 빌드해야 합니다. `RUNQUILL_CONTAINER_ENGINE=podman`을 설정하면 `local`과 `ssh://` 호스트에 Podman CLI를 사용하고, rootless 엔진의 러너는 Docker-in-Docker 없이 시작합니다. Podman과 rootless 엔진은 실제 호스트에서 아직 검증하지 않았습니다. [엔진과 이미지](docs/container-engines.md)
+
+### 탄력적 러너 한도
+
+`RUNQUILL_ELASTIC=observe` 또는 `apply`를 설정하면 `local` Docker 호스트에서 바쁜 러너가 다른 러너나 빈 슬롯에 약속되지 않은 CPU와 메모리를 풀의 `cpus`, `memory_mib`의 배수까지 빌려 씁니다. 한도는 풀 설정값 아래로 내려가지 않고 메모리는 줄이지 않습니다. `observe`는 결정만 기록하며 **워커와 풀** 화면에서 확인할 수 있습니다. 부하가 걸린 실제 호스트에서는 아직 검증하지 않았습니다. [탄력적 한도](docs/elastic-limits.md)
+
 ## 워크플로에서 러너 선택
 
 [스모크 워크플로](examples/runquill-smoke.yml)는 기본값으로 내 서버를 사용합니다. **Run workflow**에서 `github_hosted`를 선택하면 `ubuntu-latest`를 사용합니다. [병렬 작업 예제](examples/runquill-parallel.yml)에는 같은 옵션을 쓰는 단일 작업 1개와 매트릭스 작업 2개가 있습니다. `.github/workflows/`에 복사해 수동 실행하면 각 작업 로그에서 배정된 러너 이름을 볼 수 있습니다.
@@ -274,6 +282,12 @@ runs-on: ${{ format('runquill-{0}-{1}-test-{2}', github.run_id, github.run_attem
 루트에 `Dockerfile`이 있는 저장소의 `.github/workflows/`에 [빌드 캐시 예제](examples/runquill-build-cache.yml)를 복사합니다. 기본 브랜치의 커밋을 빌드하고, 같은 작업의 이후 단계에서 결과 이미지를 사용할 수 있습니다. 새 러너는 GitHub Actions 캐시에서 이전 빌드의 레이어를 복원합니다. 이미지마다 `scope`를 하나씩 정해 캐시 입력과 출력 양쪽에 같은 값을 쓰세요. 캐시 저장에 실패해도 빌드 결과를 사용할 수 있습니다. [Docker GitHub Actions 캐시](https://docs.docker.com/build/cache/backends/gha/)
 
 예제는 두 액션을 커밋 SHA로 고정하고 읽기 권한만 사용합니다. 캐시는 기본 브랜치에서 갱신합니다. 빌드 시크릿은 BuildKit 시크릿 마운트로 전달하면 캐시 레이어에 남지 않습니다. [Docker 빌드 시크릿](https://docs.docker.com/build/building/secrets/)
+
+### 기존 워크플로 이전
+
+관리자는 패널의 **이전** 화면에서 GitHub 호스팅 라벨을 쓰는 작업을 Runquill 라벨로 바꾸는 풀 리퀘스트를 열 수 있습니다. Contents, Pull requests, Workflows 쓰기 권한이 필요하며, 새 App에서는 `runquill setup --migrate`만 이 권한을 요청합니다. Runquill은 먼저 diff를 미리 보여주고 `runs-on`만 바꿉니다. 안전하게 바꿀 수 없는 작업은 이유와 함께 그대로 두며, 병합은 하지 않습니다. 실제 GitHub 저장소에서는 아직 검증하지 않았습니다. [워크플로 이전](docs/workflow-migration.md)
+
+`runquill workflow check`는 로컬 워크플로 파일에서 잘못된 Runquill 라벨, 설정되지 않은 풀, self-hosted 러너의 위험한 트리거, 권한과 시간 제한 누락, 고정되지 않은 액션을 찾습니다. 심각도가 high인 항목이 있으면 상태 코드 1로 종료합니다. `--strict`를 붙이면 항목이 하나라도 있을 때 1로 종료하고, `--json`은 결과를 JSON으로 출력합니다. [점검 코드](docs/workflow-migration.md#check-workflows-offline)
 
 ## K3s에서 실행
 
@@ -312,19 +326,43 @@ RUNQUILL_MANAGER_IMAGE=runquill-manager:local docker compose -f compose.yaml -f 
 
 | 역할 | 패널 권한 |
 | --- | --- |
-| Viewer | 작업, 러너, 호스트 상태와 작업 기록을 봅니다. 읽기 전용 API 토큰을 만들 수 있습니다. |
-| Operator | Viewer 권한에 더해 호스트의 새 작업 배정을 멈추거나 재개하고, 대기 중인 작업을 취소하거나 즉시 재시도합니다. |
-| Admin | Operator 권한에 더해 팀 사용자 등록·비활성화, 토큰 관리, 설정 변경, 대기열 백업 다운로드, 감사 기록 조회를 합니다. |
+| Viewer | 개요, 대기열, 작업 기록, 러너, 호스트와 풀, 사용량을 봅니다. `fleet:read` API 토큰을 만들 수 있습니다. |
+| Operator | Viewer 권한에 더해 호스트의 새 작업 배정을 멈추거나 재개하고, 대기 중인 작업을 취소하거나 즉시 재시도하고, 러너 로그를 봅니다. `hosts:write`와 `jobs:write` 토큰도 만들 수 있습니다. |
+| Admin | Operator 권한에 더해 팀 사용자 등록·비활성화, 모든 토큰 조회와 폐기, 설정 변경, 워크플로 이전, 백업 상태 확인, 대기열 백업 다운로드, 저장소 점검, 감사 기록 조회를 합니다. |
 
-팀 사용자는 등록된 GitHub 계정으로 로그인합니다. 관리자는 GitHub 로그인이나 숫자 계정 ID로 팀원을 추가합니다. 로그인을 입력하면 패널이 GitHub 공개 사용자 API로 계정 ID를 확인하며, 개인 사용자 계정만 등록할 수 있습니다. 토큰은 1~90일 뒤 만료되고 권한 범위는 하나이며 패널에서 폐기할 수 있습니다. 토큰 원문은 발급 시 한 번만 표시됩니다. `fleet:read` 토큰은 `GET /snapshot`과 `GET /api/jobs`에, `hosts:write` 토큰은 `POST /api/hosts/cordon`에 `Authorization: Bearer <token>` 헤더로 사용합니다. 후자는 `{"host":"local","cordoned":true}`를 받습니다. 호스트의 새 작업 배정을 멈춰도 실행 중인 러너는 계속 처리됩니다.
+팀 사용자는 등록된 GitHub 계정으로 로그인합니다. 관리자는 GitHub 로그인이나 숫자 계정 ID로 팀원을 추가합니다. 로그인을 입력하면 패널이 GitHub 공개 사용자 API로 계정 ID를 확인하며, 개인 사용자 계정만 등록할 수 있습니다. 토큰은 1~90일 뒤 만료되고 권한 범위는 하나이며 패널에서 폐기할 수 있습니다. 토큰 원문은 발급 시 한 번만 표시됩니다. `Authorization: Bearer <token>` 헤더로 보냅니다. 토큰은 자기 범위의 경로만 호출할 수 있으므로 조회와 변경을 함께 하려면 토큰 두 개가 필요합니다. 러너 로그, 워크플로 이전, 백업 등 관리자 경로에는 어떤 토큰도 쓸 수 없습니다. 모든 경로는 [API 명세](api/openapi.yaml)에 있습니다.
+
+| 범위 | 경로 |
+| --- | --- |
+| `fleet:read` | `GET /snapshot`, `GET /api/events`, `GET /api/jobs`, `GET /api/elastic`, `GET /api/usage`, `POST /mcp` |
+| `hosts:write` | `POST /api/hosts/cordon`에 `{"host":"local","cordoned":true}`를 보냅니다. 배정을 멈춰도 실행 중인 러너는 계속 처리됩니다. |
+| `jobs:write` | `POST /api/jobs/{id}/cancel`, `POST /api/jobs/{id}/retry` |
 
 **작업 기록**은 최신 작업부터 대기, 실행 중, 종료, 실패 결과와 함께 보여줍니다. 저장소, 결과, 최근 1시간·24시간·7일로 필터링할 수 있습니다. 끝난 작업은 7일 동안 보관하고 작업 로그는 GitHub에 남습니다. `GET /api/jobs`도 같은 목록을 반환하며 `repository`, `outcome`, `since`와 `until`(Unix 초), `limit`(최대 100), 그리고 응답의 `next` 값을 `before`로 받습니다.
 
-로그인한 Operator와 Admin은 러너 없이 대기 중인 작업을 관리할 수 있습니다. API 토큰으로는 할 수 없습니다. **지금 재시도**는 재시도 대기 시간을 없애 다음 스케줄링에서 작업을 시도하게 합니다. **작업 취소**는 작업을 `cancelled by @LOGIN` 사유로 실패 처리하고 러너를 시작하지 않습니다. GitHub의 실행은 GitHub에서 취소하거나 다시 실행할 때까지 대기 상태로 남습니다.
+Operator와 Admin은 러너 없이 대기 중인 작업을 패널이나 `jobs:write` 토큰으로 관리할 수 있습니다. **지금 재시도**는 재시도 대기 시간을 없애 다음 스케줄링에서 작업을 시도하게 합니다. **작업 취소**는 작업을 `cancelled by @LOGIN` 사유로 실패 처리하고 러너를 시작하지 않습니다. GitHub의 실행은 GitHub에서 취소하거나 다시 실행할 때까지 대기 상태로 남습니다.
 
-감사 기록에는 로그인, 팀, 토큰, 호스트, 작업, 설정, 백업 변경이 실행한 사람의 로그인과 함께 남습니다. 작업 종류나 실행한 사람의 로그인 또는 ID로 필터링하고, 이전 기록을 페이지 단위로 불러올 수 있습니다. 설정 변경은 바뀐 항목마다 이전 값과 새 값을 기록하며, 이름이 비밀값으로 보이는 항목은 값을 남기지 않습니다.
+감사 기록에는 로그인, 팀, 토큰, 호스트, 작업, 설정, 백업 변경과 러너 로그 조회, 워크플로 이전이 실행한 사람의 로그인과 함께 남습니다. 작업 종류나 실행한 사람의 로그인 또는 ID로 필터링하고, 이전 기록을 페이지 단위로 불러올 수 있습니다. 설정 변경은 바뀐 항목마다 이전 값과 새 값을 기록하며, 이름이 비밀값으로 보이는 항목은 값을 남기지 않습니다.
+
+패널은 Server-Sent Events로 실시간 갱신하고, 스트림을 쓸 수 없으면 폴링으로 전환합니다. Cmd+K 또는 Ctrl+K로 명령 팔레트를 열고, 밝은 테마·어두운 테마·시스템 설정 중에서 고를 수 있습니다. 화면별 기능과 사용 권한은 [패널 가이드](docs/panel.md)에서 확인하세요.
 
 패널에서 작업을 선택하면 러너 라벨, 대기 또는 시작 원인, 최근 재시도 이유를 확인할 수 있습니다. 설정된 GitHub App 접근 범위는 **GitHub 연결**에 표시됩니다. 패널에는 발견한 작업만 표시되므로, 화면에 작업이 없으면 `runquill diagnose OWNER/REPO`로 GitHub App의 접근 범위, 작업의 GitHub 라벨, 이벤트 전달을 점검하세요. 같은 원인은 `runquill status --json`의 작업별 `diagnostic` 객체에 `code`와 `message`로도 표시됩니다.
+
+### 사용량 통계
+
+**사용량** 화면과 `GET /api/usage`는 끝난 작업의 수, 실패, 러너 사용 시간, 대기 시간을 UTC 날짜, 저장소, 풀, 호스트별로 보여줍니다. 작업은 끝난 UTC 날짜에 한 번만 집계합니다. 실패는 Runquill이 포기했거나 패널에서 취소한 작업이며 GitHub 작업 결과와는 다릅니다. 일별 합계는 대기열 DB에 400일 동안 보관하지만 대기열 백업에는 포함되지 않습니다. [자세히](docs/panel.md#usage-statistics)
+
+### 러너 로그
+
+Operator와 Admin은 **로그** 화면에서 작업을 맡은 러너의 컨테이너 출력을 보거나 이어서 받을 수 있습니다. GitHub 단계 로그가 아니라 러너 프로세스의 로그입니다. `local`과 `ssh://` 호스트의 러너만 지원하며 API 토큰으로는 볼 수 없습니다. 실제 운영 환경에서는 아직 검증하지 않았습니다. [자세히](docs/panel.md#runner-logs)
+
+### 원격 CLI
+
+다른 컴퓨터에서 패널 API로 `runquill jobs list`, `runners list`, `hosts list`, `pools list`, `hosts cordon`, `hosts uncordon`, `jobs cancel`, `jobs retry`를 실행할 수 있습니다. `RUNQUILL_URL`에 패널 주소를 지정하고 토큰은 `RUNQUILL_TOKEN`이나 `--token-file`로 전달합니다. 스크립트에서는 `--json`을 붙입니다. 명령마다 맞는 토큰 범위가 필요하며, 감사 기록은 어떤 토큰으로도 읽을 수 없으므로 `audit tail`은 항상 웹 패널을 안내합니다. [원격 CLI 가이드](docs/remote-cli.md)
+
+### 코딩 에이전트용 MCP
+
+`POST /mcp`는 운영 현황, 작업, 호스트, 사용량, 탄력 한도 결정을 읽기 전용 [Model Context Protocol](https://modelcontextprotocol.io/) 도구로 제공합니다. HTTP로 `fleet:read` 토큰을 보내거나, `runquill mcp`를 패널로 전달하는 로컬 stdio 서버로 실행합니다. 브라우저 세션은 항상 거부합니다. 실제 MCP 클라이언트로는 아직 검증하지 않았습니다. [MCP 가이드](docs/mcp.md)
 
 ### 상태 확인과 업그레이드
 
@@ -374,7 +412,7 @@ sh install.sh --upgrade --dir "$HOME/runquill"
 
 ### 매니저 설정 추가
 
-Compose는 `compose.yaml`에 적힌 변수만 매니저에 전달합니다. `RUNQUILL_MAX_PER_REPOSITORY`, `RUNQUILL_SCHEDULER_WORKERS`, `RUNQUILL_LOG_FORMAT`, `RUNQUILL_LOG_LEVEL`, [알림](#알림-보내기) 변수 같은 선택 설정은 값을 `.env`에 두고 `compose.yaml` 옆에 `compose.settings.yaml` 같은 오버레이를 저장합니다. `--upgrade`는 `compose.yaml`을 교체하지만 이 파일은 그대로 둡니다.
+Compose는 `compose.yaml`에 적힌 변수만 매니저에 전달합니다. `RUNQUILL_MAX_PER_REPOSITORY`, `RUNQUILL_SCHEDULER_WORKERS`, `RUNQUILL_LOG_FORMAT`, `RUNQUILL_LOG_LEVEL`, [알림](#알림-보내기) 변수, `RUNQUILL_ELASTIC*`, `RUNQUILL_BACKUP_*`, `RUNQUILL_METRICS_*` 같은 선택 설정은 값을 `.env`에 두고 `compose.yaml` 옆에 `compose.settings.yaml` 같은 오버레이를 저장합니다. `--upgrade`는 `compose.yaml`을 교체하지만 이 파일은 그대로 둡니다.
 
 ```yaml
 services:
@@ -390,7 +428,7 @@ services:
       RUNQUILL_NOTIFY_STALL_AFTER: ${RUNQUILL_NOTIFY_STALL_AFTER:-}
 ```
 
-`docker compose -f compose.yaml -f compose.settings.yaml up -d`로 적용합니다. 다른 오버레이도 함께 전달하고, 릴리스 이미지를 쓴다면 `--no-build`를 추가합니다. k3s에서는 매니저가 `runquill-config` Secret의 모든 변수를 읽으므로 `.env`에 추가하고 Secret을 다시 만든 뒤 Deployment를 재시작합니다.
+`docker compose -f compose.yaml -f compose.settings.yaml up -d`로 적용합니다. 다른 오버레이도 함께 전달하고, 릴리스 이미지를 쓴다면 `--no-build`를 추가합니다. 예약 백업에는 백업 디렉터리 마운트와 암호 파일도 필요하므로 [백업 가이드](docs/backups.md#compose)의 오버레이를 사용합니다. 탄력적 한도 변수는 [탄력적 한도 가이드](docs/elastic-limits.md#compose)에 있습니다. 매니저 이미지에는 Docker CLI만 있으므로 Compose에서 `RUNQUILL_CONTAINER_ENGINE=podman`은 쓸 수 없습니다. k3s에서는 매니저가 `runquill-config` Secret의 모든 변수를 읽으므로 `.env`에 추가하고 Secret을 다시 만든 뒤 Deployment를 재시작합니다.
 
 ### 알림 보내기
 
@@ -438,6 +476,10 @@ docker compose up -d
 
 SSH 워커나 패널을 사용한다면 기존 Compose 파일 조합을 그대로 사용합니다. k3s에서는 기존 매니저를 중지한 상태로 PVC에 복구 파일을 준비하고 활성화한 뒤 Deployment의 `RUNQUILL_DB`에 새 경로를 설정합니다. 원본 큐 파일은 되돌릴 수 있도록 남아 있고, 한 운영 환경에는 매니저 하나만 실행합니다.
 
+### 백업 예약, 암호화, 업로드
+
+`RUNQUILL_BACKUP_INTERVAL`과 `RUNQUILL_BACKUP_DIR`을 설정하면 백업을 자동으로 만들고, `RUNQUILL_BACKUP_PASSPHRASE` 또는 `RUNQUILL_BACKUP_PASSPHRASE_FILE`을 설정하면 암호화합니다. `runquill backup --seal`로 같은 형식의 암호화 백업을 직접 만들 수 있고, `runquill restore --from`에 암호를 주면 복구합니다. `RUNQUILL_BACKUP_S3_*` 변수를 설정하면 매니저가 백업을 S3 호환 버킷에도 복사하며 `runquill restore --from-s3`로 복구합니다. `RUNQUILL_BACKUP_S3_ALLOW_PLAINTEXT=true`가 없으면 암호화하지 않은 백업은 올리지 않습니다. 실제 버킷으로는 아직 검증하지 않았습니다. [백업 가이드](docs/backups.md)
+
 ### 제거
 
 먼저 호스트를 `cordon`하고 실행 중인 작업이 끝나기를 기다립니다. 다시 설치할 수도 있다면 [대기열을 백업](#대기열-백업과-복구)합니다. 설치 디렉터리에서 평소 쓰는 Compose 파일로 매니저를 내립니다. `-v`는 대기 작업, 리스, 패널에서 저장한 설정이 담긴 `queue` 볼륨을 삭제하고, `--rmi all`은 매니저 이미지를 삭제합니다.
@@ -452,7 +494,7 @@ docker compose -f compose.yaml -f compose.panel.yaml down -v --rmi all
 docker ps -a --filter label=io.runquill.runner=1
 docker rm -f $(docker ps -aq --filter label=io.runquill.runner=1)
 docker volume rm $(docker volume ls -q -f label=io.runquill.cache=1)
-docker image rm ghcr.io/yakisoba0728/runquill-runner:v0.2.0
+docker image rm ghcr.io/yakisoba0728/runquill-runner:v0.3.0
 ```
 
 그다음 `.env`, GitHub App 키, 토큰 파일이 들어 있는 설치 디렉터리를 삭제합니다. 직접 만든 Tailscale Funnel이나 Serve 리스너를 끄고, 아웃바운드 워커의 `runquill worker`도 중지합니다.
@@ -460,6 +502,20 @@ docker image rm ghcr.io/yakisoba0728/runquill-runner:v0.2.0
 k3s에서는 `kubectl delete -f runquill-k3s.yaml`로 Runquill 네임스페이스 두 개와 그 안의 매니저, 러너 Pod, Secret, 대기열 PVC를 삭제합니다.
 
 마지막으로 **Settings → Developer settings → GitHub Apps → *해당 App* → Advanced → Delete GitHub App**에서 GitHub App을 삭제합니다. 조직 App은 조직 설정에서 같은 메뉴를 사용합니다. App을 삭제하면 모든 설치에서 제거됩니다. 별도의 패널 OAuth App도 같은 방식으로 삭제하고, 저장소의 **Settings → Actions → Runners**에 남은 `runquill-` 러너가 있으면 삭제합니다. [GitHub App 삭제](https://docs.github.com/en/apps/maintaining-github-apps/deleting-a-github-app)
+
+## 기능 검증 현황
+
+이 문서의 기능은 Go 테스트로 확인하며, CI의 중첩 Docker 테스트와 K3s 수명 주기 점검은 실제 컨테이너를 실행합니다. 다음 기능은 구현되어 있지만 가짜 서버나 기록된 출력으로만 테스트했고, 실제 환경에서는 아직 실행하지 않았습니다.
+
+- Podman과 rootless 컨테이너 엔진
+- 실제 S3 버킷으로의 업로드와 복구
+- 실제 GitHub 저장소를 대상으로 한 워크플로 이전
+- 실제 MCP 클라이언트에서 사용하는 MCP 엔드포인트와 `runquill mcp`
+- K3s, SSH, 아웃바운드 워커에서의 스케줄러 병렬 처리(`RUNQUILL_SCHEDULER_WORKERS`)
+- 부하가 걸린 실제 Docker 호스트의 탄력적 한도(`local` 호스트에만 적용)
+- 실제 운영 환경의 러너 로그 스트리밍
+
+이 기능에서 문제를 발견하면 이슈로 알려주세요.
 
 ## 개발과 릴리스
 
@@ -471,7 +527,7 @@ go vet ./...
 CGO_ENABLED=0 go build -o runquill .
 ```
 
-러너 Dockerfile은 GitHub Actions 러너 이미지를 다이제스트로 고정합니다. `--build-arg RUNQUILL_RUNNER_BASE=IMAGE`로 호환 이미지에 자체 도구를 추가할 수 있습니다. Kubernetes `plain` 모드와 `privileged: false` 풀을 위해 러너 파일은 `/home/runner`에 두고 사용자 UID는 1001로 유지합니다.
+러너 Dockerfile은 GitHub Actions 러너 이미지를 다이제스트로 고정합니다. `--build-arg RUNQUILL_RUNNER_BASE=IMAGE`로 호환 이미지에 자체 도구를 추가할 수 있습니다. 다른 기반 이미지는 `--build-arg RUNQUILL_RUNNER_OS=ubuntu22.04` 또는 `debian12`로 빌드합니다. Kubernetes `plain` 모드와 `privileged: false` 풀을 위해 러너 파일은 `/home/runner`에 두고 사용자 UID는 1001로 유지합니다.
 
 러너 이미지를 빌드한 뒤 `RUNQUILL_TEST_DOCKER_IMAGE=runquill-runner:local go test -run '^TestDockerRunner$' -v`로 중첩 Docker 검증을 실행합니다. 로컬 GitHub 리스너 대역으로 Docker 빌드, PostgreSQL, 바인드 마운트, 컨테이너 삭제를 확인합니다.
 
