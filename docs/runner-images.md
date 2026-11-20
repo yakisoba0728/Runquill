@@ -41,7 +41,7 @@ RUNQUILL_RUNNER_IMAGES='{"ubuntu22.04":"ghcr.io/yakisoba0728/runquill-runner:v0.
 - The image must be a Docker image reference without a scheme or credentials. Log the engine in to the registry instead (see [Private registries](#private-registries)).
 - An invalid value stops the manager at startup. Change the variable and restart the manager to apply a new catalogue.
 
-Under Compose, pass the variable through the [settings overlay](../README.md#add-manager-settings). On K3s, add it to the `runquill-config` Secret.
+Under Compose, pass the variable through the [settings overlay](operations.md#add-manager-settings). On K3s, add it to the `runquill-config` Secret.
 
 `runquill doctor` prints every entry as `runner image os__LABEL__ = IMAGE (source)` and, on a Docker manager, whether the local engine already holds it. `GET /api/settings` returns the same list as the read-only `runner_images` field.
 
@@ -112,7 +112,7 @@ The exceptions:
 - With `never`, nothing is pulled. A host without its image is reported unavailable, and a job that selects a catalogue image waits until the image appears. Runquill checks for it at most every 15 seconds.
 - On K3s, the kubelet pulls images. `RUNQUILL_IMAGE_PULL` is still validated but has no effect.
 
-`runquill doctor` reports a missing image as pending while pulls are on, instead of failing the check. Under Compose, set the variables through the [settings overlay](../README.md#add-manager-settings).
+`runquill doctor` reports a missing image as pending while pulls are on, instead of failing the check. Under Compose, set the variables through the [settings overlay](operations.md#add-manager-settings).
 
 ## Private registries
 

@@ -3,7 +3,7 @@
 On your Linux host, run the installer and open the printed setup link.
 
 ```sh
-sh install.sh --wizard --dir ./runquill
+cd ~ && curl -fsSLO https://github.com/yakisoba0728/Runquill/releases/latest/download/install.sh && sh install.sh --wizard
 ```
 
 1. Choose the repository access, then select **Connect GitHub**. Approve and install the GitHub App using the access shown by the wizard. For a personal account, the wizard uses the installation owner as the first panel administrator.
@@ -14,6 +14,8 @@ The default setup uses local Docker Compose, a personal GitHub account, and the 
 The K3s wizard reads the `kube-system` namespace UID to identify the cluster. To resume an interrupted deployment, reopen the wizard from the same installation directory and select the context for the same cluster and GitHub App. The wizard verifies its setup ID on the namespaces before continuing. If an older wizard created the namespaces without a setup ID, complete the deployment using the manual K3s instructions. [K3s installation](../deploy/k3s/README.md#install)
 
 Run `./runquill wizard` from the installation directory if you already have the release files. For an existing Compose installation, `./runquill wizard --check-compose` runs its read-only preflight. Over SSH, use the printed forwarding command and keep the setup link private.
+
+When deployment is complete and the live panel responds, close the wizard with Ctrl+C. A panel that uses SSH forwarding needs its forwarding session while you use it. For your own public HTTPS address, see [Cloudflare Tunnel](cloudflare-tunnel.md).
 
 ## Tailscale
 

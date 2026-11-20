@@ -1,6 +1,6 @@
 # Web panel
 
-The panel is a single page served by the manager on `RUNQUILL_PANEL_ADDR`. Set it up as described in [Web panel and team access](../README.md#web-panel-and-team-access). This guide covers what each screen shows and who can use it. The [API description](../api/openapi.yaml) lists every route the panel calls.
+The panel is a single page served by the manager on `RUNQUILL_PANEL_ADDR`. Set it up as described in [Web panel and team access](operations.md#web-panel-and-team-access). This guide covers what each screen shows and who can use it. The [API description](../api/openapi.yaml) lists every route the panel calls.
 
 ## Navigation
 

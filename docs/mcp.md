@@ -15,6 +15,15 @@ Runquill exposes a read-only [Model Context Protocol](https://modelcontextprotoc
 
 Results come back as JSON text and as structured content. Repository, job and runner names come from GitHub users, so the server instructions tell the agent to treat them as data.
 
+## Inspect a job with an agent
+
+1. Call `fleet_status` and check queue depth, online hosts and available slots.
+2. Call `list_jobs` with the repository and a short time window. When you have a GitHub job ID, pass it directly to `get_job`.
+3. Read the job's outcome, last retry or failure reason, host and timing. Use `list_hosts` when the job needs a pool or its worker is offline.
+4. For a job missing from Runquill, use the [server-side checks](operations.md#troubleshooting) to check App coverage and verify whether GitHub delivered the webhook.
+
+Use `fleet:read` for agent inspection. For a state change authorized by the operator, use the [panel](panel.md) or the [remote CLI](remote-cli.md) with the appropriate write scope.
+
 ## Access
 
 Create a `fleet:read` API token under **Team & tokens** in the panel. The endpoint accepts API tokens only: a browser session cookie is always refused with HTTP 401, so a web page cannot use your panel session to call it. A request that carries an `Origin` header must come from the panel origin. One manager runs at most 4 MCP requests at a time, each limited to 5 seconds.

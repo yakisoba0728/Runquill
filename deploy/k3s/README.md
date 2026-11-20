@@ -6,8 +6,15 @@ Run one manager Deployment and let Kubernetes schedule a fresh Pod for each GitH
 
 Use a K3s cluster with a default StorageClass and nodes that can pull the release images and reach GitHub. Keep these namespaces dedicated to Runquill. The manifest places the manager and runner Pods in separate namespaces enforced by restricted Pod Security. A job receives no Kubernetes API credentials.
 
-1. Download the release with `sh install.sh --download-only --dir runquill`. From that directory, run `./runquill setup --k3s` and install the GitHub App. The default is **All repositories**. For [selected repositories](../../README.md#connect-selected-repositories), use `./runquill setup --k3s --repository-scope selected`.
-2. To enable the panel, use `./runquill setup --k3s --panel` with a release that supports guided panel setup. For v0.2.0 and manual installs, add the [panel settings](../../README.md#web-panel-and-team-access) to `.env` and set `RUNQUILL_PANEL_ADDR=0.0.0.0:8081` in that file.
+Download the release files to a Linux machine that can reach the cluster. Select the intended `kubectl` context before configuring the App or applying the manifests.
+
+```sh
+cd ~ && curl -fsSLO https://github.com/yakisoba0728/Runquill/releases/latest/download/install.sh && sh install.sh --download-only
+cd "$HOME/runquill"
+```
+
+1. Run `./runquill setup --k3s` and install the GitHub App. The default is **All repositories**. For [selected repositories](../../docs/install.md#connect-selected-repositories), use `./runquill setup --k3s --repository-scope selected`.
+2. To enable the panel, use `./runquill setup --k3s --panel` with a release that supports guided panel setup. For v0.2.0 and manual installs, add the [panel settings](../../docs/operations.md#web-panel-and-team-access) to `.env` and set `RUNQUILL_PANEL_ADDR=0.0.0.0:8081` in that file.
 3. Apply the manager manifest and create the configuration Secrets from the installation files.
 
 ```sh
@@ -20,7 +27,7 @@ kubectl -n runquill-system exec deployment/runquill -- runquill doctor --repo OW
 
 From a Git checkout, use `kubectl apply -f deploy/k3s/runquill.yaml` and match both image references to your version. For configuration updates, update the Secrets and restart the Deployment to read the new values.
 
-Run the [first job](../../README.md#verify-your-first-job). Watch it with these commands.
+Run the [first job](../../docs/workflows.md#verify-your-first-job). Watch it with these commands.
 
 ```sh
 kubectl -n runquill-runners get pods --watch
@@ -64,7 +71,7 @@ kubectl apply -f runquill-k3s.yaml
 kubectl -n runquill-system rollout status deployment/runquill
 ```
 
-To uninstall, delete the manifest's objects. This removes both namespaces with the manager, runner Pods, Secrets and the queue PVC. Back up the queue first if you might need it, then delete the GitHub App as described in the [README](../../README.md#uninstall).
+To uninstall, delete the manifest's objects. This removes both namespaces with the manager, runner Pods, Secrets and the queue PVC. Back up the queue first if you might need it, then delete the GitHub App as described in the [uninstall guide](../../docs/operations.md#uninstall).
 
 ```sh
 kubectl delete -f runquill-k3s.yaml

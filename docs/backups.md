@@ -1,6 +1,6 @@
 # Scheduled, sealed and S3 backups
 
-A queue backup is a consistent SQLite copy of jobs, runner leases, host maintenance state, repository scan history and operational settings. It includes enrolled outbound workers' host and engine IDs and token digests. It excludes worker enrollment codes and observations, panel users, sessions, tokens, audit records and [usage statistics](panel.md#usage-statistics). The basic `runquill backup` and `runquill restore` flow is in [Back up and recover the queue](../README.md#back-up-and-recover-the-queue). This guide adds encryption, a schedule and offsite copies.
+A queue backup is a consistent SQLite copy of jobs, runner leases, host maintenance state, repository scan history and operational settings. It includes enrolled outbound workers' host and engine IDs and token digests. It excludes worker enrollment codes and observations, panel users, sessions, tokens, audit records and [usage statistics](panel.md#usage-statistics). The basic `runquill backup` and `runquill restore` flow is in [Back up and recover the queue](operations.md#back-up-and-recover-the-queue). This guide adds encryption, a schedule and offsite copies.
 
 ## Sealed backups
 
@@ -83,7 +83,7 @@ Apply it with `docker compose -f compose.yaml -f compose.backups.yaml up -d`, ad
 
 ## Restore
 
-A restore prepares a new, fenced queue file, exactly like a plain restore. Run it with the same `RUNQUILL_OWNER` and `RUNQUILL_APP_ID` as the backup, then follow the activation steps in [Back up and recover the queue](../README.md#back-up-and-recover-the-queue).
+A restore prepares a new, fenced queue file, exactly like a plain restore. Run it with the same `RUNQUILL_OWNER` and `RUNQUILL_APP_ID` as the backup, then follow the activation steps in [Back up and recover the queue](operations.md#back-up-and-recover-the-queue).
 
 From a sealed file, provide the passphrase through the environment or `--passphrase-file`. Runquill detects the sealed format by its header. With the overlay above, the backup directory and passphrase are already mounted.
 

@@ -1,6 +1,6 @@
 # Elastic runner limits
 
-A [worker pool](../README.md#route-jobs-to-worker-pools) with `cpus` or `memory_mib` gives each runner fixed Docker limits. Elastic limits let a busy runner borrow host capacity that no other runner or queued job has been promised, and give it back when it goes idle.
+A [worker pool](workers.md#route-jobs-to-worker-pools) with `cpus` or `memory_mib` gives each runner fixed Docker limits. Elastic limits let a busy runner borrow host capacity that no other runner or queued job has been promised, and give it back when it goes idle.
 
 Elastic limits work only on the manager's `local` Docker host, for runners whose pool sets `cpus`, `memory_mib` or both. `ssh://` hosts, outbound `agent://` workers and Kubernetes are left alone, and the manager logs which hosts it skips.
 
@@ -42,7 +42,7 @@ The panel keeps the last 200 decisions in memory. With [metrics](metrics.md) ena
 
 ## Compose
 
-The manager reaches the `local` host through the mounted Docker socket. Pass the variables through an [overlay](../README.md#add-manager-settings).
+The manager reaches the `local` host through the mounted Docker socket. Pass the variables through an [overlay](operations.md#add-manager-settings).
 
 ```yaml
 services:
