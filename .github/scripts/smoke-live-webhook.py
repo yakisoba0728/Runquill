@@ -176,7 +176,8 @@ def smoke(app_token, directory):
     try:
         repos = github(app_access, "/installation/repositories?per_page=100")
         assert repos["total_count"] == 1 and repos["repositories"][0]["full_name"] == repo, "Test App scope differs"
-        assert not runners(), "Fixture repository already has a registered runner"
+        controller = os.environ.get("RUNNER_NAME")
+        assert not any(runner["name"] != controller for runner in runners()), "Fixture repository already has a competing runner"
         docker("run", "-d", "--name", engine, "--privileged", "-e", "DOCKER_HOST=unix:///worker/docker.sock",
                "-v", f"{socket}:/worker", "docker:29-dind", "dockerd", "--host=unix:///worker/docker.sock",
                "--storage-driver=overlay2")
