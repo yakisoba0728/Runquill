@@ -6,13 +6,16 @@ Runquill is a Go manager and CLI for ephemeral GitHub Actions runners in private
 
 ## Where to start
 
+`main.go` is the executable entry point. The [repository layout](docs/development.md#repository-layout) lists the packages and deployment files.
+
 | Task | Source and contract |
 | --- | --- |
-| Install or upgrade | `install.sh`, `setup*.go`, `wizard*.go`, `compose*.yaml`, `deploy/k3s/`. See [installation](docs/install.md) and [operations](docs/operations.md). |
-| Match a workflow or accept a job | `workflow*.go`, `webhook.go`, `poller.go`, `github*.go`, `examples/`. Use the [job-specific label rules](docs/workflows.md). |
-| Retry, place or clean up jobs | `queue.go`, `scheduler.go`, `worker_*.go`, `docker*.go`, `kubernetes*.go`, `gc.go`. Keep GitHub job ID deduplication and runner lease reconciliation intact. |
-| Debug runner images, OS or cache | `runner/`, `runner_images*.go`, `runner_runtime.go`, `worker_pools.go`. See [runner images](docs/runner-images.md). |
-| Change the panel, CLI or MCP | `panel*.go`, `panelweb/`, `cli_remote.go`, `mcp*.go`, `api/openapi.yaml`. Use [panel roles](docs/panel.md#roles-and-tokens) and the [remote CLI](docs/remote-cli.md) and [MCP](docs/mcp.md) contracts. |
+| Install or upgrade | `install.sh`, `internal/app/setup*.go`, `internal/app/wizard*.go`, `compose*.yaml`, `deploy/k3s/`. See [installation](docs/install.md) and [operations](docs/operations.md). |
+| Match a workflow or accept a job | `internal/workflow/`, `internal/route/`, `internal/app/webhook.go`, `internal/app/poller.go`, `examples/`. Use the [job-specific label rules](docs/workflows.md). |
+| Retry, place or clean up jobs | In `internal/app/`, start at `queue.go`, `scheduler.go`, `worker_*.go`, `docker*.go`, `kubernetes*.go`, or `gc.go`. Preserve GitHub job ID deduplication and runner lease reconciliation. |
+| Debug runner images, OS or cache | `runner/`, `internal/app/runner_images*.go`, `internal/app/runner_runtime.go`, `internal/app/worker_pools.go`. See [runner images](docs/runner-images.md). |
+| Change the panel, CLI or MCP | `internal/webui/`, `internal/app/panel*.go`, `internal/app/cli*.go`, `internal/app/mcp*.go`, `api/openapi.yaml`. See [panel roles](docs/panel.md#roles-and-tokens), [remote CLI](docs/remote-cli.md) and [MCP](docs/mcp.md). |
+| Change backup storage or the sealed format | `internal/app/backup*.go`, `internal/backupseal/`. See [backups](docs/backups.md). |
 | Check release and integration tests | `.github/workflows/`, `.github/scripts/`. See [development and release](docs/development.md). |
 
 ## Work and verify

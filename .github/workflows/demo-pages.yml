@@ -28,12 +28,10 @@ jobs:
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
       - name: Stage the sample panel
         run: |
-          grep -Fq 'data-mode="demo"' panelweb/index.html
+          grep -Fq 'data-mode="demo"' internal/webui/panelweb/index.html
           # The panel is ES modules: top-level files, views/ and demo/ fixtures.
-          # The setup wizard's files are not part of the sample panel.
           mkdir _site
-          cp -R panelweb/. _site/
-          rm -f _site/wizard.js _site/wizard.css
+          cp -R internal/webui/panelweb/. _site/
           test -f _site/app.js && test -f _site/views/overview.js && test -f _site/demo/jobs.js
           cp LICENSE _site/
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0

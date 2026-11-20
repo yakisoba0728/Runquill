@@ -28,7 +28,7 @@ cleanup() {
 trap cleanup EXIT
 
 cp .github/testdata/k3s/Dockerfile .github/testdata/k3s/run.sh "$scratch/"
-CGO_ENABLED=0 GOOS=linux GOARCH=$(go env GOHOSTARCH) go test -c -o "$scratch/kubernetes.test" .
+CGO_ENABLED=0 GOOS=linux GOARCH=$(go env GOHOSTARCH) go test -c -o "$scratch/kubernetes.test" ./internal/app
 chmod 0755 "$scratch/kubernetes.test"
 docker build --build-arg "RUNNER_IMAGE=$RUNQUILL_TEST_K8S_RUNNER_BASE" --target runner -t "$fixture" "$scratch"
 docker build --build-arg "MANAGER_IMAGE=$manager" --target tester -t "$tester" "$scratch"

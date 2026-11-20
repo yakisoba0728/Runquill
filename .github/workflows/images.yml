@@ -96,14 +96,14 @@ jobs:
       - name: Exercise nested Docker
         env:
           RUNQUILL_TEST_DOCKER_IMAGE: runquill-runner:ci
-        run: go test -run '^TestDockerRunner$' -v -timeout 5m
+        run: go test ./internal/app -run '^TestDockerRunner$' -v -timeout 5m
       - name: Exercise Docker worker enrollment and per-OS tool caches
         env:
           RUNQUILL_TEST_DOCKER_IMAGE: runquill-runner:ci
           RUNQUILL_TEST_DOCKER_ALTERNATE_IMAGE: ghcr.io/yakisoba0728/runquill-runner:v0.3.4-debian13@sha256:97450820cb34e808ad61dcc571f7d8f6dd45eae60a1825365f775f7301f4009e
         run: |
           docker pull "$RUNQUILL_TEST_DOCKER_ALTERNATE_IMAGE"
-          go test -run '^(TestOutboundWorkerEnrollmentOnDocker|TestDockerRunnerToolCache)$' -v -timeout 8m
+          go test ./internal/app -run '^(TestOutboundWorkerEnrollmentOnDocker|TestDockerRunnerToolCache)$' -v -timeout 8m
       - name: Exercise the K3s runner lifecycle and host maintenance
         if: matrix.arch == 'amd64'
         run: |

@@ -87,7 +87,7 @@ jobs:
             deploy/k3s/runquill.yaml > release-assets/runquill-k3s.yaml
           source_date=$(git show -s --format=%ct HEAD)
           tar --sort=name --mtime="@$source_date" --owner=0 --group=0 --numeric-owner \
-            -czf release-assets/runquill-panel-demo.tar.gz panelweb LICENSE
+            -czf release-assets/runquill-panel-demo.tar.gz LICENSE -C internal/webui panelweb
           (cd release-assets && sha256sum * > SHA256SUMS)
       - name: Publish GitHub release
         env:

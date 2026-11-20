@@ -2,9 +2,9 @@ FROM --platform=$BUILDPLATFORM golang:1.26.11-bookworm AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
-COPY *.go ./
-COPY examples/runquill-first-job.yml ./examples/
-COPY panelweb/ ./panelweb/
+COPY main.go ./
+COPY internal/ ./internal/
+COPY examples/embed.go examples/runquill-first-job.yml ./examples/
 ARG TARGETOS
 ARG TARGETARCH
 ARG VERSION=dev
