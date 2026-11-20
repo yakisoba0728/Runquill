@@ -59,6 +59,17 @@ jobs:
         timeout-minutes: 10
         run: sh .github/scripts/test-install-host.sh ubuntu:24.04
 
+  docker-upgrade:
+    if: ${{ !inputs.checks-only && github.repository == 'yakisoba0728/Runquill' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Rehearse the Docker upgrade using a known pair of releases
+        run: python3 .github/scripts/smoke-docker-upgrade.py v0.3.4 v0.4.0
+
   images:
     if: ${{ !inputs.checks-only }}
     uses: ./.github/workflows/images.yml

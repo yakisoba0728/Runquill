@@ -120,7 +120,7 @@ jobs:
       matrix:
         os: [ubuntu-24.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -130,3 +130,7 @@ jobs:
           docker run --rm \
             --volume "$PWD/.github/scripts/smoke-public-install.sh:/smoke.sh:ro" \
             alpine:3.23 sh -ec 'apk add --no-cache curl && sh /smoke.sh "$1"' -- "$GITHUB_REF_NAME"
+      - name: Upgrade the previous public release and finish its queued job on a new worker
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/smoke-docker-upgrade.py "$GITHUB_REF_NAME"

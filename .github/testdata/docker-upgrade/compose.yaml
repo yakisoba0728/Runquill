@@ -1,0 +1,36 @@
+services:
+  manager:
+    ports: !override
+      - "127.0.0.1::8080"
+      - "127.0.0.1::8081"
+    environment:
+      SSL_CERT_FILE: /fixture/github.pem
+      NO_PROXY: api.github.com
+    volumes:
+      - ./github.pem:/fixture/github.pem:ro
+
+  github:
+    image: python:3.14-alpine
+    command: [python, -u, /fixture/github.py]
+    volumes:
+      - ./github.py:/fixture/github.py:ro
+      - ./github.pem:/fixture/github.pem:ro
+      - ./github.key:/fixture/github.key:ro
+    networks:
+      default:
+        aliases: [api.github.com]
+
+  engine:
+    image: docker:29-dind
+    privileged: true
+    command: [dockerd, "--host=unix:///worker/docker.sock", "--storage-driver=overlay2"]
+    environment:
+      DOCKER_HOST: unix:///worker/docker.sock
+    volumes:
+      - worker-engine:/var/lib/docker
+      - worker-socket:/worker
+      - ./runner:/fixture/runner:ro
+
+volumes:
+  worker-engine:
+  worker-socket:
