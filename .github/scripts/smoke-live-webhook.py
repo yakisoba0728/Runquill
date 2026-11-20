@@ -225,8 +225,10 @@ def smoke(app_token, directory):
             health = f"{tunnel_url}/healthz/{nonce}"
 
             def reachable():
-                with urlopen(health, timeout=6) as response:
-                    return response.status == 200
+                # The tunnel hostname is new and the local resolver can cache a negative lookup.
+                return subprocess.run(("curl", "--fail", "--silent", "--max-time", "8", "--output", "/dev/null",
+                                       "--doh-url", "https://cloudflare-dns.com/dns-query", health),
+                                      timeout=10).returncode == 0
 
             wait_for("public HTTPS relay", reachable, seconds=130)
             existing = github(app_token(), "/app/hook/config")
