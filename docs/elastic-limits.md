@@ -1,5 +1,7 @@
 # Elastic runner limits
 
+[Runquill README](../README.md) · [한국어](elastic-limits.ko.md)
+
 A [worker pool](workers.md#route-jobs-to-worker-pools) with `cpus` or `memory_mib` gives each runner fixed Docker limits. Elastic limits let a busy runner borrow host capacity that no other runner or queued job has been promised, and give it back when it goes idle.
 
 Elastic limits work only on the manager's `local` Docker host, for runners whose pool sets `cpus`, `memory_mib` or both. `ssh://` hosts, outbound `agent://` workers and Kubernetes are left alone, and the manager logs which hosts it skips.

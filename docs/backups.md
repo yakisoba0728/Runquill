@@ -1,5 +1,7 @@
 # Scheduled, sealed and S3 backups
 
+[Runquill README](../README.md) · [한국어](backups.ko.md)
+
 A queue backup is a consistent SQLite copy of jobs, runner leases, host maintenance state, repository scan history and operational settings. It includes enrolled outbound workers' host and engine IDs and token digests. It excludes worker enrollment codes and observations, panel users, sessions, tokens, audit records and [usage statistics](panel.md#usage-statistics). The basic `runquill backup` and `runquill restore` flow is in [Back up and recover the queue](operations.md#back-up-and-recover-the-queue). This guide adds encryption, a schedule and offsite copies.
 
 ## Sealed backups

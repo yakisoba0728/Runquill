@@ -1,5 +1,7 @@
 # Outbound Docker workers
 
+[Runquill README](../README.md) · [한국어](outbound-workers.ko.md)
+
 A worker polls the Runquill manager over HTTPS and runs jobs on its own Docker engine. It needs outbound access to the manager and GitHub. Each worker requires Linux amd64 or arm64, rootful Docker with cgroup v2, a locally preloaded Runquill runner image, and the Runquill executable. Use a dedicated engine for trusted workflows, as with the Docker backend.
 
 ## Register from the panel

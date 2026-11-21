@@ -50,7 +50,7 @@ sudo usermod -aG docker "$USER"
 
 `sh install.sh --dir "$HOME/runquill" --wizard`를 실행하고 필요하면 호스트 준비를 승인합니다. 출력된 링크를 열어 GitHub를 연결하고 배포합니다. 마법사가 호스트에 맞는 러너 한도를 채웁니다. 조직, 선택한 저장소, K3s, 사용자 지정 주소를 쓰려면 **고급 설정**을 엽니다.
 
-설치 프로그램은 Tailscale을 준비하고 브라우저 로그인을 시작할 수 있습니다. Docker Compose에서 tailnet이 허용하면 마법사가 Serve로 패널을 비공개 연결하고 Funnel로 GitHub 웹훅을 받습니다. 폴링도 계속 사용할 수 있습니다. [브라우저 설치 가이드](browser-setup.md)
+설치 프로그램은 Tailscale을 준비하고 브라우저 로그인을 시작할 수 있습니다. Docker Compose에서 tailnet이 허용하면 마법사가 Serve로 패널을 비공개 연결하고 Funnel로 GitHub 웹훅을 받습니다. 폴링도 계속 사용할 수 있습니다. [브라우저 설치 가이드](browser-setup.ko.md)
 
 마법사는 `127.0.0.1`에서 접속을 받습니다. SSH로 접속하면 내 컴퓨터에서 실행할 포트 포워딩 명령을 출력합니다.
 

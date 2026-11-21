@@ -4,7 +4,7 @@
 
 ## Docker 작업 서버 추가
 
-NAT 뒤에 있는 워커는 [아웃바운드 워커](outbound-workers.md)로 등록해 HTTPS로 매니저에 연결할 수 있습니다.
+NAT 뒤에 있는 워커는 [아웃바운드 워커](outbound-workers.ko.md)로 등록해 HTTPS로 매니저에 연결할 수 있습니다.
 
 매니저 한 대에서 로컬 Docker와 SSH로 연결한 여러 Docker 서버를 사용합니다. 각 서버는 Linux의 rootful Docker, cgroup v2, Docker 소켓에 접근할 수 있는 SSH 계정이 필요합니다. `RUNQUILL_RUNNER_IMAGE`에 해당하는 이미지는 매니저가 이 연결로 각 서버에 받습니다.
 
@@ -61,11 +61,11 @@ RUNQUILL_WORKER_POOLS='{"lint":{"hosts":["local"],"privileged":false,"cache":tru
 ```
 
 - `privileged`의 기본값은 `true`이며, 러너마다 `--privileged`와 내부 Docker 데몬을 사용합니다. `false`로 설정하면 러너를 UID 1001로 실행하고 모든 capability를 제거하며 `no-new-privileges`를 적용합니다. 이 풀의 작업은 `docker`, 서비스 컨테이너, 작업 컨테이너, `sudo`를 사용할 수 없습니다. 이런 풀에 사용자 지정 `image`를 쓰려면 `/home/runner`를 소유한 UID 1001 러너 사용자가 이미지에 있어야 합니다.
-- `cache: true`는 `runquill-cache-<저장소 ID>`라는 Docker 볼륨을 `/home/runner/.cache`에 마운트합니다. 같은 호스트의 같은 저장소 작업은 패키지와 빌드 도구 캐시를 공유합니다. `RUNNER_TOOL_CACHE` 경로인 `/home/runner/.cache/tools`에는 저장소, 이미지 ID, 플랫폼별 볼륨을 따로 마운트하므로 `actions/setup-*`가 받은 도구는 같은 이미지를 쓰는 작업에서 재사용합니다. 각 호스트는 자체 볼륨을 유지합니다. 로컬과 SSH 호스트에서는 매니저가 30일 동안 러너가 쓰지 않은 볼륨을 삭제합니다. 목록은 `docker volume ls -f label=io.runquill.cache=1`로 확인합니다. [도구 캐시와 정리](runner-images.md#tool-cache) · [Docker 빌드 레이어 캐시](workflows.ko.md#다음-작업에서-docker-빌드-레이어-재사용)
+- `cache: true`는 `runquill-cache-<저장소 ID>`라는 Docker 볼륨을 `/home/runner/.cache`에 마운트합니다. 같은 호스트의 같은 저장소 작업은 패키지와 빌드 도구 캐시를 공유합니다. `RUNNER_TOOL_CACHE` 경로인 `/home/runner/.cache/tools`에는 저장소, 이미지 ID, 플랫폼별 볼륨을 따로 마운트하므로 `actions/setup-*`가 받은 도구는 같은 이미지를 쓰는 작업에서 재사용합니다. 각 호스트는 자체 볼륨을 유지합니다. 로컬과 SSH 호스트에서는 매니저가 30일 동안 러너가 쓰지 않은 볼륨을 삭제합니다. 목록은 `docker volume ls -f label=io.runquill.cache=1`로 확인합니다. [도구 캐시와 정리](runner-images.ko.md#도구-캐시) · [Docker 빌드 레이어 캐시](workflows.ko.md#다음-작업에서-docker-빌드-레이어-재사용)
 - `max_per_repository`는 해당 풀에서 저장소 하나가 사용할 수 있는 러너 수를 제한하며, 그 풀에서는 `RUNQUILL_MAX_PER_REPOSITORY`보다 우선합니다. 둘 다 없으면 저장소 하나가 빈 슬롯을 모두 쓸 수 있습니다.
 - `images`는 풀의 작업이 `os__NAME__`으로 고를 수 있는 [러너 OS](workflows.ko.md#러너-os-선택) 이름 목록입니다. 생략하면 모든 이름을 허용합니다.
 
-`privileged: false` 또는 `cache: true`를 설정한 풀의 [아웃바운드 워커](outbound-workers.md)는 매니저와 같은 Runquill 릴리스를 실행해야 합니다. 이전 버전 에이전트는 이 설정이 담긴 러너 작업을 거부하므로 매니저와 함께 워커도 업그레이드하세요.
+`privileged: false` 또는 `cache: true`를 설정한 풀의 [아웃바운드 워커](outbound-workers.ko.md)는 매니저와 같은 Runquill 릴리스를 실행해야 합니다. 이전 버전 에이전트는 이 설정이 담긴 러너 작업을 거부하므로 매니저와 함께 워커도 업그레이드하세요.
 
 관리자 패널의 풀 편집기에는 Docker-in-Docker와 공유 캐시 체크박스, 허용할 러너 OS 이름 입력란이 있습니다. 편집기는 저장할 때 풀의 `max_per_repository` 값을 유지하지만 바꾸지는 못합니다. 패널에서 설정을 한 번 저장하면 그 값이 `RUNQUILL_WORKER_POOLS`보다 우선합니다.
 
@@ -77,8 +77,8 @@ RUNQUILL_WORKER_POOLS='{"lint":{"hosts":["local"],"privileged":false,"cache":tru
 
 ## 러너 이미지와 컨테이너 엔진
 
-릴리스는 Ubuntu 24.04 기반 `runquill-runner:<버전>`과 `-ubuntu22.04`, `-ubuntu26.04`, `-debian12`, `-debian13` 변형 이미지를 게시합니다. 매니저는 `local`과 `ssh://` 호스트에 없는 러너 이미지를 직접 받습니다(기본값 `RUNQUILL_IMAGE_PULL=missing`, 주기적으로 새로 받으려면 `always`). 아웃바운드 `agent://` 워커, 로컬에서 빌드한 이미지, `RUNQUILL_IMAGE_PULL=never` 설정에서는 이미지를 직접 준비합니다. 매니저는 자신이 받은 이미지와 30일 동안 어떤 러너도 쓰지 않은 캐시 볼륨도 삭제합니다. [러너 이미지](runner-images.md) `RUNQUILL_CONTAINER_ENGINE=podman`을 설정하면 `local`과 `ssh://` 호스트에 Podman CLI를 사용하고, rootless 엔진의 러너는 Docker-in-Docker 없이 시작합니다. Podman과 rootless 엔진은 실제 호스트에서 아직 검증하지 않았습니다. [엔진과 이미지](container-engines.md)
+릴리스는 Ubuntu 24.04 기반 `runquill-runner:<버전>`과 `-ubuntu22.04`, `-ubuntu26.04`, `-debian12`, `-debian13` 변형 이미지를 게시합니다. 매니저는 `local`과 `ssh://` 호스트에 없는 러너 이미지를 직접 받습니다(기본값 `RUNQUILL_IMAGE_PULL=missing`, 주기적으로 새로 받으려면 `always`). 아웃바운드 `agent://` 워커, 로컬에서 빌드한 이미지, `RUNQUILL_IMAGE_PULL=never` 설정에서는 이미지를 직접 준비합니다. 매니저는 자신이 받은 이미지와 30일 동안 어떤 러너도 쓰지 않은 캐시 볼륨도 삭제합니다. [러너 이미지](runner-images.ko.md) `RUNQUILL_CONTAINER_ENGINE=podman`을 설정하면 `local`과 `ssh://` 호스트에 Podman CLI를 사용하고, rootless 엔진의 러너는 Docker-in-Docker 없이 시작합니다. Podman과 rootless 엔진은 실제 호스트에서 아직 검증하지 않았습니다. [엔진과 이미지](container-engines.ko.md)
 
 ## 탄력적 러너 한도
 
-`RUNQUILL_ELASTIC=observe` 또는 `apply`를 설정하면 `local` Docker 호스트에서 바쁜 러너가 다른 러너나 빈 슬롯에 약속되지 않은 CPU와 메모리를 풀의 `cpus`, `memory_mib`의 배수까지 빌려 씁니다. 한도는 풀 설정값 아래로 내려가지 않고 메모리는 줄이지 않습니다. `observe`는 결정만 기록하며 **워커와 풀** 화면에서 확인할 수 있습니다. 부하가 걸린 실제 호스트에서는 아직 검증하지 않았습니다. [탄력적 한도](elastic-limits.md)
+`RUNQUILL_ELASTIC=observe` 또는 `apply`를 설정하면 `local` Docker 호스트에서 바쁜 러너가 다른 러너나 빈 슬롯에 약속되지 않은 CPU와 메모리를 풀의 `cpus`, `memory_mib`의 배수까지 빌려 씁니다. 한도는 풀 설정값 아래로 내려가지 않고 메모리는 줄이지 않습니다. `observe`는 결정만 기록하며 **워커와 풀** 화면에서 확인할 수 있습니다. 부하가 걸린 실제 호스트에서는 아직 검증하지 않았습니다. [탄력적 한도](elastic-limits.ko.md)

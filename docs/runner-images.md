@@ -1,5 +1,7 @@
 # Runner images
 
+[Runquill README](../README.md) · [한국어](runner-images.ko.md)
+
 Every Runquill runner starts from a runner image. This guide covers the published OS variants, how a job selects one in `runs-on`, how the manager pulls images onto its hosts, the tool cache of cached pools, and the cleanup of images and cache volumes nobody uses any more.
 
 ## OS variants

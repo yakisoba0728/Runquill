@@ -59,7 +59,7 @@ runs-on: ${{ format('runquill-{0}-{1}-test-{2}', github.run_id, github.run_attem
 runs-on: ${{ format('runquill-{0}-{1}-os__ubuntu2204__build', github.run_id, github.run_attempt) }}
 ```
 
-이름은 러너 이미지 목록에서 찾습니다. 릴리스 빌드에는 게시된 변형이 모두 들어 있고, `RUNQUILL_RUNNER_IMAGES`로 항목을 추가하거나 바꿀 수 있습니다. Runquill은 작업마다 고유한 라벨로 러너와 작업을 짝지으므로 `runs-on: ubuntu-22.04`처럼 GitHub 호스팅 라벨만 쓰는 방식은 지원하지 않습니다. [러너 이미지](runner-images.md)
+이름은 러너 이미지 목록에서 찾습니다. 릴리스 빌드에는 게시된 변형이 모두 들어 있고, `RUNQUILL_RUNNER_IMAGES`로 항목을 추가하거나 바꿀 수 있습니다. Runquill은 작업마다 고유한 라벨로 러너와 작업을 짝지으므로 `runs-on: ubuntu-22.04`처럼 GitHub 호스팅 라벨만 쓰는 방식은 지원하지 않습니다. [러너 이미지](runner-images.ko.md)
 
 ### 다음 작업에서 Docker 빌드 레이어 재사용
 
@@ -69,6 +69,6 @@ runs-on: ${{ format('runquill-{0}-{1}-os__ubuntu2204__build', github.run_id, git
 
 ### 기존 워크플로 이전
 
-관리자는 패널의 **이전** 화면에서 GitHub 호스팅 라벨을 쓰는 작업을 Runquill 라벨로 바꾸는 풀 리퀘스트를 열 수 있습니다. Contents, Pull requests, Workflows 쓰기 권한이 필요하며, 새 App에서는 `runquill setup --migrate`만 이 권한을 요청합니다. Runquill은 먼저 diff를 미리 보여주고 `runs-on`만 바꿉니다. 안전하게 바꿀 수 없는 작업은 이유와 함께 그대로 두며, 병합은 하지 않습니다. `ubuntu-22.04` 같은 GitHub 호스팅 Ubuntu 버전 라벨은 매니저의 러너 이미지 목록에 그 OS가 있으면 `os__` 선택자로 바뀝니다. 실제 GitHub 저장소에서는 아직 검증하지 않았습니다. [워크플로 이전](workflow-migration.md)
+관리자는 패널의 **이전** 화면에서 GitHub 호스팅 라벨을 쓰는 작업을 Runquill 라벨로 바꾸는 풀 리퀘스트를 열 수 있습니다. Contents, Pull requests, Workflows 쓰기 권한이 필요하며, 새 App에서는 `runquill setup --migrate`만 이 권한을 요청합니다. Runquill은 먼저 diff를 미리 보여주고 `runs-on`만 바꿉니다. 안전하게 바꿀 수 없는 작업은 이유와 함께 그대로 두며, 병합은 하지 않습니다. `ubuntu-22.04` 같은 GitHub 호스팅 Ubuntu 버전 라벨은 매니저의 러너 이미지 목록에 그 OS가 있으면 `os__` 선택자로 바뀝니다. 실제 GitHub 저장소에서는 아직 검증하지 않았습니다. [워크플로 이전](workflow-migration.ko.md)
 
-`runquill workflow check`는 로컬 워크플로 파일에서 잘못된 Runquill 라벨, 같은 파일의 여러 작업이 함께 쓰는 접미사, 설정되지 않은 풀과 러너 OS 이름, self-hosted 러너의 위험한 트리거, 권한과 시간 제한 누락, 고정되지 않은 액션을 찾습니다. 심각도가 high인 항목이 있으면 상태 코드 1로 종료합니다. `--strict`를 붙이면 항목이 하나라도 있을 때 1로 종료하고, `--json`은 결과를 JSON으로 출력합니다. [점검 코드](workflow-migration.md#check-workflows-offline)
+`runquill workflow check`는 로컬 워크플로 파일에서 잘못된 Runquill 라벨, 같은 파일의 여러 작업이 함께 쓰는 접미사, 설정되지 않은 풀과 러너 OS 이름, self-hosted 러너의 위험한 트리거, 권한과 시간 제한 누락, 고정되지 않은 액션을 찾습니다. 심각도가 high인 항목이 있으면 상태 코드 1로 종료합니다. `--strict`를 붙이면 항목이 하나라도 있을 때 1로 종료하고, `--json`은 결과를 JSON으로 출력합니다. [점검 코드](workflow-migration.ko.md#오프라인-워크플로-점검)
