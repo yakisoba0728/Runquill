@@ -57,7 +57,7 @@ runquill workflow check --json path/to/workflow.yml
 | `fork-trigger` | warning | A self-hosted job runs on `pull_request` or review events, which can run fork code. |
 | `runs-on` | warning | A Runquill label is malformed: not the only label, not built with `format()`, a matrix job (one whose `strategy` has a `matrix` key) without `strategy.job-index`, an invalid pool or `os__` suffix or a label that can exceed 100 characters. Also flags self-hosted jobs that Runquill will not serve. |
 | `duplicate-suffix` | warning | Two jobs in the same file build the same Runquill label, so either job can take the other's runner. The whole lowercase suffix is compared, including `pool__` and `os__` selectors, and a matrix suffix with `strategy.job-index` also matches a literal suffix such as `test-1`. |
-| `pool` | warning | The label names a pool missing from `RUNQUILL_WORKER_POOLS`. |
+| `pool` | warning | The label names a pool missing from the configured worker pools. |
 | `runner-image` | warning | The label selects an `os__NAME__` image missing from the runner image catalogue, or one its pool's `images` list does not allow. |
 | `docker` | warning | The job seems to need Docker (by a heuristic), but its pool sets `privileged: false`. |
 | `permissions` | warning | The workflow has no top-level `permissions` block. |
@@ -65,6 +65,6 @@ runquill workflow check --json path/to/workflow.yml
 | `unpinned-action` | info | An action outside `actions/` and `github/` is not pinned to a full commit SHA. |
 | `unparsed` | warning or info | A file or job could not be checked. |
 
-The pool checks run only when `RUNQUILL_WORKER_POOLS` is set in the environment of the command. Pools saved in the panel are not read. The `runner-image` check uses the catalogue built into the binary that runs the command plus `RUNQUILL_RUNNER_IMAGES` in its environment. Release builds know every published variant. If the manager sets `RUNQUILL_RUNNER_IMAGES`, set the same value for the command. [Runner images](runner-images.md)
+The pool checks use the worker pools the manager would apply. When `RUNQUILL_DB` points to an existing queue database with operation settings saved in the panel, the command opens it read-only, uses those pools, and prints a note on standard error. Run it in the manager environment to get this. Otherwise, or when the database cannot be read, the pool checks run only when `RUNQUILL_WORKER_POOLS` is set in the environment of the command. The `runner-image` check uses the catalogue built into the binary that runs the command plus `RUNQUILL_RUNNER_IMAGES` in its environment. Release builds know every published variant. If the manager sets `RUNQUILL_RUNNER_IMAGES`, set the same value for the command. [Runner images](runner-images.md)
 
 The command exits with status 1 when a high-severity finding exists, or for any finding with `--strict`, and with status 2 for a missing directory, an unreadable file or a file larger than 1 MiB. Otherwise it exits with 0. `--json` prints `{"files": N, "findings": [...]}`, where each finding has `file`, `line`, optional `job`, `severity`, `code` and `message`.

@@ -219,6 +219,8 @@ func IsCommitSHA(ref string) bool { return pinnedRef.MatchString(ref) }
 type CheckOptions struct {
 	// Pools maps pool names to whether they support Docker. Nil skips pool checks.
 	Pools map[string]bool
+	// PoolSource names where Pools came from in findings; empty means RUNQUILL_WORKER_POOLS.
+	PoolSource string
 	// CheckImage reports whether an image is known and allowed by the pool.
 	// Nil skips checks against the image catalogue.
 	CheckImage func(pool, osName string) (known, allowed bool)
@@ -294,7 +296,11 @@ func Check(path string, src []byte, options CheckOptions) []Finding {
 			dockerAllowed, found := options.Pools[info.pool]
 			switch {
 			case !found:
-				add(line, j.id, severityWarning, "pool", fmt.Sprintf("Worker pool %q is not configured in RUNQUILL_WORKER_POOLS, so the job will wait.", info.pool))
+				source := options.PoolSource
+				if source == "" {
+					source = "RUNQUILL_WORKER_POOLS"
+				}
+				add(line, j.id, severityWarning, "pool", fmt.Sprintf("Worker pool %q is not configured in %s, so the job will wait.", info.pool, source))
 			case !dockerAllowed && jobNeedsDocker(d, j):
 				add(line, j.id, severityWarning, "docker", fmt.Sprintf("This job appears to need Docker (heuristic: container, services or docker commands), but worker pool %q runs without privileges and cannot use Docker.", info.pool))
 			}
