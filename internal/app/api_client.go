@@ -111,7 +111,14 @@ func (c *apiClient) do(ctx context.Context, method, path string, query url.Value
 		return nil, nil, fmt.Errorf("could not read the panel response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, nil, &apiError{Status: resp.StatusCode, Message: apiErrorMessage(resp.Header.Get("Content-Type"), data[:min(int64(len(data)), limit)])}
+		message := apiErrorMessage(resp.Header.Get("Content-Type"), data[:min(int64(len(data)), limit)])
+		// Go's default not-found answer means no route, unlike the panel's own
+		// 404 sentences such as an unknown job.
+		if resp.StatusCode == http.StatusNotFound && message == "404 page not found" {
+			message += "; this address serves no Runquill panel API at " + path +
+				". Check RUNQUILL_URL and the manager version; runquill panel --demo serves no API"
+		}
+		return nil, nil, &apiError{Status: resp.StatusCode, Message: message}
 	}
 	if int64(len(data)) > limit {
 		return nil, nil, fmt.Errorf("the panel response exceeded %d MiB", apiMaxResponse>>20)
