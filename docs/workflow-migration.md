@@ -63,7 +63,7 @@ runquill workflow check --json path/to/workflow.yml
 | `runner-image` | warning | The label selects an `os__NAME__` image missing from the runner image catalogue, or one its pool's `images` list does not allow. |
 | `docker` | warning | The job seems to need Docker (by a heuristic), but its pool sets `privileged: false`. |
 | `permissions` | warning | The workflow has no top-level `permissions` block. |
-| `timeout` | warning | A job has no `timeout-minutes`. |
+| `timeout` | warning | A job has no `timeout-minutes`. Not reported for a job that calls a reusable workflow with `uses:`. |
 | `unpinned-action` | info | An action outside `actions/` and `github/` is not pinned to a full commit SHA. |
 | `unparsed` | warning or info | A file or job could not be checked. |
 

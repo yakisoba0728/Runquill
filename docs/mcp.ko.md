@@ -9,7 +9,7 @@ Runquill은 에이전트가 운영 현황을 살펴볼 수 있도록 읽기 전�
 | 도구 | 인자 | 반환값 |
 | --- | --- | --- |
 | `fleet_status` | 없음 | 최신 스냅샷의 대기 작업 수, 실행 중인 작업, 호스트 합계, 현재 문제입니다. `runquill fleet status --json`도 같은 결과를 출력합니다. |
-| `list_jobs` | `repository`, `outcome`, `since`(`90m`, `24h`, `7d` 등), `before`, `limit`(1–100, 기본 20) | 최신 작업부터 보여 주는 작업 기록입니다. 기록된 단계별 소요 시간과 현재 진단이 있으면 함께 보여 줍니다. |
+| `list_jobs` | `repository`, `outcome`, `since`(`90m`, `24h`, `7d` 등, 최대 `7d`), `before`, `limit`(1–100, 기본 20) | 최신 작업부터 보여 주는 작업 기록입니다. 기록된 단계별 소요 시간과 현재 진단이 있으면 함께 보여 줍니다. |
 | `get_job` | `id`(필수) | 작업 하나의 결과, 실패 또는 재시도 이유, 소요 시간, 러너, 실시간 상태입니다. |
 | `list_hosts` | 없음 | 호스트별 상태, 슬롯, 호스트당 최대 100개의 러너입니다. |
 | `usage_summary` | `window`(`24h` 또는 `7d`), `group`(`day`, `repository`, `pool`, `host`) | 끝난 작업 수, 실패, 러너 사용 시간, 대기 시간입니다. `group`을 주면 같은 통계를 그룹별로 나눈 `series`도 반환합니다. 작업이 많은 그룹부터 최대 500개이며, `window` 기간을 포함하는 UTC 날짜 전체를 `from`과 `to`로 지정한 `GET /api/usage`처럼 읽습니다. |

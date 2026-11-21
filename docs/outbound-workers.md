@@ -69,7 +69,7 @@ RUNQUILL_RUNNER_IMAGE=runquill-runner:local \
   --token-file "$PWD/worker-a.token"
 ```
 
-The worker validates the server certificate. Literal loopback HTTP is available for local testing. Keep the worker process running with your service manager. It locks a file beside its token file to prevent two processes from using the same credentials concurrently. Use a unique token and name per worker.
+`--name`, `--manager` and `--token-file` default to `RUNQUILL_WORKER_NAME`, `RUNQUILL_WORKER_URL` and `RUNQUILL_WORKER_TOKEN_FILE`. The worker validates the server certificate. Literal loopback HTTP is available for local testing. Keep the worker process running with your service manager. It locks a file beside its token file to prevent two processes from using the same credentials concurrently. Use a unique token and name per worker.
 
 Run the same Runquill release on the worker as on the manager. A worker in a pool with `privileged: false` or `cache: true` must be upgraded with the manager, because older workers reject runner tasks that carry those settings. The cache volume lives on the worker's own engine.
 

@@ -69,7 +69,7 @@ RUNQUILL_RUNNER_IMAGE=runquill-runner:local \
   --token-file "$PWD/worker-a.token"
 ```
 
-워커는 서버 인증서를 검증합니다. 로컬 테스트에는 루프백 IP를 직접 적은 HTTP 주소를 쓸 수 있습니다. 서비스 관리자로 워커 프로세스를 계속 실행하세요. 워커는 토큰 파일 옆의 파일을 잠가 두 프로세스가 같은 인증 정보를 동시에 쓰지 못하게 합니다. 워커마다 고유한 토큰과 이름을 사용합니다.
+`--name`, `--manager`, `--token-file`을 생략하면 각각 `RUNQUILL_WORKER_NAME`, `RUNQUILL_WORKER_URL`, `RUNQUILL_WORKER_TOKEN_FILE` 값을 씁니다. 워커는 서버 인증서를 검증합니다. 로컬 테스트에는 루프백 IP를 직접 적은 HTTP 주소를 쓸 수 있습니다. 서비스 관리자로 워커 프로세스를 계속 실행하세요. 워커는 토큰 파일 옆의 파일을 잠가 두 프로세스가 같은 인증 정보를 동시에 쓰지 못하게 합니다. 워커마다 고유한 토큰과 이름을 사용합니다.
 
 워커에서도 매니저와 같은 Runquill 릴리스를 실행합니다. `privileged: false`나 `cache: true`를 설정한 풀의 워커는 매니저와 함께 업그레이드해야 합니다. 이전 버전 워커는 이 설정이 담긴 러너 작업을 거부하기 때문입니다. 캐시 볼륨은 워커 자신의 엔진에 있습니다.
 
