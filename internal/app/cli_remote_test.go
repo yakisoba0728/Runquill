@@ -396,16 +396,26 @@ func TestRemoteUsageAgainstPanel(t *testing.T) {
 	if code != 0 || !strings.HasPrefix(stdout, "No finished jobs from ") {
 		t.Fatalf("usage without jobs: code %d\n%s", code, stdout)
 	}
-	for _, args := range [][]string{
-		{"usage", "--group", "week"},
-		{"usage", "--from", "2026-13-01"},
-		{"usage", "--from", "2020-01-01", "--to", "2026-01-01"},
-		{"usage", "--repo", "nobody"},
-		{"usage", "extra"},
+	// Each mistake names its flag.
+	for _, test := range []struct {
+		args    []string
+		message string
+	}{
+		{[]string{"usage", "--group", "week"}, "--group must be day, repository, pool or host"},
+		{[]string{"usage", "--from", "2026-13-01"}, "--from must be a date as YYYY-MM-DD"},
+		{[]string{"usage", "--to", "yesterday"}, "--to must be a date as YYYY-MM-DD"},
+		{[]string{"usage", "--from", "2026-02-01", "--to", "2026-01-01"}, "--from must not be after --to"},
+		{[]string{"usage", "--from", "2020-01-01", "--to", "2026-01-01"}, "--from and --to must cover at most 400 days"},
+		{[]string{"usage", "--repo", "nobody"}, "--repo must be OWNER/NAME"},
+		{[]string{"usage", "extra"}, "Usage: runquill usage"},
 	} {
-		if _, code, stdout, stderr := runRemote(t, args...); code != 2 || stdout != "" || stderr == "" {
-			t.Errorf("%v: code %d, stdout %q, stderr %q", args, code, stdout, stderr)
+		if _, code, stdout, stderr := runRemote(t, test.args...); code != 2 || stdout != "" || !strings.Contains(stderr, test.message) {
+			t.Errorf("%v: code %d, stdout %q, stderr %q, want %q", test.args, code, stdout, stderr, test.message)
 		}
+	}
+	// 400 days counting both ends is the widest range.
+	if _, code, _, stderr := runRemote(t, "usage", "--from", "2025-01-01", "--to", "2026-02-04"); code != 0 {
+		t.Errorf("400-day range: code %d, stderr %q", code, stderr)
 	}
 }
 
