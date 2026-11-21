@@ -279,7 +279,7 @@ Finally, delete the GitHub App in **Settings → Developer settings → GitHub A
 
 ## Feature status
 
-The Go tests cover the features in this README, and CI runs real containers in the nested Docker test and the K3s lifecycle check. The features below are implemented and tested only against fakes or recorded output. They have not yet been run in a real environment:
+The Go tests cover the features described in the Runquill documentation, and CI runs real containers in the nested Docker test and the K3s lifecycle check. The features below are implemented and tested only against fakes or recorded output. They have not yet been run in a real environment:
 
 - Podman and rootless container engines
 - workflow migration against real GitHub repositories
