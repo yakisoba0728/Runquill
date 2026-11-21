@@ -2,9 +2,12 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -158,6 +161,95 @@ func TestSchedulerProvisionFailuresBackOff(t *testing.T) {
 			t.Fatalf("failure %d: %+v", failures+1, after)
 		}
 	}
+}
+
+// prefixFailingRuntime fails to start runners whose names start with prefix, like a job whose image cannot be pulled.
+type prefixFailingRuntime struct {
+	*testRuntime
+	prefix string
+}
+
+func (r *prefixFailingRuntime) startOn(ctx context.Context, host, name, jit string) error {
+	if strings.HasPrefix(name, r.prefix) {
+		return errors.New("pull access denied")
+	}
+	return r.testRuntime.startOn(ctx, host, name, jit)
+}
+
+func TestSchedulerClaimedStartFailuresReleaseSlotQuickly(t *testing.T) {
+	var provisioned atomic.Int32
+	gh := testGitHub(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method + " " + r.URL.Path {
+		case "POST /app/installations/1/access_tokens":
+			fmt.Fprint(w, `{"token":"stub"}`)
+		case "GET /repos/owner/repo":
+			fmt.Fprint(w, `{"id":2,"private":true,"owner":{"login":"owner"}}`)
+		case "GET /repos/owner/repo/actions/jobs/9", "GET /repos/owner/repo/actions/jobs/10":
+			fmt.Fprint(w, `{"status":"queued"}`)
+		case "POST /repos/owner/repo/actions/runners/generate-jitconfig":
+			provisioned.Add(1)
+			body, _ := io.ReadAll(r.Body)
+			id := 55
+			if strings.Contains(string(body), "runquill-10-") {
+				id = 56
+			}
+			fmt.Fprintf(w, `{"runner":{"id":%d},"encoded_jit_config":"test-config"}`, id)
+		case "DELETE /repos/owner/repo/actions/runners/55":
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("unexpected API request %s %s", r.Method, r.URL)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	q := testQueue(t)
+	start := time.Unix(1_800_000_000, 0)
+	recordTestJob(t, q, 9, "runquill-1-1-ci", start)
+	runtime := &prefixFailingRuntime{&testRuntime{hosts: []dockerHostSnapshot{{Name: "local", Containers: map[string]string{}}}}, "runquill-9-"}
+	s := &scheduler{queue: q, github: gh, runtime: runtime, limit: 1}
+	const step = 5 * time.Second
+	var leasedAt, enqueued time.Time
+	var releases int
+	for now := start; now.Before(start.Add(time.Hour)); now = now.Add(step) {
+		// A second job arrives once the first one has backed off a few times.
+		if enqueued.IsZero() && releases == 4 {
+			enqueued = now
+			recordTestJob(t, q, 10, "runquill-1-1-ci", now)
+		}
+		before := readJob(t, q, 9)
+		if err := s.tick(t.Context(), now); err != nil {
+			t.Fatal(err)
+		}
+		after := readJob(t, q, 9)
+		switch {
+		case before.runnerName == "" && after.runnerName != "":
+			leasedAt = now
+			if after.retryAt != now.Add(retryDelay).Unix() || after.launchFailures != before.launchFailures {
+				t.Fatalf("failed start %d holds its lease until %d with %d failures, want %d with %d", releases+1,
+					after.retryAt, after.launchFailures, now.Add(retryDelay).Unix(), before.launchFailures)
+			}
+		case before.runnerName != "" && after.runnerName == "":
+			releases++
+			if want := now.Add(launchDelay(before.launchFailures)).Unix(); after.retryAt != want || after.launchFailures != before.launchFailures+1 {
+				t.Fatalf("release %d: retry at %d after %d failures, want %d after %d", releases, after.retryAt,
+					after.launchFailures, want, before.launchFailures+1)
+			}
+		}
+		if after.runnerName != "" && now.Sub(leasedAt) > retryDelay+step {
+			t.Fatalf("a failed start held its slot for %v after %d failures", now.Sub(leasedAt), after.launchFailures)
+		}
+		if !enqueued.IsZero() {
+			if other := readJob(t, q, 10); other.runnerName != "" {
+				if waited := now.Sub(enqueued); waited > retryDelay+2*step {
+					t.Fatalf("the other job waited %v for the slot", waited)
+				}
+				if n := provisioned.Load(); n > int32(releases)+2 {
+					t.Fatalf("registered %d runners for %d releases", n, releases)
+				}
+				return
+			}
+		}
+	}
+	t.Fatal("the other job never got the slot")
 }
 
 func TestQueueUpgradeAddsLaunchFailures(t *testing.T) {

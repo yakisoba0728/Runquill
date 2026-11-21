@@ -227,8 +227,13 @@ func (s *scheduler) tickFleet(ctx context.Context, now time.Time, state *operati
 				if s.metrics != nil {
 					s.metrics.launchErrors.Add(1)
 				}
-				// A claimed job counts its failure when its lease is released.
-				if err := s.retryAfter(ctx, r.j, now, "provision runner", r.err, launchDelay(r.j.launchFailures), !r.claimed); err != nil && first == nil {
+				// A claimed job holds a host slot until reconcile releases its lease, so it waits
+				// only retryDelay; the release counts the failure and applies the backoff.
+				delay := retryDelay
+				if !r.claimed {
+					delay = launchDelay(r.j.launchFailures)
+				}
+				if err := s.retryAfter(ctx, r.j, now, "provision runner", r.err, delay, !r.claimed); err != nil && first == nil {
 					first = err
 				}
 			default:
