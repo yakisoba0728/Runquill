@@ -436,6 +436,39 @@ func TestMCPToolsReadPanelData(t *testing.T) {
 		t.Fatalf("usage 7d: %+v", usage)
 	}
 	f.toolFails("usage_summary", map[string]any{"window": "30d"}, "window must be 24h or 7d")
+	// Without group the result keeps its original fields.
+	if text := f.tool("usage_summary", nil).Content[0].Text; strings.Contains(text, `"group"`) || strings.Contains(text, `"series"`) {
+		t.Fatalf("ungrouped usage: %s", text)
+	}
+
+	// group adds the panel's daily statistics over the UTC days of the window.
+	if err := migrateUsage(ctx, f.q.DB); err != nil {
+		t.Fatal(err)
+	}
+	var grouped struct {
+		Window    string       `json:"window"`
+		Jobs      int64        `json:"jobs"`
+		Group     string       `json:"group"`
+		From      string       `json:"from"`
+		To        string       `json:"to"`
+		Series    []usageGroup `json:"series"`
+		Truncated bool         `json:"truncated"`
+	}
+	day := func(at time.Time) string { return at.UTC().Format(time.DateOnly) }
+	f.toolOK("usage_summary", map[string]any{"group": "repository"}, &grouped)
+	if grouped.Window != "24h" || grouped.Jobs != 2 || grouped.Group != "repository" || grouped.From != day(now.Add(-24*time.Hour)) ||
+		grouped.To != day(now) || len(grouped.Series) != 1 || grouped.Series[0].Key != "owner/app" ||
+		grouped.Series[0].Jobs != 2 || grouped.Series[0].Failed != 1 || grouped.Truncated {
+		t.Fatalf("usage by repository: %+v", grouped)
+	}
+	grouped.Series = nil
+	f.toolOK("usage_summary", map[string]any{"group": "day", "window": "7d"}, &grouped)
+	if grouped.Window != "7d" || grouped.Group != "day" || grouped.From != day(now.Add(-7*24*time.Hour)) || len(grouped.Series) != 8 ||
+		grouped.Series[0].Key != grouped.From || grouped.Series[7].Key != grouped.To {
+		t.Fatalf("usage by day: %+v", grouped)
+	}
+	f.toolFails("usage_summary", map[string]any{"group": "week"}, "group must be day, repository, pool or host")
+	f.toolFails("usage_summary", map[string]any{"group": 1}, "group must be a string")
 
 	var elastic struct {
 		Mode      elasticMode       `json:"mode"`
