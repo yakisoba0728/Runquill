@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"os/exec"
 	"slices"
 	"strconv"
@@ -24,9 +26,9 @@ func newLogFixture(t *testing.T) *logFixture {
 	t.Helper()
 	f := &logFixture{panelFixture: newPanelFixture(t), shell: "echo hello"}
 	f.logs = newRunnerLogs(f.q.DB)
-	f.logs.command = func(ctx context.Context, args ...string) *exec.Cmd {
+	f.logs.command = func(ctx context.Context, binary string, args ...string) *exec.Cmd {
 		f.mu.Lock()
-		f.calls = append(f.calls, args)
+		f.calls = append(f.calls, append([]string{binary}, args...))
 		shell := f.shell
 		f.mu.Unlock()
 		return exec.CommandContext(ctx, "sh", "-c", shell)
@@ -111,10 +113,10 @@ func TestRunnerLogsArgumentsAndBounds(t *testing.T) {
 		path string
 		want []string
 	}{
-		{"/api/runners/runquill-1-abcdef012345/logs", []string{"logs", "--timestamps", "--tail", "200", "runquill-1-abcdef012345"}},
-		{"/api/runners/runquill-1-abcdef012345/logs?tail=99999", []string{"logs", "--timestamps", "--tail", "2000", "runquill-1-abcdef012345"}},
+		{"/api/runners/runquill-1-abcdef012345/logs", []string{"docker", "logs", "--timestamps", "--tail", "200", "runquill-1-abcdef012345"}},
+		{"/api/runners/runquill-1-abcdef012345/logs?tail=99999", []string{"docker", "logs", "--timestamps", "--tail", "2000", "runquill-1-abcdef012345"}},
 		{"/api/runners/runquill-2-abcdef012345/logs?tail=5&follow=1",
-			[]string{"--host", "ssh://deploy@build-1:2222", "logs", "--timestamps", "--tail", "5", "--follow", "runquill-2-abcdef012345"}},
+			[]string{"docker", "--host", "ssh://deploy@build-1:2222", "logs", "--timestamps", "--tail", "5", "--follow", "runquill-2-abcdef012345"}},
 	} {
 		f.expect(f.call(http.MethodGet, tc.path, "", "operator", false), http.StatusOK)
 		if got := f.lastCall(); !slices.Equal(got, tc.want) {
@@ -123,6 +125,47 @@ func TestRunnerLogsArgumentsAndBounds(t *testing.T) {
 	}
 	for _, query := range []string{"tail=-1", "tail=x", "follow=yes"} {
 		f.expect(f.call(http.MethodGet, "/api/runners/runquill-1-abcdef012345/logs?"+query, "", "operator", false), http.StatusBadRequest)
+	}
+}
+
+func TestRunnerLogsUseTheConfiguredEngine(t *testing.T) {
+	t.Setenv("RUNQUILL_CONTAINER_ENGINE", "podman")
+	f := newLogFixture(t)
+	for _, tc := range []struct {
+		path string
+		want []string
+	}{
+		{"/api/runners/runquill-1-abcdef012345/logs", []string{"podman", "logs", "--timestamps", "--tail", "200", "runquill-1-abcdef012345"}},
+		{"/api/runners/runquill-2-abcdef012345/logs?tail=5&follow=1", []string{"podman", "--url", "ssh://deploy@build-1:2222/run/podman/podman.sock",
+			"logs", "--timestamps", "--tail", "5", "--follow", "runquill-2-abcdef012345"}},
+	} {
+		f.expect(f.call(http.MethodGet, tc.path, "", "operator", false), http.StatusOK)
+		if got := f.lastCall(); !slices.Equal(got, tc.want) {
+			t.Fatalf("%s: ran %q, want %q", tc.path, got, tc.want)
+		}
+	}
+}
+
+func TestRunnerLogsTailOutlastsServerWriteTimeout(t *testing.T) {
+	f := newLogFixture(t)
+	f.shell = "sleep 0.5; echo hello"
+	server := httptest.NewUnstartedServer(f.handler)
+	server.Config.WriteTimeout = 200 * time.Millisecond
+	server.Start()
+	t.Cleanup(server.Close)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, server.URL+"/api/runners/runquill-1-abcdef012345/logs", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.AddCookie(f.cookies["operator"])
+	resp, err := server.Client().Do(req)
+	if err != nil {
+		t.Fatalf("tail slower than the write timeout: %v", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil || resp.StatusCode != http.StatusOK || string(body) != "hello\n" {
+		t.Fatalf("tail: HTTP %d %q, %v", resp.StatusCode, body, err)
 	}
 }
 

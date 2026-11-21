@@ -2061,7 +2061,7 @@ paths:
       operationId: getRunnerLogs
       tags: [logs]
       summary: Container output of an active runner on a local or ssh:// Docker host. Audited as runner.logs.
-      description: 'Runs docker logs --timestamps for a runner that currently holds a job in the queue. Requires a signed-in operator or administrator; viewers and API tokens are refused. Without follow the last tail lines are returned at once (20 second limit). With follow the response streams new lines for up to 15 minutes. Output stops at 8 MiB with a marker line, and runs of 200 or more base64 characters are replaced by [redacted]. At most 8 log requests run at once. Kubernetes and agent:// runners have no logs here. These are the runner process logs, not the GitHub step logs.'
+      description: 'Runs docker logs --timestamps, or podman logs with RUNQUILL_CONTAINER_ENGINE=podman, for a runner that currently holds a job in the queue. Requires a signed-in operator or administrator; viewers and API tokens are refused. Without follow the last tail lines are returned at once (20 second limit). With follow the response streams new lines for up to 15 minutes. Output stops at 8 MiB with a marker line, and runs of 200 or more base64 characters are replaced by [redacted]. At most 8 log requests run at once. Kubernetes and agent:// runners have no logs here. These are the runner process logs, not the GitHub step logs.'
       x-runquill-permission: browser
       security:
         - sessionCookie: []

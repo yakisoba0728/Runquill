@@ -9,7 +9,7 @@
 - The manager image published for Compose contains only the Docker CLI. To use Podman, run the standalone `runquill` binary on a machine with the `podman` CLI installed.
 - For Podman `ssh://` hosts without a path, Runquill connects to `/run/podman/podman.sock`. Append another socket path to the host entry when needed, such as `ssh://builder@worker.example.com/run/user/1000/podman/podman.sock` for a rootless user.
 - Podman runners log through `k8s-file` with a 10 MB size limit and no rotation count. Cache volumes are created with `podman volume create` before the runner.
-- [Runner logs](panel.md#runner-logs) and [elastic limits](elastic-limits.md) always call the `docker` CLI and therefore do not support Podman hosts.
+- [Runner logs](panel.md#runner-logs) use the configured engine's CLI. [Elastic limits](elastic-limits.md) always call the `docker` CLI and therefore do not support Podman hosts.
 
 `runquill doctor` reports the engine, its version, platform, cgroup version and whether it is rootful or rootless for every host.
 
