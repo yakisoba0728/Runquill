@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"syscall"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -113,7 +112,7 @@ func lockQueue(path string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := lockExclusive(lock); err != nil {
 		lock.Close()
 		return nil, fmt.Errorf("lock queue %s: %w", path, err)
 	}

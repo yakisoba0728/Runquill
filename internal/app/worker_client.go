@@ -16,7 +16,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/yakisoba0728/Runquill/internal/route"
@@ -139,7 +138,7 @@ func lockWorkerToken(filename string) (string, func(), error) {
 	if err != nil {
 		return "", nil, fmt.Errorf("open worker lock beside token file: %w", err)
 	}
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := lockExclusive(lock); err != nil {
 		lock.Close()
 		return "", nil, fmt.Errorf("lock worker process: %w", err)
 	}
