@@ -38,6 +38,7 @@ var remoteNow = time.Now
 
 const remoteUsage = `Usage:
   runquill jobs list [--repo OWNER/NAME] [--outcome waiting|running|finished|failed] [--since 24h] [--limit N] [--json]
+  runquill jobs show JOB_ID [--json]
   runquill jobs cancel JOB_ID [--json]
   runquill jobs retry JOB_ID [--json]
   runquill runners list [--json]
@@ -76,6 +77,7 @@ var remoteCommands = map[string]remoteCommandSpec{
 		f.StringVar(&o.since, "since", "", "only jobs queued within this duration, such as 24h or 7d")
 		f.IntVar(&o.limit, "limit", 50, "number of jobs to show (1-100)")
 	}, validate: validateJobsList, run: runJobsList},
+	"jobs show": {permission: "fleet:read", args: []string{"JOB_ID"}, validate: validateJobID, run: runJobsShow},
 	"jobs cancel": {permission: "jobs:write", args: []string{"JOB_ID"}, validate: validateJobID, run: func(ctx context.Context, c *apiClient, o *remoteOptions, _ []string, out io.Writer) error {
 		return runJobChange(ctx, c, o, out, "cancel", "Cancelled job %d.\n")
 	}},
@@ -319,6 +321,50 @@ func runJobsList(ctx context.Context, c *apiClient, o *remoteOptions, _ []string
 	return nil
 }
 
+func runJobsShow(ctx context.Context, c *apiClient, o *remoteOptions, _ []string, out io.Writer) error {
+	row, raw, err := c.job(ctx, o.jobID)
+	if err != nil {
+		return err
+	}
+	if o.json {
+		return writeRawJSON(out, raw)
+	}
+	wait, diagnostic, timing := "-", "", ""
+	if row.WaitSeconds != nil {
+		wait = remoteDuration(time.Duration(*row.WaitSeconds) * time.Second)
+	}
+	if row.Diagnostic != nil {
+		diagnostic = row.Diagnostic.Message
+	}
+	if row.Timing != nil {
+		timing = row.Timing.text()
+	}
+	table := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+	for _, field := range [][2]string{
+		{"JOB", strconv.FormatInt(row.ID, 10)},
+		{"REPOSITORY", cell(row.Repository)},
+		{"OUTCOME", cell(row.Outcome)},
+		{"LABEL", cell(row.RunnerLabel)},
+		{"POOL", cell(row.Pool)},
+		{"OS", cell(row.RunnerOS)},
+		{"HOST", cell(row.Host)},
+		{"QUEUED", remoteTime(row.QueuedAt)},
+		{"STARTED", remoteTime(row.StartedAt)},
+		{"FINISHED", remoteTime(row.FinishedAt)},
+		{"CLEANED", remoteTime(row.CleanedAt)},
+		{"WAIT", wait},
+		{"FAILURE", cell(row.Failure)},
+		{"RETRY", cell(row.RetryReason)},
+		{"RETRY_AT", remoteTime(row.RetryAt)},
+		{"DIAGNOSTIC", cell(diagnostic)},
+		{"TIMING", cell(timing)},
+		{"URL", cell(row.URL)},
+	} {
+		fmt.Fprintf(table, "%s\t%s\n", field[0], field[1])
+	}
+	return table.Flush()
+}
+
 func runJobChange(ctx context.Context, c *apiClient, o *remoteOptions, out io.Writer, action, done string) error {
 	if err := c.changeJob(ctx, o.jobID, action); err != nil {
 		return err
@@ -534,6 +580,18 @@ func remoteAgo(at *time.Time) string {
 		return "-"
 	}
 	return remoteDuration(remoteNow().Sub(*at)) + " ago"
+}
+
+// remoteTime prints a panel time in UTC with its age, or in for a future time.
+func remoteTime(at *time.Time) string {
+	if at == nil {
+		return "-"
+	}
+	stamp := at.UTC().Format(time.RFC3339)
+	if age := remoteNow().Sub(*at); age < 0 {
+		return stamp + " (in " + remoteDuration(-age) + ")"
+	}
+	return stamp + " (" + remoteAgo(at) + ")"
 }
 
 func remoteDuration(d time.Duration) string {

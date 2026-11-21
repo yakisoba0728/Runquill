@@ -456,6 +456,7 @@ const words = {
   "Use a valid audit filter and page.": "감사 기록 필터와 페이지 값을 확인하세요.",
   "Use a valid repository, outcome, time range, and page.": "저장소(OWNER/REPO), 결과, 기간, 페이지 값을 확인하세요.",
   "Could not read the job history.": "작업 기록을 읽지 못했습니다.",
+  "This job is not in the job history.": "작업 기록에 이 작업이 없습니다.",
   "This job is no longer waiting for a runner.": "이 작업은 더 이상 러너를 기다리고 있지 않습니다.",
   "This job has no retry delay to clear.": "이 작업에는 해제할 재시도 대기 시간이 없습니다.",
   "Could not update the job.": "작업을 변경하지 못했습니다.",

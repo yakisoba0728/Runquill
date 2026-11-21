@@ -189,6 +189,10 @@ func (c *apiClient) jobHistory(ctx context.Context, q jobHistoryQuery) (panelHis
 	return getAPIJSON[panelHistoryPageResponse](ctx, c, "/api/jobs", query)
 }
 
+func (c *apiClient) job(ctx context.Context, id int64) (panelHistoryJob, []byte, error) {
+	return getAPIJSON[panelHistoryJob](ctx, c, "/api/jobs/"+strconv.FormatInt(id, 10), nil)
+}
+
 func (c *apiClient) snapshot(ctx context.Context) (panelSnapshot, []byte, error) {
 	return getAPIJSON[panelSnapshot](ctx, c, "/snapshot", nil)
 }

@@ -169,7 +169,7 @@ components:
     TokenScope:
       type: string
       enum: ['fleet:read', 'hosts:write', 'jobs:write']
-      description: 'fleet:read can call GET /snapshot, GET /api/events, GET /api/jobs, GET /api/elastic, GET /api/usage and POST /mcp; hosts:write can call POST /api/hosts/cordon; jobs:write can call POST /api/jobs/{id}/cancel and POST /api/jobs/{id}/retry. A token reaches only its own scope, so a hosts:write or jobs:write token cannot read the fleet. hosts:write and jobs:write need an operator or admin owner.'
+      description: 'fleet:read can call GET /snapshot, GET /api/events, GET /api/jobs, GET /api/jobs/{id}, GET /api/elastic, GET /api/usage and POST /mcp; hosts:write can call POST /api/hosts/cordon; jobs:write can call POST /api/jobs/{id}/cancel and POST /api/jobs/{id}/retry. A token reaches only its own scope, so a hosts:write or jobs:write token cannot read the fleet. hosts:write and jobs:write need an operator or admin owner.'
     TokenCreate:
       type: object
       additionalProperties: false
@@ -1788,6 +1788,47 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '503':
           $ref: '#/components/responses/AccessUnavailable'
+  /api/jobs/{id}:
+    get:
+      operationId: getJob
+      tags: [jobs]
+      summary: One job, as the same row GET /api/jobs lists. Finished rows are kept for seven days.
+      x-runquill-permission: fleet:read
+      security:
+        - sessionCookie: []
+        - bearerToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: GitHub Actions job ID.
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        '200':
+          description: The job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HistoryJob'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: 'Body "This job is not in the job history.", or the router''s "404 page not found" for an ID that is not a positive integer.'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 'Body "Could not read the job history." or "Could not check panel access."'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/jobs/{id}/cancel:
     post:
       operationId: cancelJob

@@ -133,6 +133,35 @@ func TestPanelJobHistoryPagesAndFilters(t *testing.T) {
 		f.expect(f.call("GET", "/api/jobs"+query, "", "viewer", false), 400)
 	}
 	f.expect(f.call("GET", "/api/jobs", "", "", false), 401)
+
+	// One job reads as the same row the history lists; finished rows do not
+	// depend on the clock.
+	for _, id := range []int64{1, 2} {
+		rec := f.call("GET", fmt.Sprintf("/api/jobs/%d", id), "", "viewer", false)
+		f.expect(rec, 200)
+		listed, _ := json.Marshal(page("?limit=100").Jobs[5-id])
+		if got := strings.TrimSpace(rec.Body.String()); got != string(listed) {
+			t.Fatalf("job %d:\n got %s\nwant %s", id, got, listed)
+		}
+	}
+	rec := f.call("GET", "/api/jobs/3", "", "viewer", false)
+	f.expect(rec, 200)
+	var waiting panelHistoryJob
+	if err := json.Unmarshal(rec.Body.Bytes(), &waiting); err != nil || waiting.ID != 3 || waiting.Outcome != "waiting" ||
+		waiting.RetryReason != "provision runner: boom" || waiting.RetryAt == nil || waiting.Diagnostic == nil {
+		t.Fatalf("job 3: %s %v", rec.Body, err)
+	}
+	rec = f.call("GET", "/api/jobs/99", "", "viewer", false)
+	f.expect(rec, 404)
+	if !strings.Contains(rec.Body.String(), "This job is not in the job history.") {
+		t.Fatalf("missing job: %s", rec.Body)
+	}
+	f.expect(f.call("GET", "/api/jobs/x", "", "viewer", false), 404)
+	f.expect(f.call("GET", "/api/jobs/0", "", "viewer", false), 404)
+	f.expect(f.call("GET", "/api/jobs/1", "", "", false), 401)
+	read := mcpToken(t, f.q, 102, "fleet:read")
+	f.expect(f.call("GET", "/api/jobs/1", "", read, false), 200)
+	f.expect(f.call("GET", "/api/jobs/1", "", mcpToken(t, f.q, 103, "jobs:write"), false), 403)
 }
 
 func TestPanelJobActionsAreGuardedAndAudited(t *testing.T) {

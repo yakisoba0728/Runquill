@@ -159,6 +159,8 @@ func TestRemoteCommandValidatesArguments(t *testing.T) {
 		{[]string{"jobs", "list", "--limit", "101"}, "--limit must be between 1 and 100"},
 		{[]string{"jobs", "list", "extra"}, "Usage: runquill jobs list"},
 		{[]string{"jobs", "list", "--bogus"}, "flag provided but not defined"},
+		{[]string{"jobs", "show"}, "Usage: runquill jobs show JOB_ID"},
+		{[]string{"jobs", "show", "1.5"}, "JOB_ID must be a positive GitHub job ID"},
 		{[]string{"jobs", "cancel"}, "Usage: runquill jobs cancel JOB_ID"},
 		{[]string{"jobs", "cancel", "abc"}, "JOB_ID must be a positive GitHub job ID"},
 		{[]string{"jobs", "retry", "0"}, "JOB_ID must be a positive GitHub job ID"},
@@ -297,6 +299,45 @@ func TestRemoteJobsListAgainstPanel(t *testing.T) {
 	_, code, stdout, stderr = runRemote(t, "jobs", "list", "--repo", "owner/app")
 	if code != 0 || stderr != "" || !strings.Contains(stdout, "JIT registration 250ms") || !strings.Contains(stdout, "runtime launch 500ms") {
 		t.Fatalf("jobs list with launch stages: code %d, stderr %q\n%s", code, stderr, stdout)
+	}
+}
+
+func TestRemoteJobsShowAgainstPanel(t *testing.T) {
+	f := newRemoteFixture(t)
+	t.Setenv("RUNQUILL_TOKEN", f.token(102, "fleet:read"))
+	_, code, stdout, stderr := runRemote(t, "jobs", "show", "8")
+	fields := map[string]string{}
+	for _, line := range rows(stdout) {
+		fields[line[0]] = strings.Join(line[1:], " ")
+	}
+	queued := f.now.Add(-2*time.Hour).UTC().Format(time.RFC3339) + " (2h ago)"
+	if code != 0 || stderr != "" || fields["JOB"] != "8" || fields["REPOSITORY"] != "owner/lib" || fields["OUTCOME"] != "failed" ||
+		fields["LABEL"] != "runquill-8-1-build" || fields["QUEUED"] != queued || fields["WAIT"] != "2h" ||
+		fields["FAILURE"] != "image pull failed" || fields["RETRY_AT"] != "-" ||
+		fields["URL"] != "https://github.com/owner/lib/actions/runs/8/job/8" {
+		t.Fatalf("jobs show 8: code %d, stderr %q\n%s", code, stderr, stdout)
+	}
+	// --json prints the panel's row, the same one jobs list --json pages.
+	_, code, stdout, _ = runRemote(t, "jobs", "show", "8", "--json")
+	_, _, listed, _ := runRemote(t, "jobs", "list", "--outcome", "failed", "--json")
+	var row panelHistoryJob
+	var page panelHistoryPageResponse
+	if code != 0 || json.Unmarshal([]byte(stdout), &row) != nil || json.Unmarshal([]byte(listed), &page) != nil || len(page.Jobs) != 1 {
+		t.Fatalf("jobs show --json: code %d\n%s\n%s", code, stdout, listed)
+	}
+	shown, _ := json.Marshal(row)
+	if want, _ := json.Marshal(page.Jobs[0]); string(shown) != string(want) {
+		t.Fatalf("jobs show --json: code %d\n%s\n%s", code, stdout, listed)
+	}
+	_, code, _, stderr = runRemote(t, "jobs", "show", "99")
+	if code != 1 || !strings.Contains(stderr, "HTTP 404: This job is not in the job history.") {
+		t.Fatalf("jobs show 99: code %d, %q", code, stderr)
+	}
+	// A jobs:write token cannot read the fleet.
+	t.Setenv("RUNQUILL_TOKEN", f.token(103, "jobs:write"))
+	_, code, _, stderr = runRemote(t, "jobs", "show", "8")
+	if code != 1 || !strings.Contains(stderr, "HTTP 403") {
+		t.Fatalf("jobs show with a write token: code %d, %q", code, stderr)
 	}
 }
 
