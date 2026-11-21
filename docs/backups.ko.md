@@ -47,7 +47,7 @@
 
 Runquill은 암호화하지 않은 백업을 올리지 않습니다. 예약과 버킷을 설정했는데 암호가 없으면 `RUNQUILL_BACKUP_S3_ALLOW_PLAINTEXT=true`가 아닌 한 매니저가 시작하지 않으며, 허용한 경우에도 암호화하지 않은 업로드마다 경고를 남깁니다. `--seal` 없이 `runquill backup --upload`를 실행해도 같은 이유로 거부합니다. 업로드는 AWS Signature Version 4를 사용하고 리다이렉트를 따르지 않으며, 객체 크기를 비교해 완료를 확인합니다. 매번 실행한 뒤 매니저는 보관 중인 로컬 백업 중 아직 업로드를 확인하지 못한 것을 오래된 순서로 올리고, `RUNQUILL_BACKUP_S3_KEEP`을 넘는 가장 오래된 Runquill 객체를 삭제합니다. 실패한 업로드는 다음 실행에서 다시 시도합니다.
 
-`runquill backup --upload --seal`은 같은 설정으로 백업 하나를 만들어 업로드합니다. 로컬 사본도 남기려면 `--output FILE`을 추가합니다.
+`runquill backup --upload --seal`은 같은 설정으로 백업 하나를 만들어 업로드합니다. 로컬 사본도 남기려면 `--output FILE`을 추가합니다. 추가하지 않으면 `RUNQUILL_BACKUP_DIR` 안의 비공개 디렉터리에, 설정하지 않았으면 큐 옆에 백업을 잠시 만들고 업로드 후 삭제합니다.
 
 암호화 예약 업로드와 복구 과정은 인증을 켠 로컬 SeaweedFS S3 서비스에서도 테스트했습니다. 사용 중인 S3 호환 서비스를 확인하려면 위의 S3 연결 변수를 테스트 버킷으로 설정하고 `RUNQUILL_TEST_BACKUP_S3=1 go test ./internal/app -run '^TestLiveS3BackupRestore$' -v`를 실행합니다. 이 스모크 테스트는 고유한 하위 접두사 아래에 합성 백업 하나를 쓰고, 이를 복구해 대기열을 확인한 뒤 그 테스트 객체만 삭제합니다. 해당 객체를 쓰고 읽고 삭제할 권한이 필요합니다.
 

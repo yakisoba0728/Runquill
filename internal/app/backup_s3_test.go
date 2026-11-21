@@ -87,6 +87,7 @@ type fakeS3 struct {
 	failPuts  int
 	echoAuth  bool
 	methods   []string
+	onPut     func()
 }
 
 func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -127,6 +128,9 @@ func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		sum := sha256.Sum256(body)
 		if hex.EncodeToString(sum[:]) != payload || r.ContentLength != int64(len(body)) {
 			f.t.Errorf("PUT payload hash or length mismatch")
+		}
+		if f.onPut != nil {
+			f.onPut()
 		}
 		if f.failPuts > 0 {
 			f.failPuts--
@@ -405,6 +409,58 @@ func TestS3ErrorsAndLogsNeverContainSecrets(t *testing.T) {
 	}
 	if !strings.Contains(everything, "SignatureDoesNotMatch") {
 		t.Fatalf("error lost the S3 code: %s", everything)
+	}
+}
+
+func TestUploadCommandStagesBesideBackupsOrQueue(t *testing.T) {
+	t.Setenv("RUNQUILL_OWNER", "owner")
+	t.Setenv("RUNQUILL_APP_ID", "123")
+	fake, _, env := newTestS3(t, true)
+	for name, value := range env {
+		t.Setenv(name, value)
+	}
+	t.Setenv("RUNQUILL_BACKUP_PASSPHRASE", testPassphrase)
+	dir, temp := t.TempDir(), t.TempDir()
+	t.Setenv("TMPDIR", temp)
+	live := filepath.Join(dir, "live.sqlite3")
+	q, err := openQueue(live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer q.close()
+	staging := func(parent string) []string {
+		matches, _ := filepath.Glob(filepath.Join(parent, ".runquill-upload-*"))
+		return matches
+	}
+	for _, tc := range []struct {
+		backups, parent string
+		fail            bool
+	}{
+		{filepath.Join(dir, "backups"), filepath.Join(dir, "backups"), false},
+		{filepath.Join(dir, "backups"), filepath.Join(dir, "backups"), true},
+		{"", dir, false},
+	} {
+		t.Setenv("RUNQUILL_BACKUP_DIR", tc.backups)
+		seen := false
+		fake.onPut = func() {
+			matches := staging(tc.parent)
+			if len(matches) != 1 {
+				t.Errorf("staging in %s: %v", tc.parent, matches)
+				return
+			}
+			info, err := os.Stat(matches[0])
+			if entries, _ := os.ReadDir(temp); err != nil || info.Mode().Perm() != 0700 || len(entries) != 0 {
+				t.Errorf("staging %v (%v), system temp %v", info.Mode(), err, entries)
+			}
+			seen = true
+		}
+		if tc.fail {
+			fake.failPuts = 1
+		}
+		err := runQueueBackupWithDB(t, live, "backup", "--upload", "--seal")
+		if (err != nil) != tc.fail || !seen || len(staging(tc.parent)) != 0 {
+			t.Fatalf("upload with RUNQUILL_BACKUP_DIR=%q: %v, staged %t, left %v", tc.backups, err, seen, staging(tc.parent))
+		}
 	}
 }
 
