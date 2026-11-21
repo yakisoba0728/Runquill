@@ -14,7 +14,7 @@ The panel's **Download queue backup** is never sealed.
 
 ## Scheduled backups
 
-The manager takes a backup one minute after start and then once per interval when these variables are set.
+The manager takes a backup once per interval when these variables are set. At start it waits until an interval has passed since the newest backup in `RUNQUILL_BACKUP_DIR`, or one minute when that time has passed or no backup exists, so repeated restarts do not push the kept backups out.
 
 | Variable | Default | Effect |
 | --- | --- | --- |

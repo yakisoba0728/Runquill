@@ -197,3 +197,42 @@ func TestBackupScheduleTiming(t *testing.T) {
 	<-done
 	runBackupSchedule(ctx, backupScheduleDeps{}) // disabled config returns at once
 }
+
+func TestBackupScheduleWaitsForIntervalAfterRestart(t *testing.T) {
+	dir := t.TempDir()
+	cfg, err := loadBackupScheduleConfig(scheduleEnv(dir, "RUNQUILL_BACKUP_INTERVAL", "6h"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	firstWait := func() time.Duration {
+		t.Helper()
+		waits := make(chan time.Duration, 1)
+		ctx, cancel := context.WithCancel(t.Context())
+		runBackupSchedule(ctx, backupScheduleDeps{config: cfg, now: func() time.Time { return clock }, firstDelay: time.Minute,
+			after: func(d time.Duration) <-chan time.Time { waits <- d; cancel(); return nil }})
+		return <-waits
+	}
+	if got := firstWait(); got != time.Minute {
+		t.Fatalf("no backup yet: first wait %s", got)
+	}
+	// Only the newest backup name counts.
+	os.WriteFile(filepath.Join(dir, "runquill-queue-manual.sqlite3"), []byte("x"), 0600)
+	os.WriteFile(filepath.Join(dir, backupObjectName(clock.Add(-30*time.Hour), false)), []byte("x"), 0600)
+	os.WriteFile(filepath.Join(dir, backupObjectName(clock.Add(-2*time.Hour), true)), []byte("x"), 0600)
+	if got := firstWait(); got != 4*time.Hour {
+		t.Fatalf("recent backup: first wait %s, want 4h", got)
+	}
+	clock = clock.Add(4*time.Hour - 10*time.Second)
+	if got := firstWait(); got != time.Minute {
+		t.Fatalf("backup almost due: first wait %s", got)
+	}
+	clock = clock.Add(24 * time.Hour)
+	if got := firstWait(); got != time.Minute {
+		t.Fatalf("overdue backup: first wait %s", got)
+	}
+	clock = time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC) // the clock moved back
+	if got := firstWait(); got != time.Minute {
+		t.Fatalf("backup from the future: first wait %s", got)
+	}
+}

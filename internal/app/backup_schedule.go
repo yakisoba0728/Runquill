@@ -155,14 +155,15 @@ func (d *backupScheduleDeps) defaults() {
 	}
 }
 
-// runBackupSchedule takes the first backup shortly after start and then one
-// per interval until ctx ends. Failures are logged and kept in the status.
+// runBackupSchedule takes the first backup once an interval has passed since
+// the newest local backup, or shortly after start, and then one per interval
+// until ctx ends. Failures are logged and kept in the status.
 func runBackupSchedule(ctx context.Context, deps backupScheduleDeps) {
 	if deps.config == nil {
 		return
 	}
 	deps.defaults()
-	wait := deps.firstDelay
+	wait := firstBackupWait(deps)
 	for {
 		select {
 		case <-ctx.Done():
@@ -172,6 +173,28 @@ func runBackupSchedule(ctx context.Context, deps backupScheduleDeps) {
 		runScheduledBackup(ctx, deps)
 		wait = deps.config.interval
 	}
+}
+
+// firstBackupWait keeps frequent restarts from replacing every good backup:
+// the count-based pruning would otherwise drop the oldest copies on each start.
+func firstBackupWait(deps backupScheduleDeps) time.Duration {
+	latest, ok := latestLocalBackupTime(deps.config.dir)
+	now := deps.now()
+	if !ok || latest.After(now) { // none yet, or the clock moved back
+		return deps.firstDelay
+	}
+	return max(latest.Add(deps.config.interval).Sub(now), deps.firstDelay)
+}
+
+// latestLocalBackupTime reads the time from the newest backup's name, which
+// copying or touching the file does not change.
+func latestLocalBackupTime(dir string) (time.Time, bool) {
+	names, err := listLocalBackups(dir)
+	if err != nil || len(names) == 0 {
+		return time.Time{}, false
+	}
+	at, err := time.Parse("20060102T150405Z", backupFileName.FindStringSubmatch(names[len(names)-1])[1])
+	return at, err == nil
 }
 
 func runScheduledBackup(ctx context.Context, deps backupScheduleDeps) {
