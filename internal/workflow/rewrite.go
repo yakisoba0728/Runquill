@@ -891,7 +891,8 @@ func rewriteWith(src []byte, pools map[string]string, resolveOS func([]string) s
 	for _, j := range d.jobs {
 		outcome := JobOutcome{Job: j.id, Line: j.line + 1}
 		var edits []byteEdit
-		_, matrix := j.prop("strategy")
+		// hasMatrix assumes a matrix when an anchor or tag hides the strategy, which only adds a harmless job index.
+		matrix := d.hasMatrix(j)
 		runsOn, hasRunsOn := j.prop("runs-on")
 		_, uses := j.prop("uses")
 		var parsed parsedRunsOn

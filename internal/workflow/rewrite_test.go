@@ -81,6 +81,30 @@ func TestRewriteForms(t *testing.T) {
 	}
 }
 
+// A strategy without a matrix runs one job, so its label needs no job index.
+func TestRewriteMatrixDetection(t *testing.T) {
+	const indexed = "${{ format('runquill-{0}-{1}-build-{2}', github.run_id, github.run_attempt, strategy.job-index) }}"
+	for _, test := range []struct{ name, strategy, runsOn string }{
+		{"flow map without matrix", "    strategy: {fail-fast: false}\n", routeBuild},
+		{"block without matrix", "    strategy:\n      fail-fast: false\n", routeBuild},
+		{"flow map with other keys", "    strategy: {fail-fast: false, max-parallel: 2}\n", routeBuild},
+		{"flow map matrix", "    strategy: {fail-fast: false, matrix: {go: [1, 2]}}\n", indexed},
+		{"block matrix", "    strategy:\n      fail-fast: false\n      matrix:\n        go: [1, 2]\n", indexed},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			src := "on: push\npermissions: {}\njobs:\n  build:\n" + test.strategy + "    runs-on: ubuntu-latest\n    timeout-minutes: 10\n"
+			res := rewriteForTest(t, src)
+			want := "on: push\npermissions: {}\njobs:\n  build:\n" + test.strategy + "    runs-on: " + test.runsOn + "\n    timeout-minutes: 10\n"
+			if res.Refused != "" || string(res.Output) != want {
+				t.Fatalf("refused %q, got\n%q\nwant\n%q", res.Refused, res.Output, want)
+			}
+			if findings := Check("ci.yml", res.Output, CheckOptions{}); len(findings) != 0 {
+				t.Fatalf("the rewritten file has findings: %+v", findings)
+			}
+		})
+	}
+}
+
 func TestRewriteRefusals(t *testing.T) {
 	for _, test := range []struct{ name, in, code string }{
 		{"expression", "jobs:\n  build:\n    runs-on: ${{ matrix.os }}\n", outcomeExpression},
