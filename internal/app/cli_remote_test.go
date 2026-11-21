@@ -204,6 +204,14 @@ func TestRemoteCommandValidatesArguments(t *testing.T) {
 	if _, code, stdout, _ := runRemote(t, "hosts", "list", "-h"); code != 0 || stdout != "" {
 		t.Errorf("help: code %d", code)
 	}
+	// Help for a group is asked for, so it goes to standard output and succeeds.
+	for _, args := range [][]string{{"hosts", "--help"}, {"jobs", "-h"}, {"fleet", "help"}, {"audit", "-help"}} {
+		handled, code, stdout, stderr := runRemote(t, args...)
+		if !handled || code != 0 || stderr != "" || !strings.HasPrefix(stdout, "Usage:") ||
+			!strings.Contains(stdout, "runquill fleet status") || !strings.Contains(stdout, "runquill usage") {
+			t.Errorf("%v: code %d, stdout %q, stderr %q", args, code, stdout, stderr)
+		}
+	}
 }
 
 // Tokens cannot read the audit log, so the CLI refuses before sending anything

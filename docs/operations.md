@@ -109,7 +109,7 @@ Operators and administrators can read or follow the container output of a runner
 
 ## Remote CLI
 
-Run `runquill jobs list`, `runners list`, `hosts list`, `pools list`, `hosts cordon`, `hosts uncordon`, `jobs cancel` and `jobs retry` from any machine against the panel API. Set `RUNQUILL_URL` to the panel origin and pass a token through `RUNQUILL_TOKEN` or `--token-file`, and add `--json` for scripts. Each command needs the matching token scope, and `audit tail` always needs the web panel because no token can read the audit log. [Remote CLI guide](remote-cli.md)
+Run `runquill fleet status`, `jobs list`, `jobs show`, `runners list`, `hosts list`, `pools list`, `usage`, `elastic`, `hosts cordon`, `hosts uncordon`, `jobs cancel` and `jobs retry` from any machine against the panel API. Set `RUNQUILL_URL` to the panel origin and pass a token through `RUNQUILL_TOKEN` or `--token-file`, and add `--json` for scripts. Each command needs the matching token scope, and `audit tail` always needs the web panel because no token can read the audit log. [Remote CLI guide](remote-cli.md)
 
 ## MCP for coding agents
 

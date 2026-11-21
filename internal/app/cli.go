@@ -21,7 +21,7 @@ func Main(buildVersion, registryImage string) {
 	version, releaseImage = buildVersion, registryImage
 	showVersion := flag.Bool("version", false, "print the Runquill version")
 	flag.Usage = func() {
-		fmt.Fprintln(flag.CommandLine.Output(), "Usage: runquill [--version] | runquill setup | runquill wizard | runquill workflow {init|check [--json] [--strict] [PATH...]} | runquill doctor | runquill diagnose OWNER/REPO | runquill status [--json] | runquill gc (--dry-run | --remove-orphans [--grace DURATION] | --unused [--dry-run] [--older-than DURATION]) | runquill host {cordon|uncordon} HOST | runquill panel --demo | runquill worker | runquill backup (--output FILE [--seal] | --upload) [--passphrase-file FILE] | runquill restore (--from FILE | --from-s3 KEY | --activate) [--passphrase-file FILE] | runquill {jobs|runners|pools|hosts|audit} ... --help | runquill mcp")
+		fmt.Fprintln(flag.CommandLine.Output(), "Usage: runquill [--version] | runquill setup | runquill wizard | runquill workflow {init|check [--json] [--strict] [PATH...]} | runquill doctor [--repo OWNER/REPO] [--json] | runquill diagnose OWNER/REPO | runquill status [--json] | runquill gc (--dry-run | --remove-orphans [--grace DURATION] | --unused [--dry-run] [--older-than DURATION]) | runquill host {cordon|uncordon} HOST | runquill panel --demo | runquill worker | runquill backup (--output FILE [--seal] | --upload) [--passphrase-file FILE] | runquill restore (--from FILE | --from-s3 KEY | --activate) [--passphrase-file FILE] | runquill {fleet|jobs|runners|pools|hosts|audit} ... --help | runquill usage [--group day|repository|pool|host] [--from DAY] [--to DAY] [--json] | runquill elastic [--json] | runquill mcp")
 		flag.PrintDefaults()
 	}
 	flag.Parse()

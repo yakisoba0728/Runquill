@@ -133,6 +133,11 @@ func remoteCommand(args []string, stdout, stderr io.Writer) (handled bool, code 
 		name, rest = name+" "+rest[0], rest[1:]
 	}
 	spec, ok := remoteCommands[name]
+	if !ok && len(args) == 2 && slices.Contains([]string{"-h", "-help", "--help", "help"}, args[1]) {
+		// Asked-for help is a normal answer, unlike usage after a mistake.
+		fmt.Fprintln(stdout, remoteUsage)
+		return true, 0
+	}
 	if !ok {
 		fmt.Fprintln(stderr, remoteUsage)
 		return true, 2
