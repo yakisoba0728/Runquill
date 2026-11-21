@@ -50,6 +50,10 @@ func doctor(ctx context.Context, out io.Writer, repo string, asJSON bool) error 
 		report("saved operation settings", settingsErr)
 	} else if saved != nil {
 		report("saved operation settings", nil)
+		for _, change := range saved.adjusted {
+			// The manager starts with these changes; saving Settings in the panel records them.
+			report("saved operation settings fitted to this deployment: "+change, nil)
+		}
 		switch fleet := saved.runners.runtime.(type) {
 		case *dockerFleet:
 			checkConfiguredDockerFleet(ctx, fleet, report)

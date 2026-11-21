@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
+	"log/slog"
 	"maps"
 	"slices"
 	"strings"
@@ -29,6 +29,8 @@ type operationState struct {
 	runners    runnerConfiguration
 	interval   time.Duration
 	pollEdited chan struct{}
+	// adjusted lists how loading fitted saved settings to this deployment.
+	adjusted []string
 }
 
 type operations struct {
@@ -55,14 +57,108 @@ func loadOperations(ctx context.Context, db *sql.DB, cfg config, base runnerConf
 	}
 	state := &operationState{policy: defaults, runners: base, interval: cfg.pollInterval}
 	if set {
-		state, err = ops.resolve(policy)
-		if err != nil {
-			return nil, fmt.Errorf("load saved operation settings: %w", err)
+		// A changed environment or a restored backup must not stop the manager. The saved
+		// row stays as it is: read-only commands load it too, and the panel saves a fix.
+		policy, adjusted := ops.reconcileSaved(policy)
+		if next, err := ops.resolve(policy); err == nil {
+			state = next
+		} else {
+			adjusted = []string{"ignored all saved settings and used the deployment settings: " + err.Error()}
+			state.policy.Revision = policy.Revision
+		}
+		state.adjusted = adjusted
+		for _, change := range adjusted {
+			slog.Warn("saved operation settings do not match this deployment; save Settings in the panel to update them", "change", change)
 		}
 	}
 	state.pollEdited = make(chan struct{})
 	ops.current.Store(state)
 	return ops, nil
+}
+
+// reconcileSaved fits saved settings to the deployment's Docker hosts. Outbound
+// agent hosts always follow RUNQUILL_DOCKER_HOSTS, and limits or pools that name a
+// host the fleet no longer has lose that reference. It returns what it changed.
+func (ops *operations) reconcileSaved(policy operationPolicy) (operationPolicy, []string) {
+	base, ok := ops.base.runtime.(*dockerFleet)
+	if !ok {
+		return policy, nil
+	}
+	var changes []string
+	agents := make(map[string]string) // agent host -> deployment pool
+	for _, host := range base.hosts {
+		if host.agentName() != "" {
+			agents[host.label()] = host.pool
+		}
+	}
+	hosts := make([]string, 0, len(policy.Hosts)+len(agents))
+	for _, host := range policy.Hosts {
+		host = strings.TrimSpace(host)
+		if _, deployed := agents[host]; strings.HasPrefix(host, workerHostPrefix) && !deployed {
+			changes = append(changes, "removed "+host+" from docker_hosts: it is not in RUNQUILL_DOCKER_HOSTS")
+			continue
+		}
+		hosts = append(hosts, host)
+	}
+	var added []string
+	for _, host := range base.hosts {
+		if label := host.label(); host.agentName() != "" && !slices.Contains(hosts, label) {
+			hosts, added = append(hosts, label), append(added, label)
+			changes = append(changes, "added "+label+" to docker_hosts from RUNQUILL_DOCKER_HOSTS")
+		}
+	}
+	policy.Hosts = hosts
+	for _, name := range slices.Sorted(maps.Keys(policy.HostLimits)) {
+		if !slices.Contains(hosts, name) {
+			delete(policy.HostLimits, name)
+			changes = append(changes, "removed host_limits["+name+"]: the worker is not configured")
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(policy.Pools)) {
+		pool := policy.Pools[name]
+		pool.Hosts = slices.DeleteFunc(pool.Hosts, func(host string) bool {
+			if slices.Contains(hosts, host) {
+				return false
+			}
+			changes = append(changes, "removed "+host+" from worker_pools["+name+"]: the worker is not configured")
+			return true
+		})
+		if len(pool.Hosts) == 0 && name != defaultWorkerPool {
+			// Named pools need a worker; their jobs wait until an administrator fixes the pool.
+			delete(policy.Pools, name)
+			changes = append(changes, "removed worker_pools["+name+"]: none of its workers are configured")
+			continue
+		}
+		policy.Pools[name] = pool
+	}
+	// An agent host new to the saved settings keeps the limit and pool the deployment gives it,
+	// so a saved pool list cannot widen which repositories reach it.
+	for _, host := range added {
+		if limit, ok := ops.base.hostLimits[host]; ok {
+			if _, set := policy.HostLimits[host]; !set {
+				if policy.HostLimits == nil {
+					policy.HostLimits = make(map[string]int)
+				}
+				policy.HostLimits[host] = limit
+			}
+		}
+		name := agents[host]
+		if name == "" || name == defaultWorkerPool || slices.ContainsFunc(slices.Collect(maps.Values(policy.Pools)),
+			func(pool workerPool) bool { return slices.Contains(pool.Hosts, host) }) {
+			continue
+		}
+		pool, ok := policy.Pools[name]
+		if !ok {
+			pool = ops.base.pools[name]
+			pool.Hosts, pool.Repositories, pool.Images = nil, slices.Clone(pool.Repositories), slices.Clone(pool.Images)
+		}
+		pool.Hosts = append(pool.Hosts, host)
+		if policy.Pools == nil {
+			policy.Pools = make(workerPools)
+		}
+		policy.Pools[name] = pool
+	}
+	return policy, changes
 }
 
 func readOperationPolicy(ctx context.Context, db *sql.DB, defaults operationPolicy) (operationPolicy, bool, error) {
