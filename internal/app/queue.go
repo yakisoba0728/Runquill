@@ -205,17 +205,23 @@ func (q *queue) record(ctx context.Context, j job, now time.Time) (bool, error) 
 	if j.phase == queued && j.discoverySource != "" {
 		discoveredAt, source = now.Unix(), j.discoverySource
 	}
+	// A queued job seen again from another installation, after the App was reinstalled,
+	// moves to it until a runner is leased; nothing else changes, so its age is kept.
 	result, err := q.ExecContext(ctx, `
         INSERT INTO jobs (job_id, repository, repository_id, installation_id, route, phase, changed_at,
                           github_created_at, discovered_at, discovery_source, github_started_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, nullif(?, 0), nullif(?, 0), nullif(?, ''), nullif(?, 0))
-        ON CONFLICT (job_id) DO UPDATE SET phase = excluded.phase,
-            changed_at = excluded.changed_at, repository = excluded.repository,
+        ON CONFLICT (job_id) DO UPDATE SET
+            installation_id = CASE WHEN excluded.phase = jobs.phase THEN excluded.installation_id ELSE jobs.installation_id END,
+            phase = excluded.phase,
+            changed_at = CASE WHEN excluded.phase > jobs.phase THEN excluded.changed_at ELSE jobs.changed_at END,
+            repository = CASE WHEN excluded.phase > jobs.phase THEN excluded.repository ELSE jobs.repository END,
             github_created_at = coalesce(jobs.github_created_at, excluded.github_created_at),
             github_started_at = coalesce(jobs.github_started_at, excluded.github_started_at)
-        WHERE excluded.phase > jobs.phase`,
+        WHERE excluded.phase > jobs.phase OR excluded.phase = ? AND jobs.phase = ? AND jobs.runner_name IS NULL
+            AND excluded.installation_id <> jobs.installation_id AND excluded.repository_id = jobs.repository_id`,
 		j.id, j.repository, j.repositoryID, j.installationID, j.route, j.phase, now.Unix(),
-		j.githubCreatedAt, discoveredAt, source, j.githubStartedAt)
+		j.githubCreatedAt, discoveredAt, source, j.githubStartedAt, queued, queued)
 	if err != nil {
 		return false, err
 	}
