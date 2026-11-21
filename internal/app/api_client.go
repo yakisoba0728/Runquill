@@ -57,7 +57,7 @@ func newAPIClient(rawURL, token string) (*apiClient, error) {
 	}
 	base.Path, base.RawPath = "", ""
 	if !apiTokenFormat.MatchString(token) {
-		return nil, errors.New("the API token is not a Runquill token (rqk_...); create one in the panel under API tokens")
+		return nil, errors.New("the API token is not a Runquill token (rqk_...); create one in the panel under Team & tokens")
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.ResponseHeaderTimeout = apiClientTimeout
