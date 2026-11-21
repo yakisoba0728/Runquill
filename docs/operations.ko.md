@@ -109,7 +109,7 @@ Operator와 Admin은 **로그** 화면에서 작업을 맡은 러너의 컨테�
 
 ## 원격 CLI
 
-다른 컴퓨터에서 패널 API로 `runquill jobs list`, `runners list`, `hosts list`, `pools list`, `hosts cordon`, `hosts uncordon`, `jobs cancel`, `jobs retry`를 실행할 수 있습니다. `RUNQUILL_URL`에 패널 주소를 지정하고 토큰은 `RUNQUILL_TOKEN`이나 `--token-file`로 전달합니다. 스크립트에서는 `--json`을 붙입니다. 명령마다 맞는 토큰 범위가 필요하며, 감사 기록은 어떤 토큰으로도 읽을 수 없으므로 `audit tail`은 항상 웹 패널을 안내합니다. [원격 CLI 가이드](remote-cli.md)
+다른 컴퓨터에서 패널 API로 `runquill fleet status`, `jobs list`, `jobs show`, `runners list`, `hosts list`, `pools list`, `usage`, `elastic`, `hosts cordon`, `hosts uncordon`, `jobs cancel`, `jobs retry`를 실행할 수 있습니다. `RUNQUILL_URL`에 패널 주소를 지정하고 토큰은 `RUNQUILL_TOKEN`이나 `--token-file`로 전달합니다. 스크립트에서는 `--json`을 붙입니다. 명령마다 맞는 토큰 범위가 필요하며, 감사 기록은 어떤 토큰으로도 읽을 수 없으므로 `audit tail`은 항상 웹 패널을 안내합니다. [원격 CLI 가이드](remote-cli.md)
 
 ## 코딩 에이전트용 MCP
 
