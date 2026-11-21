@@ -292,7 +292,8 @@ func (a *panelAccess) retryJob(w http.ResponseWriter, r *http.Request, user pane
 		if !waiting {
 			return errPanelJobNotWaiting
 		}
-		result, err := tx.ExecContext(ctx, `UPDATE jobs SET retry_at = 0
+		// An operator retry follows a fix, so a failure after it waits only the first retry delay.
+		result, err := tx.ExecContext(ctx, `UPDATE jobs SET retry_at = 0, launch_failures = 0
             WHERE job_id = ? AND phase = ? AND runner_name IS NULL AND retry_at > ?`, id, queued, time.Now().Unix())
 		err = panelJobChanged(result, err)
 		if errors.Is(err, errPanelJobNotWaiting) {

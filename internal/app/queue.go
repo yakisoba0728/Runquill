@@ -32,6 +32,7 @@ type job struct {
 	runnerID                         int64
 	retryAt                          int64
 	retryReason                      string
+	launchFailures                   int
 	githubCreatedAt, discoveredAt    int64
 	provisionedAt, githubStartedAt   int64
 	jitRequestedMS, jitRegisteredMS  int64
@@ -137,6 +138,7 @@ func (q *queue) migrate() error {
 		{"jit_requested_ms", "INTEGER"},
 		{"jit_registered_ms", "INTEGER"},
 		{"runner_launch_ms", "INTEGER"},
+		{"launch_failures", "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		present, err := hasJobColumn(context.Background(), q.DB, column.name)
 		if err != nil {
@@ -233,7 +235,7 @@ func (q *queue) jobs(ctx context.Context, condition string, args ...any) ([]job,
 	rows, err := q.QueryContext(ctx, `
         SELECT job_id, repository, repository_id, installation_id, route, phase, changed_at,
                coalesce(runner_name, ''), coalesce(runner_host, ''), coalesce(runner_id, 0),
-               coalesce(launched_at, 0), retry_at, retry_reason, coalesce(failure, '')
+               coalesce(launched_at, 0), retry_at, retry_reason, coalesce(failure, ''), launch_failures
         FROM jobs `+condition, args...)
 	if err != nil {
 		return nil, err
@@ -244,7 +246,7 @@ func (q *queue) jobs(ctx context.Context, condition string, args ...any) ([]job,
 		var j job
 		err := rows.Scan(&j.id, &j.repository, &j.repositoryID, &j.installationID, &j.route, &j.phase,
 			&j.changedAt, &j.runnerName, &j.runnerHost, &j.runnerID, &j.launchedAt, &j.retryAt,
-			&j.retryReason, &j.failure)
+			&j.retryReason, &j.failure, &j.launchFailures)
 		if err != nil {
 			return nil, err
 		}
