@@ -452,9 +452,11 @@ var mcpTools = []mcpTool{
 		Description: "List runner hosts from the latest snapshot with status, slots and the runners on each.",
 		InputSchema: mcpObject(nil, map[string]*mcpSchema{})},
 	{Name: "usage_summary", Title: "Usage summary", Annotations: mcpReadOnly,
-		Description: "Total finished jobs, failures, runner time and queue wait over the last 24 hours or 7 days.",
+		Description: "Total finished jobs, failures, runner time and queue wait over the last 24 hours or 7 days. " +
+			"With group, also returns series: the same statistics per UTC day, repository, pool or host over the whole UTC days from and to that contain the window.",
 		InputSchema: mcpObject(nil, map[string]*mcpSchema{
 			"window": {Type: "string", Description: "The rolling window.", Enum: []string{"24h", "7d"}, Default: "24h"},
+			"group":  {Type: "string", Description: "Also break the statistics down by this key, busiest first (days in date order).", Enum: []string{"day", "repository", "pool", "host"}},
 		})},
 	{Name: "elastic_decisions", Title: "Elastic decisions", Annotations: mcpReadOnly,
 		Description: "Recent CPU and memory resize decisions of the elastic loop, newest first.",
@@ -771,14 +773,41 @@ func (s *mcpServer) usageSummary(ctx context.Context, args mcpArgs) (any, error)
 	if span == 0 {
 		return nil, mcpToolError("window must be 24h or 7d.")
 	}
-	totals, err := usageSummary(ctx, &queue{DB: s.db}, s.now(), span)
+	group, grouped, err := args.text("group")
+	if err != nil {
+		return nil, err
+	}
+	now := s.now()
+	totals, err := usageSummary(ctx, &queue{DB: s.db}, now, span)
+	if err != nil {
+		return nil, err
+	}
+	if !grouped {
+		return struct {
+			Window string `json:"window"`
+			usageTotals
+		}{window, totals}, nil
+	}
+	// The series reads the panel's daily statistics, as GET /api/usage does, so
+	// it covers whole UTC days rather than the rolling window.
+	query, err := parseUsageQuery(url.Values{"group": {group}, "from": {now.Add(-span).UTC().Format(time.DateOnly)},
+		"to": {now.UTC().Format(time.DateOnly)}}, now)
+	if err != nil {
+		return nil, mcpToolError("group must be day, repository, pool or host.")
+	}
+	series, err := readUsage(ctx, s.db, query, s.panel.usagePools())
 	if err != nil {
 		return nil, err
 	}
 	return struct {
 		Window string `json:"window"`
 		usageTotals
-	}{window, totals}, nil
+		Group     string       `json:"group"`
+		From      string       `json:"from"`
+		To        string       `json:"to"`
+		Series    []usageGroup `json:"series"`
+		Truncated bool         `json:"truncated,omitempty"`
+	}{window, totals, series.Group, series.From, series.To, series.Series, series.Truncated}, nil
 }
 
 func (s *mcpServer) elasticDecisions(_ context.Context, args mcpArgs) (any, error) {
