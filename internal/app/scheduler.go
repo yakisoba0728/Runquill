@@ -120,7 +120,7 @@ func (s *scheduler) spawn(slots chan struct{}, wg *sync.WaitGroup, f func()) {
 }
 
 func (s *scheduler) tickFleet(ctx context.Context, now time.Time, state *operationState) error {
-	snapshots, err := s.runtime.snapshot(ctx)
+	snapshots, err := s.runtime.snapshot(reapingStuckRunners(ctx))
 	if err != nil {
 		if s.panel != nil && ctx.Err() == nil {
 			s.panel.capture(ctx, s.queue, nil, 0, s.limit, s.pools, err)

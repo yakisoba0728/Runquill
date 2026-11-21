@@ -148,7 +148,9 @@ func (k *kubeRunners) snapshot(ctx context.Context) ([]dockerHostSnapshot, error
 	host.Containers = make(map[string]string, len(list.Items))
 	host.RunnerDiagnostics = make(map[string]jobDiagnostic)
 	mountCandidates := make(map[string]string)
-	k.forceDeleteStuck(ctx, list.Items, time.Now())
+	if ctx.Value(reapStuckKey{}) != nil {
+		k.forceDeleteStuck(ctx, list.Items, time.Now())
+	}
 	for _, pod := range list.Items {
 		host.Containers[pod.Name] = kubePodState(pod)
 		detail := kubePodDiagnostic(pod)
@@ -310,6 +312,14 @@ func (k *kubeRunners) removeOn(ctx context.Context, host, name string) error {
 		return fmt.Errorf("Pod %s is still terminating: %w", name, errRunnerRemovalPending)
 	}
 	return err
+}
+
+type reapStuckKey struct{}
+
+// reapingStuckRunners marks the scheduler's snapshot, the only one that force deletes.
+// The snapshots of status, doctor and gc --dry-run must change nothing.
+func reapingStuckRunners(ctx context.Context) context.Context {
+	return context.WithValue(ctx, reapStuckKey{}, true)
 }
 
 // stuckPods returns the Runquill Pods that have been Terminating for at least kubeForceDeleteAfter.

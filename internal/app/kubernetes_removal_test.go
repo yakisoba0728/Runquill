@@ -170,7 +170,7 @@ func TestKubernetesTerminatingPodReleasesLeaseButKeepsSlot(t *testing.T) {
 	}
 
 	fake.terminatingSince(runner, time.Now().Add(-kubeForceDeleteAfter-time.Second))
-	hosts, err := runtime.snapshot(t.Context())
+	hosts, err := runtime.snapshot(reapingStuckRunners(t.Context()))
 	if err != nil || hosts[0].Err != nil {
 		t.Fatalf("snapshot: %+v, %v", hosts, err)
 	}
@@ -193,7 +193,14 @@ func TestKubernetesForceDeletesStuckPodsAfterRestart(t *testing.T) {
 	// A fresh runtime has not removed any of these Pods, as after a manager restart.
 	fake, runtime := newStuckPodAPI(t, stuckRunnerPod("runquill-1-0123456789ab", &old), stuckRunnerPod("runquill-2-0123456789ab", &recent),
 		stuckRunnerPod("runquill-3-0123456789ab", nil), foreign, unlabelled)
+	// status, doctor and gc --dry-run take a plain snapshot, which must not delete anything.
 	if _, err := runtime.snapshot(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if forced := fake.forcedDeletes(); len(forced) != 0 {
+		t.Fatalf("a read-only snapshot force deleted %v", forced)
+	}
+	if _, err := runtime.snapshot(reapingStuckRunners(t.Context())); err != nil {
 		t.Fatal(err)
 	}
 	if forced := fake.forcedDeletes(); len(forced) != 1 || forced[0] != "runquill-1-0123456789ab" {
@@ -212,7 +219,7 @@ func TestKubernetesRemoveReportsPodThatOutlivesItsGracePeriod(t *testing.T) {
 		t.Fatalf("removeOn = %v, want a pending removal", err)
 	}
 	fake.terminatingSince(runner, time.Now().Add(-kubeForceDeleteAfter))
-	if _, err := runtime.snapshot(t.Context()); err != nil {
+	if _, err := runtime.snapshot(reapingStuckRunners(t.Context())); err != nil {
 		t.Fatal(err)
 	}
 	if forced := fake.forcedDeletes(); len(forced) != 1 {
