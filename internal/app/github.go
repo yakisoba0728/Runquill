@@ -191,6 +191,17 @@ func (e *githubError) Error() string {
 	return fmt.Sprintf("GitHub %s %s returned HTTP %d", e.method, e.path, e.status)
 }
 
+// transientGitHubError reports a failure that says nothing about the request itself:
+// a network error or timeout, a GitHub server error, or a rate limit.
+func transientGitHubError(err error) bool {
+	var apiErr *githubError
+	if errors.As(err, &apiErr) {
+		return apiErr.status >= http.StatusInternalServerError || apiErr.status == http.StatusTooManyRequests || !apiErr.retryAt.IsZero()
+	}
+	var urlErr *url.Error
+	return errors.As(err, &urlErr) || errors.Is(err, context.DeadlineExceeded)
+}
+
 func githubNotFound(err error) bool {
 	var apiErr *githubError
 	return errors.As(err, &apiErr) && apiErr.status == http.StatusNotFound
