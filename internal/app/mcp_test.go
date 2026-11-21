@@ -318,7 +318,7 @@ func TestMCPToolsReadPanelData(t *testing.T) {
 		}
 	}
 
-	var status mcpFleetStatus
+	var status fleetSummary
 	f.toolOK("fleet_status", nil, &status)
 	if status.SampledAt != nil || len(status.Problems) != 1 || status.Problems[0].Kind != "snapshot" {
 		t.Fatalf("status before a snapshot: %+v", status)

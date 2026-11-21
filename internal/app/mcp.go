@@ -422,7 +422,7 @@ var mcpReadOnly = map[string]any{"readOnlyHint": true, "destructiveHint": false,
 const (
 	mcpDefaultJobs      = 20
 	mcpDefaultDecisions = 20
-	mcpMaxProblems      = 50
+	fleetMaxProblems    = 50
 	mcpMaxHosts         = 200
 	mcpMaxHostRunners   = 100
 	mcpMaxSince         = 7 * 24 * time.Hour
@@ -512,14 +512,14 @@ func (s *mcpServer) snapshot() panelSnapshot {
 	return s.panel.snapshot
 }
 
-type mcpProblem struct {
+type fleetProblem struct {
 	Kind    string `json:"kind"`
 	Subject string `json:"subject,omitempty"`
 	Code    string `json:"code,omitempty"`
 	Message string `json:"message"`
 }
 
-type mcpHostTotals struct {
+type fleetHostTotals struct {
 	Total         int `json:"total"`
 	Up            int `json:"up"`
 	Offline       int `json:"offline"`
@@ -530,45 +530,50 @@ type mcpHostTotals struct {
 	ReservedSlots int `json:"reserved_slots"`
 }
 
-type mcpFleetStatus struct {
-	SampledAt         *time.Time     `json:"sampled_at"`
-	Backend           string         `json:"backend,omitempty"`
-	RepositoryScope   string         `json:"repository_scope,omitempty"`
-	QueueDepth        int            `json:"queue_depth"`
-	Retrying          int            `json:"retrying"`
-	Running           int            `json:"running"`
-	SlotLimit         int            `json:"slot_limit"`
-	Runners           *statusRunners `json:"runners,omitempty"`
-	Hosts             mcpHostTotals  `json:"hosts"`
-	LastWebhook       *time.Time     `json:"last_webhook,omitempty"`
-	LastPoll          *time.Time     `json:"last_poll,omitempty"`
-	Problems          []mcpProblem   `json:"problems"`
-	ProblemsTruncated bool           `json:"problems_truncated,omitempty"`
+// fleetSummary is the fleet at a glance, as MCP fleet_status and
+// runquill fleet status report it.
+type fleetSummary struct {
+	SampledAt         *time.Time      `json:"sampled_at"`
+	Backend           string          `json:"backend,omitempty"`
+	RepositoryScope   string          `json:"repository_scope,omitempty"`
+	QueueDepth        int             `json:"queue_depth"`
+	Retrying          int             `json:"retrying"`
+	Running           int             `json:"running"`
+	SlotLimit         int             `json:"slot_limit"`
+	Runners           *statusRunners  `json:"runners,omitempty"`
+	Hosts             fleetHostTotals `json:"hosts"`
+	LastWebhook       *time.Time      `json:"last_webhook,omitempty"`
+	LastPoll          *time.Time      `json:"last_poll,omitempty"`
+	Problems          []fleetProblem  `json:"problems"`
+	ProblemsTruncated bool            `json:"problems_truncated,omitempty"`
 }
 
-// fleetStatus reads the snapshot /snapshot serves; jobs that cannot make
-// progress on their own become problems.
 func (s *mcpServer) fleetStatus(_ context.Context, _ mcpArgs) (any, error) {
-	snapshot := s.snapshot()
-	out := mcpFleetStatus{SampledAt: snapshot.SampledAt, LastWebhook: snapshot.LastWebhook, LastPoll: snapshot.LastPoll, Problems: []mcpProblem{}}
-	add := func(p mcpProblem) {
-		if len(out.Problems) == mcpMaxProblems {
+	return summarizeFleet(s.snapshot()), nil
+}
+
+// summarizeFleet reads the snapshot /snapshot serves; jobs that cannot make
+// progress on their own become problems.
+func summarizeFleet(snapshot panelSnapshot) fleetSummary {
+	out := fleetSummary{SampledAt: snapshot.SampledAt, LastWebhook: snapshot.LastWebhook, LastPoll: snapshot.LastPoll, Problems: []fleetProblem{}}
+	add := func(p fleetProblem) {
+		if len(out.Problems) == fleetMaxProblems {
 			out.ProblemsTruncated = true
 			return
 		}
 		out.Problems = append(out.Problems, p)
 	}
 	if snapshot.PollFailed {
-		add(mcpProblem{Kind: "github", Message: "The last GitHub poll failed."})
+		add(fleetProblem{Kind: "github", Message: "The last GitHub poll failed."})
 	}
 	fleet := snapshot.Fleet
 	if fleet == nil {
-		add(mcpProblem{Kind: "snapshot", Message: "The manager has not sampled the fleet yet."})
-		return out, nil
+		add(fleetProblem{Kind: "snapshot", Message: "The manager has not sampled the fleet yet."})
+		return out
 	}
 	out.Backend, out.RepositoryScope, out.SlotLimit, out.Runners = fleet.Backend, fleet.RepositoryScope, fleet.SlotLimit, fleet.Runners
 	if fleet.DockerError != "" {
-		add(mcpProblem{Kind: "fleet", Message: fleet.DockerError})
+		add(fleetProblem{Kind: "fleet", Message: fleet.DockerError})
 	}
 	for _, host := range fleet.Hosts {
 		out.Hosts.Total++
@@ -587,7 +592,7 @@ func (s *mcpServer) fleetStatus(_ context.Context, _ mcpArgs) (any, error) {
 			out.Hosts.Unavailable++
 		}
 		if host.Status != "UP" {
-			add(mcpProblem{Kind: "host", Subject: host.Name, Code: strings.ToLower(host.Status), Message: host.Error})
+			add(fleetProblem{Kind: "host", Subject: host.Name, Code: strings.ToLower(host.Status), Message: host.Error})
 		}
 	}
 	for _, j := range fleet.Jobs {
@@ -603,12 +608,12 @@ func (s *mcpServer) fleetStatus(_ context.Context, _ mcpArgs) (any, error) {
 		switch j.Status {
 		case "WAITING", "RETRY", "OFFLINE", "UNKNOWN", "PAUSED":
 			if j.Diagnostic != nil {
-				add(mcpProblem{Kind: "job", Subject: strconv.FormatInt(j.ID, 10) + " " + j.Repository,
+				add(fleetProblem{Kind: "job", Subject: strconv.FormatInt(j.ID, 10) + " " + j.Repository,
 					Code: j.Diagnostic.Code, Message: j.Diagnostic.Message})
 			}
 		}
 	}
-	return out, nil
+	return out
 }
 
 type mcpHost struct {

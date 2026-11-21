@@ -37,6 +37,7 @@ var remoteTokenCanCall = panelTokenCanCall
 var remoteNow = time.Now
 
 const remoteUsage = `Usage:
+  runquill fleet status [--check] [--json]
   runquill jobs list [--repo OWNER/NAME] [--outcome waiting|running|finished|failed] [--since 24h] [--limit N] [--json]
   runquill jobs show JOB_ID [--json]
   runquill jobs cancel JOB_ID [--json]
@@ -60,7 +61,7 @@ type remoteCommandSpec struct {
 
 type remoteOptions struct {
 	url, tokenFile       string
-	json                 bool
+	json, check          bool
 	repo, outcome, since string
 	limit                int
 	sinceTime            time.Time
@@ -68,7 +69,7 @@ type remoteOptions struct {
 	stderr               io.Writer
 }
 
-var remoteGroups = []string{"jobs", "runners", "pools", "hosts", "audit"}
+var remoteGroups = []string{"fleet", "jobs", "runners", "pools", "hosts", "audit"}
 
 var remoteCommands = map[string]remoteCommandSpec{
 	"jobs list": {permission: "fleet:read", define: func(f *flag.FlagSet, o *remoteOptions) {
@@ -84,6 +85,9 @@ var remoteCommands = map[string]remoteCommandSpec{
 	"jobs retry": {permission: "jobs:write", args: []string{"JOB_ID"}, validate: validateJobID, run: func(ctx context.Context, c *apiClient, o *remoteOptions, _ []string, out io.Writer) error {
 		return runJobChange(ctx, c, o, out, "retry", "Cleared the retry delay of job %d.\n")
 	}},
+	"fleet status": {permission: "fleet:read", define: func(f *flag.FlagSet, o *remoteOptions) {
+		f.BoolVar(&o.check, "check", false, "exit with status 1 when the fleet reports a problem")
+	}, run: runFleetStatus},
 	"runners list": {permission: "fleet:read", run: runRunnersList},
 	"pools list":   {permission: "fleet:read", run: runPoolsList},
 	"hosts list":   {permission: "fleet:read", run: runHostsList},
@@ -377,6 +381,67 @@ func runJobChange(ctx context.Context, c *apiClient, o *remoteOptions, out io.Wr
 	}
 	_, err := fmt.Fprintf(out, done, o.jobID)
 	return err
+}
+
+// runFleetStatus prints the summary MCP fleet_status returns. With --check, a
+// reported problem fails the command after the summary is printed.
+func runFleetStatus(ctx context.Context, c *apiClient, o *remoteOptions, _ []string, out io.Writer) error {
+	snapshot, _, err := c.snapshot(ctx)
+	if err != nil {
+		return err
+	}
+	summary := summarizeFleet(snapshot)
+	if o.json {
+		err = json.NewEncoder(out).Encode(summary)
+	} else {
+		err = writeFleetSummary(out, summary)
+	}
+	if err != nil || !o.check || len(summary.Problems) == 0 {
+		return err
+	}
+	if len(summary.Problems) == 1 {
+		return errors.New("1 problem needs attention")
+	}
+	return fmt.Errorf("%d problems need attention", len(summary.Problems))
+}
+
+func writeFleetSummary(out io.Writer, s fleetSummary) error {
+	queued := strconv.Itoa(s.QueueDepth)
+	if s.Retrying > 0 {
+		queued += fmt.Sprintf(" (%d retrying)", s.Retrying)
+	}
+	h := s.Hosts
+	problems := strconv.Itoa(len(s.Problems))
+	if s.ProblemsTruncated {
+		problems += "+"
+	}
+	table := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+	for _, field := range [][2]string{
+		{"SAMPLED", remoteTime(s.SampledAt)},
+		{"BACKEND", cell(s.Backend)},
+		{"QUEUED", queued},
+		{"RUNNING", strconv.Itoa(s.Running)},
+		{"HOSTS", fmt.Sprintf("%d of %d up (%d offline, %d unavailable, %d cordoned)", h.Up, h.Total, h.Offline, h.Unavailable, h.Cordoned)},
+		{"SLOTS", fmt.Sprintf("%d used, %d reserved of %d", h.OccupiedSlots, h.ReservedSlots, h.SlotLimit)},
+		{"LAST_WEBHOOK", remoteTime(s.LastWebhook)},
+		{"LAST_POLL", remoteTime(s.LastPoll)},
+		{"PROBLEMS", problems},
+	} {
+		fmt.Fprintf(table, "%s\t%s\n", field[0], field[1])
+	}
+	if err := table.Flush(); err != nil {
+		return err
+	}
+	if len(s.Problems) == 0 {
+		return nil
+	}
+	fmt.Fprintln(out)
+	table = tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(table, "KIND\tSUBJECT\tCODE\tMESSAGE")
+	for _, p := range s.Problems {
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\n", cell(p.Kind), cell(p.Subject), cell(p.Code), cell(p.Message))
+	}
+	return table.Flush()
 }
 
 func runRunnersList(ctx context.Context, c *apiClient, o *remoteOptions, _ []string, out io.Writer) error {

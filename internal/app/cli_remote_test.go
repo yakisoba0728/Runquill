@@ -21,6 +21,7 @@ import (
 type remoteFixture struct {
 	t      *testing.T
 	q      *queue
+	panel  *panelState
 	origin string
 	now    time.Time
 }
@@ -76,7 +77,7 @@ func newRemoteFixture(t *testing.T) *remoteFixture {
 	previous := remoteNow
 	remoteNow = func() time.Time { return now }
 	t.Cleanup(func() { remoteNow = previous })
-	return &remoteFixture{t: t, q: q, origin: origin, now: now}
+	return &remoteFixture{t: t, q: q, panel: panel, origin: origin, now: now}
 }
 
 func (f *remoteFixture) token(user int64, scope string) string {
@@ -299,6 +300,53 @@ func TestRemoteJobsListAgainstPanel(t *testing.T) {
 	_, code, stdout, stderr = runRemote(t, "jobs", "list", "--repo", "owner/app")
 	if code != 0 || stderr != "" || !strings.Contains(stdout, "JIT registration 250ms") || !strings.Contains(stdout, "runtime launch 500ms") {
 		t.Fatalf("jobs list with launch stages: code %d, stderr %q\n%s", code, stderr, stdout)
+	}
+}
+
+func TestRemoteFleetStatusAgainstPanel(t *testing.T) {
+	f := newRemoteFixture(t)
+	t.Setenv("RUNQUILL_TOKEN", f.token(102, "fleet:read"))
+	_, code, stdout, stderr := runRemote(t, "fleet", "status")
+	want := [][]string{
+		{"SAMPLED", "-"},
+		{"BACKEND", "-"},
+		{"QUEUED", "0"},
+		{"RUNNING", "0"},
+		{"HOSTS", "1", "of", "3", "up", "(1", "offline,", "1", "unavailable,", "1", "cordoned)"},
+		{"SLOTS", "1", "used,", "2", "reserved", "of", "7"},
+		{"LAST_WEBHOOK", "-"},
+		{"LAST_POLL", "-"},
+		{"PROBLEMS", "2"},
+		{"KIND", "SUBJECT", "CODE", "MESSAGE"},
+		{"host", "build-2", "offline", "-"},
+		{"host", "local", "unavailable", "docker", "[2J", "down"},
+	}
+	got := slices.DeleteFunc(rows(stdout), func(fields []string) bool { return len(fields) == 0 })
+	if code != 0 || stderr != "" || !slices.EqualFunc(got, want, slices.Equal) {
+		t.Fatalf("fleet status: code %d, stderr %q\n%s", code, stderr, stdout)
+	}
+	// --check prints the same summary and fails on a problem.
+	_, code, checked, stderr := runRemote(t, "fleet", "status", "--check")
+	if code != 1 || checked != stdout || strings.TrimSpace(stderr) != "runquill fleet status: 2 problems need attention" {
+		t.Fatalf("fleet status --check: code %d, stderr %q\n%s", code, stderr, checked)
+	}
+	// --json is the MCP fleet_status result, byte for byte.
+	f.panel.mu.RLock()
+	expected, _ := json.Marshal(summarizeFleet(f.panel.snapshot))
+	f.panel.mu.RUnlock()
+	_, code, stdout, _ = runRemote(t, "fleet", "status", "--json", "--check")
+	if code != 1 || strings.TrimSpace(stdout) != string(expected) {
+		t.Fatalf("fleet status --json: code %d\n%s\nwant %s", code, stdout, expected)
+	}
+
+	f.panel.mu.Lock()
+	f.panel.snapshot.Fleet = &statusReport{Backend: "docker", SlotLimit: 4, Hosts: []statusHost{{Name: "build-1", Status: "UP", SlotLimit: 4, OccupiedSlots: 1}},
+		Jobs: []statusJob{{ID: 7, Status: "RUNNING"}, {ID: 9, Status: "RETRY"}}}
+	f.panel.mu.Unlock()
+	_, code, stdout, stderr = runRemote(t, "fleet", "status", "--check")
+	if code != 0 || stderr != "" || !strings.Contains(stdout, "QUEUED        1 (1 retrying)") || !strings.Contains(stdout, "PROBLEMS      0") ||
+		strings.Contains(stdout, "KIND") {
+		t.Fatalf("healthy fleet status --check: code %d, stderr %q\n%s", code, stderr, stdout)
 	}
 }
 
