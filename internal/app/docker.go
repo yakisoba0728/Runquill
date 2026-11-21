@@ -120,7 +120,10 @@ func engineCommandTimeout(ctx context.Context, timeout time.Duration, binary str
 		return "", ctx.Err()
 	}
 	if err != nil {
-		return "", fmt.Errorf("%s %s: %w: %s", binary, args[0], err, strings.TrimSpace(stderr.String()))
+		if detail := strings.TrimSpace(stderr.String()); detail != "" {
+			return "", fmt.Errorf("%s %s: %w: %s", binary, args[0], err, detail)
+		}
+		return "", fmt.Errorf("%s %s: %w", binary, args[0], err)
 	}
 	return string(result), nil
 }

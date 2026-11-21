@@ -207,3 +207,26 @@ func TestDockerFleetRejectsInvalidHosts(t *testing.T) {
 		}
 	}
 }
+
+// An engine error ends with the engine's stderr, or with the error alone when
+// the engine wrote nothing there.
+func TestEngineCommandErrorDetail(t *testing.T) {
+	dir := t.TempDir()
+	for name, script := range map[string]string{"quiet": "exit 1\n", "loud": "echo '  no such container  ' >&2\nexit 1\n"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"+script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, test := range []struct{ binary, want string }{
+		{filepath.Join(dir, "quiet"), filepath.Join(dir, "quiet") + " ps: exit status 1"},
+		{filepath.Join(dir, "loud"), filepath.Join(dir, "loud") + " ps: exit status 1: no such container"},
+	} {
+		if _, err := engineCommand(t.Context(), test.binary, nil, "ps"); err == nil || err.Error() != test.want {
+			t.Errorf("got %v, want %q", err, test.want)
+		}
+	}
+	_, err := engineCommand(t.Context(), filepath.Join(dir, "missing"), nil, "ps")
+	if err == nil || strings.HasSuffix(err.Error(), ": ") || !strings.Contains(err.Error(), "missing ps: ") {
+		t.Errorf("missing engine: %v", err)
+	}
+}
