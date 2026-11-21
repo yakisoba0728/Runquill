@@ -35,6 +35,9 @@ func newRemoteFixture(t *testing.T) *remoteFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(q.close)
+	if err := migrateUsage(t.Context(), q.DB); err != nil {
+		t.Fatal(err)
+	}
 	server := httptest.NewUnstartedServer(nil)
 	origin := "http://" + server.Listener.Addr().String()
 	cfg, err := parsePanelOAuthConfig(origin, "client", "secret", "101")
@@ -55,6 +58,14 @@ func newRemoteFixture(t *testing.T) *remoteFixture {
 		{Name: "local", Status: "UNAVAILABLE", SlotLimit: 1, Error: "docker\x1b[2J down"},
 	}}
 	panel.snapshot.Inventory = []panelRunner{{Name: "runquill-7", Host: "build-1", Pool: "build", RuntimeState: "running", JobID: 7}}
+	panel.elastic = newElasticState(elasticConfig{Mode: elasticObserve, Interval: 10 * time.Second})
+	panel.elastic.observe(elasticHost{Name: "local", Runners: []elasticRunner{{ID: "c1", Name: "runquill-7", CPULimit: 2, GuaranteeCPUs: 1,
+		MemoryLimitMiB: 2048, GuaranteeMemoryMiB: 1024, CPUUsage: 1.234, MemoryUsageMiB: 900.5}}},
+		elasticHostPlan{Host: "local", CPUs: 8, MemoryMiB: 16384, HeldSlots: 1, SurplusCPUs: 3.5, LentCPUs: 1, SurplusMemoryMiB: 4096, ExtraMemoryMiB: 1024})
+	for i, reason := range []string{"cpu busy", "memory near limit"} {
+		panel.elastic.record(elasticDecision{At: time.Unix(1700000000+int64(i)*60, 0), Error: []string{"", "\x1b[31mrejected"}[i],
+			elasticChange: elasticChange{Host: "local", ID: "c1", Runner: "runquill-7", Resource: []string{"cpu", "memory"}[i], From: 1, To: 1.5, Reason: reason}})
+	}
 	server.Config.Handler = panelHandler(panel, access)
 	server.Start()
 	t.Cleanup(server.Close)
@@ -347,6 +358,82 @@ func TestRemoteFleetStatusAgainstPanel(t *testing.T) {
 	if code != 0 || stderr != "" || !strings.Contains(stdout, "QUEUED        1 (1 retrying)") || !strings.Contains(stdout, "PROBLEMS      0") ||
 		strings.Contains(stdout, "KIND") {
 		t.Fatalf("healthy fleet status --check: code %d, stderr %q\n%s", code, stderr, stdout)
+	}
+}
+
+func TestRemoteUsageAgainstPanel(t *testing.T) {
+	f := newRemoteFixture(t)
+	t.Setenv("RUNQUILL_TOKEN", f.token(102, "fleet:read"))
+	_, code, stdout, stderr := runRemote(t, "usage", "--group", "repository")
+	want := [][]string{
+		{"REPOSITORY", "JOBS", "FAILED", "RUNNER_TIME", "WAIT"},
+		{"owner/lib", "1", "1", "0s", "2h"},
+		{"(total)", "1", "1", "0s", "2h"},
+	}
+	if code != 0 || stderr != "" || !slices.EqualFunc(rows(stdout), want, slices.Equal) {
+		t.Fatalf("usage --group repository: code %d, stderr %q\n%s", code, stderr, stdout)
+	}
+	_, code, stdout, _ = runRemote(t, "usage", "--group", "pool", "--repo", "Owner/Lib")
+	if lines := rows(stdout); code != 0 || len(lines) != 3 || lines[0][0] != "POOL" || lines[1][0] != "(default)" {
+		t.Fatalf("usage --group pool: code %d\n%s", code, stdout)
+	}
+	today := f.now.UTC().Format(time.DateOnly)
+	_, code, stdout, _ = runRemote(t, "usage", "--from", today, "--json")
+	var report usageResponse
+	if code != 0 || json.Unmarshal([]byte(stdout), &report) != nil || report.Group != "day" || report.From != today ||
+		len(report.Series) != 1 || report.Totals.Jobs != 1 || report.Totals.WaitP95Seconds == 0 {
+		t.Fatalf("usage --json: code %d\n%s", code, stdout)
+	}
+	_, code, stdout, _ = runRemote(t, "usage", "--group", "host", "--repo", "owner/none")
+	if code != 0 || !strings.HasPrefix(stdout, "No finished jobs from ") {
+		t.Fatalf("usage without jobs: code %d\n%s", code, stdout)
+	}
+	for _, args := range [][]string{
+		{"usage", "--group", "week"},
+		{"usage", "--from", "2026-13-01"},
+		{"usage", "--from", "2020-01-01", "--to", "2026-01-01"},
+		{"usage", "--repo", "nobody"},
+		{"usage", "extra"},
+	} {
+		if _, code, stdout, stderr := runRemote(t, args...); code != 2 || stdout != "" || stderr == "" {
+			t.Errorf("%v: code %d, stdout %q, stderr %q", args, code, stdout, stderr)
+		}
+	}
+}
+
+func TestRemoteElasticAgainstPanel(t *testing.T) {
+	f := newRemoteFixture(t)
+	t.Setenv("RUNQUILL_TOKEN", f.token(102, "fleet:read"))
+	_, code, stdout, stderr := runRemote(t, "elastic")
+	want := [][]string{
+		{"Elastic", "limits:", "observe,", "every", "10s."},
+		{"HOST", "CPUS", "SURPLUS_CPUS", "LENT_CPUS", "MEMORY_MIB", "SURPLUS_MIB", "EXTRA_MIB", "HELD_SLOTS"},
+		{"local", "8", "3.5", "1", "16384", "4096", "1024", "1"},
+		{"RUNNER", "HOST", "CPUS", "GUARANTEE_CPUS", "CPU_USED", "MEMORY_MIB", "GUARANTEE_MIB", "MEMORY_USED_MIB"},
+		{"runquill-7", "local", "2", "1", "1.23", "2048", "1024", "900.5"},
+		{"TIME", "HOST", "RUNNER", "RESOURCE", "FROM", "TO", "APPLIED", "REASON"},
+		{"2023-11-14T22:14:20Z", "local", "runquill-7", "memory", "1", "1.5", "failed", "memory", "near", "limit:", "[31mrejected"},
+		{"2023-11-14T22:13:20Z", "local", "runquill-7", "cpu", "1", "1.5", "no", "cpu", "busy"},
+	}
+	got := slices.DeleteFunc(rows(stdout), func(fields []string) bool { return len(fields) == 0 })
+	if code != 0 || stderr != "" || !slices.EqualFunc(got, want, slices.Equal) || strings.Contains(stdout, "\x1b") {
+		t.Fatalf("elastic: code %d, stderr %q\n%s", code, stderr, stdout)
+	}
+	_, code, stdout, _ = runRemote(t, "elastic", "--json")
+	var report elasticReport
+	if code != 0 || json.Unmarshal([]byte(stdout), &report) != nil || report.Mode != elasticObserve || len(report.Decisions) != 2 {
+		t.Fatalf("elastic --json: code %d\n%s", code, stdout)
+	}
+
+	off := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode((*elasticState)(nil).report())
+	}))
+	defer off.Close()
+	t.Setenv("RUNQUILL_URL", off.URL)
+	_, code, stdout, _ = runRemote(t, "elastic")
+	if code != 0 || strings.TrimSpace(stdout) != "Elastic limits are off." {
+		t.Fatalf("elastic off: code %d\n%s", code, stdout)
 	}
 }
 

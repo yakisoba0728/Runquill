@@ -8,6 +8,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
+	"net/url"
 	"os"
 	"runtime"
 	"slices"
@@ -48,6 +50,8 @@ const remoteUsage = `Usage:
   runquill hosts cordon HOST [--json]
   runquill hosts uncordon HOST [--json]
   runquill audit tail [--limit N] [--json]
+  runquill usage [--group day|repository|pool|host] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--repo OWNER/NAME] [--json]
+  runquill elastic [--json]
 Each command reads the panel origin from --url or RUNQUILL_URL and the API token
 from --token-file or RUNQUILL_TOKEN.`
 
@@ -66,10 +70,14 @@ type remoteOptions struct {
 	limit                int
 	sinceTime            time.Time
 	jobID                int64
+	group, from, to      string
+	usageQuery           url.Values
 	stderr               io.Writer
 }
 
-var remoteGroups = []string{"fleet", "jobs", "runners", "pools", "hosts", "audit"}
+// remoteGroups are the first words of remote commands. A group that is a
+// command by itself, such as usage, has no second word.
+var remoteGroups = []string{"fleet", "jobs", "runners", "pools", "hosts", "audit", "usage", "elastic"}
 
 var remoteCommands = map[string]remoteCommandSpec{
 	"jobs list": {permission: "fleet:read", define: func(f *flag.FlagSet, o *remoteOptions) {
@@ -105,6 +113,13 @@ var remoteCommands = map[string]remoteCommandSpec{
 		}
 		return nil
 	}, run: runAuditTail},
+	"usage": {permission: "fleet:read", define: func(f *flag.FlagSet, o *remoteOptions) {
+		f.StringVar(&o.group, "group", "day", "group finished jobs by day, repository, pool or host")
+		f.StringVar(&o.from, "from", "", "first UTC day as YYYY-MM-DD (defaults to 29 days before --to)")
+		f.StringVar(&o.to, "to", "", "last UTC day as YYYY-MM-DD (defaults to today)")
+		f.StringVar(&o.repo, "repo", "", "only jobs of this OWNER/NAME repository")
+	}, validate: validateUsage, run: runUsageReport},
+	"elastic": {permission: "fleet:read", run: runElasticReport},
 }
 
 // remoteCommand runs the remote panel commands. handled is false for any other
@@ -113,16 +128,16 @@ func remoteCommand(args []string, stdout, stderr io.Writer) (handled bool, code 
 	if len(args) == 0 || !slices.Contains(remoteGroups, args[0]) {
 		return false, 0
 	}
-	name := args[0]
-	if len(args) > 1 {
-		name += " " + args[1]
+	name, rest := args[0], args[1:]
+	if _, single := remoteCommands[name]; !single && len(rest) > 0 {
+		name, rest = name+" "+rest[0], rest[1:]
 	}
 	spec, ok := remoteCommands[name]
 	if !ok {
 		fmt.Fprintln(stderr, remoteUsage)
 		return true, 2
 	}
-	return true, spec.execute(name, args[2:], stdout, stderr)
+	return true, spec.execute(name, rest, stdout, stderr)
 }
 
 func (spec remoteCommandSpec) execute(name string, args []string, stdout, stderr io.Writer) int {
@@ -605,6 +620,142 @@ func runAuditTail(ctx context.Context, c *apiClient, o *remoteOptions, _ []strin
 			cell(actor), cell(event.Action), cell(event.Target))
 	}
 	return table.Flush()
+}
+
+// validateUsage checks the flags with the panel's own parser, so a bad range
+// is refused before a request is sent.
+func validateUsage(o *remoteOptions, _ []string) error {
+	o.repo = strings.ToLower(strings.TrimSpace(o.repo))
+	query := url.Values{"group": {o.group}}
+	for name, value := range map[string]string{"from": o.from, "to": o.to, "repository": o.repo} {
+		if value != "" {
+			query.Set(name, value)
+		}
+	}
+	if _, err := parseUsageQuery(query, remoteNow()); err != nil {
+		return errors.New("use --from and --to as YYYY-MM-DD at most 400 days apart, --group day, repository, pool or host, and --repo OWNER/NAME")
+	}
+	o.usageQuery = query
+	return nil
+}
+
+func runUsageReport(ctx context.Context, c *apiClient, o *remoteOptions, _ []string, out io.Writer) error {
+	report, raw, err := c.usage(ctx, o.usageQuery)
+	if err != nil {
+		return err
+	}
+	if o.json {
+		return writeRawJSON(out, raw)
+	}
+	if len(report.Series) == 0 {
+		_, err := fmt.Fprintf(out, "No finished jobs from %s to %s.\n", cell(report.From), cell(report.To))
+		return err
+	}
+	table := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+	fmt.Fprintf(table, "%s\tJOBS\tFAILED\tRUNNER_TIME\tWAIT\n", strings.ToUpper(cell(report.Group)))
+	row := func(key string, t usageTotals) {
+		fmt.Fprintf(table, "%s\t%d\t%d\t%s\t%s\n", key, t.Jobs, t.Failed, usageRunnerTime(t.RunnerSeconds), usageWait(t))
+	}
+	for _, group := range report.Series {
+		key := cell(group.Key)
+		if report.Group == "pool" {
+			key = poolLabel(group.Key)
+		}
+		row(key, group.usageTotals)
+	}
+	row("(total)", report.Totals)
+	if err := table.Flush(); err != nil {
+		return err
+	}
+	if report.Truncated {
+		fmt.Fprintf(o.stderr, "Showing the %d busiest groups; the total covers all of them.\n", len(report.Series))
+	}
+	return nil
+}
+
+func usageRunnerTime(seconds int64) string {
+	if seconds < 3600 {
+		return remoteDuration(time.Duration(seconds) * time.Second)
+	}
+	return strconv.FormatFloat(float64(seconds)/3600, 'f', 1, 64) + "h"
+}
+
+// usageWait is the average queue wait; --json also has p50 and p95.
+func usageWait(t usageTotals) string {
+	if t.WaitCount == 0 {
+		return "-"
+	}
+	return remoteDuration(time.Duration(t.WaitAvgSeconds) * time.Second)
+}
+
+// remoteElasticDecisions bounds the decisions the table shows; --json has all.
+const remoteElasticDecisions = 20
+
+func runElasticReport(ctx context.Context, c *apiClient, o *remoteOptions, _ []string, out io.Writer) error {
+	report, raw, err := c.elastic(ctx)
+	if err != nil {
+		return err
+	}
+	if o.json {
+		return writeRawJSON(out, raw)
+	}
+	if report.Mode == elasticOff && len(report.Hosts) == 0 && len(report.Decisions) == 0 {
+		_, err := fmt.Fprintln(out, "Elastic limits are off.")
+		return err
+	}
+	interval := time.Duration(report.IntervalSeconds * float64(time.Second))
+	fmt.Fprintf(out, "Elastic limits: %s, every %s.\n", cell(string(report.Mode)), remoteDuration(interval))
+	if len(report.Hosts) > 0 {
+		fmt.Fprintln(out)
+		table := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(table, "HOST\tCPUS\tSURPLUS_CPUS\tLENT_CPUS\tMEMORY_MIB\tSURPLUS_MIB\tEXTRA_MIB\tHELD_SLOTS")
+		for _, h := range report.Hosts {
+			fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\n", cell(h.Host), remoteNumber(h.CPUs), remoteNumber(h.SurplusCPUs),
+				remoteNumber(h.LentCPUs), h.MemoryMiB, h.SurplusMemoryMiB, h.ExtraMemoryMiB, h.HeldSlots)
+		}
+		if err := table.Flush(); err != nil {
+			return err
+		}
+	}
+	if len(report.Runners) > 0 {
+		fmt.Fprintln(out)
+		table := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(table, "RUNNER\tHOST\tCPUS\tGUARANTEE_CPUS\tCPU_USED\tMEMORY_MIB\tGUARANTEE_MIB\tMEMORY_USED_MIB")
+		for _, r := range report.Runners {
+			fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%d\t%d\t%s\n", cell(r.Runner), cell(r.Host), remoteNumber(r.CPUs),
+				remoteNumber(r.GuaranteeCPUs), remoteNumber(r.CPUUsage), r.MemoryMiB, r.GuaranteeMiB, remoteNumber(r.MemoryUsageMiB))
+		}
+		if err := table.Flush(); err != nil {
+			return err
+		}
+	}
+	if len(report.Decisions) == 0 {
+		_, err := fmt.Fprintln(out, "\nNo resize decisions yet.")
+		return err
+	}
+	fmt.Fprintln(out)
+	table := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(table, "TIME\tHOST\tRUNNER\tRESOURCE\tFROM\tTO\tAPPLIED\tREASON")
+	for _, d := range report.Decisions[:min(len(report.Decisions), remoteElasticDecisions)] {
+		applied, reason := yesNo(d.Applied), d.Reason
+		if d.Error != "" {
+			applied, reason = "failed", d.Reason+": "+d.Error
+		}
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", d.At.UTC().Format(time.RFC3339), cell(d.Host), cell(d.Runner),
+			cell(d.Resource), remoteNumber(d.From), remoteNumber(d.To), applied, cell(reason))
+	}
+	if err := table.Flush(); err != nil {
+		return err
+	}
+	if len(report.Decisions) > remoteElasticDecisions {
+		fmt.Fprintf(o.stderr, "Showing the newest %d of %d decisions; --json has all of them.\n", remoteElasticDecisions, len(report.Decisions))
+	}
+	return nil
+}
+
+// remoteNumber prints CPUs and MiB with at most two decimals.
+func remoteNumber(value float64) string {
+	return strconv.FormatFloat(math.Round(value*100)/100, 'f', -1, 64)
 }
 
 func writeRawJSON(out io.Writer, raw []byte) error {

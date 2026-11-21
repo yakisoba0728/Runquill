@@ -193,6 +193,14 @@ func (c *apiClient) job(ctx context.Context, id int64) (panelHistoryJob, []byte,
 	return getAPIJSON[panelHistoryJob](ctx, c, "/api/jobs/"+strconv.FormatInt(id, 10), nil)
 }
 
+func (c *apiClient) usage(ctx context.Context, query url.Values) (usageResponse, []byte, error) {
+	return getAPIJSON[usageResponse](ctx, c, "/api/usage", query)
+}
+
+func (c *apiClient) elastic(ctx context.Context) (elasticReport, []byte, error) {
+	return getAPIJSON[elasticReport](ctx, c, "/api/elastic", nil)
+}
+
 func (c *apiClient) snapshot(ctx context.Context) (panelSnapshot, []byte, error) {
 	return getAPIJSON[panelSnapshot](ctx, c, "/snapshot", nil)
 }
