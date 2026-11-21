@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"maps"
 	"slices"
@@ -57,14 +58,13 @@ func loadOperations(ctx context.Context, db *sql.DB, cfg config, base runnerConf
 	}
 	state := &operationState{policy: defaults, runners: base, interval: cfg.pollInterval}
 	if set {
-		// A changed environment or a restored backup must not stop the manager. The saved
+		// Changed worker hosts or a restored backup must not stop the manager. The saved
 		// row stays as it is: read-only commands load it too, and the panel saves a fix.
+		// Settings that still do not resolve stop the start rather than drop saved restrictions.
 		policy, adjusted := ops.reconcileSaved(policy)
-		if next, err := ops.resolve(policy); err == nil {
-			state = next
-		} else {
-			adjusted = []string{"ignored all saved settings and used the deployment settings: " + err.Error()}
-			state.policy.Revision = policy.Revision
+		state, err = ops.resolve(policy)
+		if err != nil {
+			return nil, fmt.Errorf("load saved operation settings: %w", err)
 		}
 		state.adjusted = adjusted
 		for _, change := range adjusted {

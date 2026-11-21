@@ -3,6 +3,7 @@ package app
 import (
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -101,18 +102,10 @@ func TestSavedSettingsDropRemovedHosts(t *testing.T) {
 	}
 }
 
-func TestUnusableSavedSettingsFallBackToTheDeployment(t *testing.T) {
+func TestUnusableSavedSettingsStillStopTheManager(t *testing.T) {
+	// Starting with the deployment settings instead would drop saved pool restrictions.
 	q, cfg, base := savedSettingsFixture(t, "local", "", "", `{"slot_limit":0,"docker_hosts":["ftp://nowhere"]}`)
-	ops, err := loadOperations(t.Context(), q.DB, cfg, base)
-	if err != nil {
-		t.Fatalf("unusable saved settings stopped the manager: %v", err)
-	}
-	state := ops.current.Load()
-	if state.policy.Limit != cfg.limit || !slices.Equal(state.policy.Hosts, []string{"local"}) || len(state.adjusted) != 1 {
-		t.Fatalf("deployment settings were not used: %+v %v", state.policy, state.adjusted)
-	}
-	// Keep the saved revision so the panel can replace the saved row.
-	if state.policy.Revision != 7 {
-		t.Fatalf("revision %d", state.policy.Revision)
+	if _, err := loadOperations(t.Context(), q.DB, cfg, base); err == nil || !strings.Contains(err.Error(), "load saved operation settings") {
+		t.Fatalf("unusable saved settings were accepted: %v", err)
 	}
 }
