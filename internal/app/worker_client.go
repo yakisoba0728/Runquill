@@ -196,10 +196,12 @@ func (c *workerClient) exchange(ctx context.Context) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(workerFeatureHeader, workerFeatureTTL)
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("poll manager: %w", err)
 	}
+	received := time.Now()
 	defer resp.Body.Close()
 	switch resp.StatusCode {
 	case http.StatusNoContent:
@@ -215,7 +217,7 @@ func (c *workerClient) exchange(ctx context.Context) error {
 	if c.last != nil && c.last.ID == task.ID {
 		return nil
 	}
-	err = c.apply(ctx, task)
+	err = c.apply(ctx, task, received)
 	c.last = &workerResult{ID: task.ID, OK: err == nil}
 	if err != nil {
 		slog.Warn("worker runner operation failed", "operation", task.Operation, "runner", task.Name, "error", err)
@@ -223,12 +225,28 @@ func (c *workerClient) exchange(ctx context.Context) error {
 	return nil
 }
 
-func (c *workerClient) apply(ctx context.Context, task workerTask) error {
-	now := time.Now()
-	if !task.Expires.After(now) || task.Expires.After(now.Add(workerTaskTTL+5*time.Second)) {
-		return errors.New("worker task expired or has an invalid deadline")
+// workerTaskDeadline measures a ttl_ms task from its receipt on the worker's clock. Older managers
+// send only the absolute expiry, which needs the clocks to agree within a few seconds.
+func workerTaskDeadline(task workerTask, received, now time.Time) (time.Time, error) {
+	limit := workerTaskTTL + 5*time.Second
+	if task.TTL != nil {
+		if *task.TTL <= 0 {
+			return time.Time{}, errors.New("worker task has an invalid time to live")
+		}
+		return received.Add(time.Duration(min(*task.TTL, limit.Milliseconds())) * time.Millisecond), nil
 	}
-	ctx, cancel := context.WithDeadline(ctx, task.Expires)
+	if !task.Expires.After(now) || task.Expires.After(now.Add(limit)) {
+		return time.Time{}, errors.New("worker task expired or has an invalid deadline. Check that the worker and manager clocks are synchronized")
+	}
+	return task.Expires, nil
+}
+
+func (c *workerClient) apply(ctx context.Context, task workerTask, received time.Time) error {
+	deadline, err := workerTaskDeadline(task, received, time.Now())
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 	engine, err := c.target.engineID(ctx)
 	if err != nil {
