@@ -40,7 +40,7 @@ For polling, the manager only needs outbound GitHub access. To receive webhooks,
 
 Pending runner Pods can show scheduling, image pull, volume mount and container startup causes in the panel and `runquill status --json`. Apply the current manifest to let Runquill list warning Events in its runner namespace for mount diagnostics. Full Kubernetes details are available through `kubectl describe pod -n runquill-runners POD_NAME`.
 
-A runner Pod can stay Terminating, for example on a NotReady node. Runquill does not wait for it: the job returns to the queue for another runner while the Pod keeps its slot. Five minutes after the deletion began, the manager deletes the Pod without a grace period, and Kubernetes removes its credential Secret with it.
+A runner Pod can stay Terminating, for example on a NotReady node. Runquill does not wait for it: the job returns to the queue for another runner while the Pod keeps its slot. Five minutes after the deletion began, the manager deletes the Pod without a grace period, and Kubernetes removes its credential Secret with it. This applies to every Runquill Pod in the runner namespace, including one deleted before a manager restart or by `kubectl delete` or a node drain.
 
 ## Runner settings
 
