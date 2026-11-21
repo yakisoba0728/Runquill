@@ -63,7 +63,7 @@ runquill workflow check --json path/to/workflow.yml
 | `runner-image` | warning | 라벨이 러너 이미지 목록에 없는 `os__NAME__` 이미지를 고르거나, 풀의 `images` 목록이 허용하지 않는 이미지를 고릅니다. |
 | `docker` | warning | 작업이 Docker를 쓰는 것으로 보이지만(추정), 풀에 `privileged: false`가 설정되어 있습니다. |
 | `permissions` | warning | 워크플로에 최상위 `permissions` 블록이 없습니다. |
-| `timeout` | warning | 작업에 `timeout-minutes`가 없습니다. |
+| `timeout` | warning | 작업에 `timeout-minutes`가 없습니다. `uses:`로 재사용 워크플로를 호출하는 작업에는 보고하지 않습니다. |
 | `unpinned-action` | info | `actions/`와 `github/` 밖의 액션이 전체 커밋 SHA로 고정되어 있지 않습니다. |
 | `unparsed` | warning 또는 info | 파일이나 작업을 점검할 수 없었습니다. |
 

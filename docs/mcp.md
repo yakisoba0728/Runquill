@@ -9,7 +9,7 @@ Runquill exposes a read-only [Model Context Protocol](https://modelcontextprotoc
 | Tool | Arguments | Returns |
 | --- | --- | --- |
 | `fleet_status` | none | Queue depth, running jobs, host totals and current problems from the latest snapshot. `runquill fleet status --json` prints the same result. |
-| `list_jobs` | `repository`, `outcome`, `since` (such as `90m`, `24h`, `7d`), `before`, `limit` (1–100, default 20) | Job history, newest first, with recorded stage timings and current diagnostics where available. |
+| `list_jobs` | `repository`, `outcome`, `since` (such as `90m`, `24h`, `7d`; at most `7d`), `before`, `limit` (1–100, default 20) | Job history, newest first, with recorded stage timings and current diagnostics where available. |
 | `get_job` | `id` (required) | One job with outcome, failure or retry reason, timing, runner and live status. |
 | `list_hosts` | none | Hosts with status, slots and up to 100 runners each. |
 | `usage_summary` | `window` (`24h` or `7d`), `group` (`day`, `repository`, `pool` or `host`) | Finished jobs, failures, runner time and queue wait. With `group`, also `series`: the same statistics per group, busiest first and at most 500, read like `GET /api/usage` over the whole UTC days `from` and `to` that contain the window. |
