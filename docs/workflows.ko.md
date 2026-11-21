@@ -4,9 +4,9 @@
 
 ## 사용할 저장소 연결
 
-- **전체 저장소**로 설치했다면 같은 개인 계정이나 조직 소유의 다른 비공개 저장소에도 아래 워크플로를 적용할 수 있습니다. 저장소마다 Runquill 시크릿이나 웹훅을 추가할 필요가 없습니다.
+- **전체 저장소**로 설치했다면 같은 개인 계정이나 조직 소유의 다른 비공개 저장소에도 아래 워크플로를 적용할 수 있습니다. Runquill 인증 정보와 웹훅은 App 설치에 속하므로 저장소마다 Runquill 시크릿이나 웹훅을 추가할 필요가 없습니다.
 - **선택한 저장소**로 설치했다면 GitHub의 App 설치 설정에서 대상 저장소를 추가합니다.
-- 개인 계정에 연결한 매니저로 다른 조직 소유 저장소도 실행하려면, 해당 조직에 [별도 설치](install.ko.md#github-조직-연결)를 구성합니다.
+- 다른 조직이 소유한 저장소에서 쓰려면 해당 조직에 [별도 설치](install.ko.md#github-조직-연결)를 구성합니다.
 
 ## 첫 작업 확인
 
@@ -20,16 +20,14 @@
 
 워크플로를 저장소의 기본 브랜치에 커밋하고 푸시하거나 기존 리뷰 절차로 병합합니다. GitHub에서 **Actions → Runquill first job → Run workflow**를 누릅니다. **Show the runner** 단계에 `runquill-`로 시작하는 이름이 출력됩니다. 이 작업은 쉘만 사용하므로 애플리케이션 의존성 없이 러너 배정을 먼저 확인할 수 있습니다. [GitHub 수동 실행 요구사항](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow)
 
-서버의 Runquill 설치 디렉터리에서는 App이 저장소에 접근할 수 있는지 확인하고 매니저 로그를 볼 수 있습니다.
-
-설치할 때 사용한 Compose 파일을 모두 지정하세요. 아래는 패널을 사용하는 설치 예입니다.
+서버에서는 처음 배포할 때 사용한 Compose 파일로 App이 저장소에 접근할 수 있는지 확인하고 러너 정리 과정을 지켜봅니다. 아래 명령은 패널 오버레이를 사용하는 설치 기준입니다.
 
 ```sh
 docker compose -f compose.yaml -f compose.panel.yaml exec -T manager runquill doctor --repo OWNER/REPO
 docker compose -f compose.yaml -f compose.panel.yaml logs -f manager
 ```
 
-작업이 끝나면 매니저 로그에 `runner removed`가 출력되고, 저장소의 **Settings → Actions → Runners**에서 해당 러너가 사라집니다. Docker 빌드와 서비스 컨테이너까지 확인하려면 [Docker·PostgreSQL 검증 워크플로](../examples/runquill-smoke.yml)를 실행합니다.
+`doctor`는 로컬 설정, Docker Engine, 러너 이미지, GitHub App 설치와 권한, 설정했다면 웹훅 설정까지 점검합니다. 점검에 실패한 항목이 있으면 상태 코드 1로 종료합니다. 작업이 성공하면 매니저 로그에서 `runner removed`를 확인하고, 저장소의 **Settings → Actions → Runners**에서 해당 러너가 사라졌는지 확인합니다. Docker 빌드와 서비스 컨테이너까지 확인하려면 [Docker·PostgreSQL 검증 워크플로](../examples/runquill-smoke.yml)를 실행합니다.
 
 ## 워크플로에서 러너 선택
 

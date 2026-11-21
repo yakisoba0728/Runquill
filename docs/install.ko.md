@@ -98,7 +98,7 @@ chmod +x ./runquill-linux-amd64
 2. GitHub에서 비공개 App 생성을 승인합니다. `setup`이 `.env`와 `github-app.pem`을 권한 `0600`으로 저장하고 설치 링크를 출력합니다.
 3. 링크를 열고 개인 계정에 **All repositories**로 설치합니다. 이후 만드는 비공개 저장소도 자동으로 감지합니다.
 
-두 파일을 저장한 뒤 중단했다면 `setup`을 다시 실행해 App 설치를 이어갈 수 있습니다. 기본 연결 방식은 GitHub API 폴링입니다.
+두 파일을 저장한 뒤 중단했다면 `setup`을 다시 실행해 App 설치를 이어갈 수 있습니다. 생성된 설정은 GitHub API 폴링을 사용하므로 공개 HTTPS 주소 없이도 동작합니다.
 
 [GitHub App 매니페스트](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest) · [GitHub App 설치](https://docs.github.com/en/apps/using-github-apps/installing-your-own-github-app)
 
@@ -126,7 +126,7 @@ GitHub에서 **Only select repositories**를 고르고 사용할 비공개 저�
 
 Compose용 공개 설치 스크립트에도 같은 옵션을 전달할 수 있습니다. k3s에서는 `setup`에 `--k3s`를 추가합니다. 기본적으로 작업을 요청한 저장소에 러너를 등록하며, 저장소 **Actions 읽기**와 **Administration 읽기·쓰기** 권한을 사용합니다. 기존 App을 사용한다면 `.env`에 `RUNQUILL_OWNER=YOUR_ORG`와 `RUNQUILL_OWNER_TYPE=organization`을 설정합니다. 조직의 패널 설정에는 실제 관리자의 GitHub 사용자 ID를 입력합니다. [GitHub App 등록](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest)
 
-조직 러너 그룹을 사용하려면 **선택한 저장소**만 허용하고 공개 저장소 접근을 끈 조직 소유 그룹을 만듭니다. 그룹의 GitHub 워크플로 단위 제한은 사용하지 않습니다. App이 접근할 수 있는 비공개 저장소만 그룹에 추가하고 `setup` 또는 설치 스크립트에 `--runner-group-id ID`를 전달합니다. 기존 App은 `RUNQUILL_RUNNER_GROUP_ID=ID`와 조직의 **Self-hosted runners 읽기·쓰기** 권한을 설정합니다. Runquill은 등록 전에 그룹 정책과 저장소 접근을 확인합니다. GitHub가 그룹 접근과 라벨로 작업을 배정하므로 서로의 워크플로를 신뢰하는 저장소끼리만 그룹을 공유하고 작업별 고유 라벨을 유지하세요. [GitHub 러너 그룹](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/manage-access)
+조직 러너 그룹을 사용하려면 **선택한 저장소**만 허용하고 공개 저장소 접근을 끈 조직 소유 그룹을 만듭니다. 그룹의 GitHub 워크플로 단위 제한은 사용하지 않습니다. App이 접근할 수 있는 비공개 저장소만 그룹에 추가하고 `setup` 또는 설치 스크립트에 `--runner-group-id ID`를 전달합니다. 기존 App은 `RUNQUILL_RUNNER_GROUP_ID=ID`와 조직의 **Self-hosted runners 읽기·쓰기** 권한을 설정합니다. Runquill은 러너를 등록할 때마다 먼저 그룹 정책과 저장소 접근을 확인합니다. 워크플로에서 러너 그룹을 지정한다면 설정한 그룹 이름을 쓰고, 작업별 라벨은 그대로 유지합니다. GitHub는 그룹 접근과 일치하는 라벨로 조직 러너에 작업을 배정하므로, 서로의 워크플로를 신뢰하는 저장소끼리만 그룹을 공유하세요. [GitHub 러너 그룹](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/manage-access) · [조직 러너 API](https://docs.github.com/en/rest/actions/self-hosted-runners#create-configuration-for-a-just-in-time-runner-for-an-organization)
 
 `runquill doctor --repo YOUR_ORG/REPO`로 App과 그룹 범위를, `runquill diagnose YOUR_ORG/REPO`로 대기 작업을 확인할 수 있습니다.
 
@@ -148,7 +148,7 @@ docker compose up -d --no-build
 
 ### 기존 GitHub App 또는 웹훅 사용
 
-앱을 수동으로 만들 때는 **Only on this account**를 선택하고 **Actions → Read-only**와 **Administration → Read and write** 권한을 부여합니다. 발급한 PEM 키를 보관하고 앱을 개인 계정에 설치합니다. [환경 변수 예제](../.env.example)를 `.env`로 복사해 GitHub 로그인, App ID, PEM 키 경로를 입력하고 두 파일의 권한을 `0600`으로 설정합니다. **Only select repositories**로 설치했다면 `RUNQUILL_REPOSITORY_SCOPE=selected`를 설정합니다. 폴링으로 연결할 때는 앱의 웹훅을 끄고 `RUNQUILL_WEBHOOK_SECRET`을 비워둡니다. [저장소 러너 JIT API](https://docs.github.com/en/rest/actions/self-hosted-runners#create-configuration-for-a-just-in-time-runner-for-a-repository)
+앱을 수동으로 만들 때는 **Only on this account**를 선택하고 **Actions → Read-only**와 **Administration → Read and write** 권한을 부여합니다. 발급한 PEM 키를 보관하고 앱을 개인 계정에 설치합니다. [환경 변수 예제](../.env.example)를 `.env`로 복사해 GitHub 로그인, App ID, PEM 키 경로를 입력하고 두 파일의 권한을 `0600`으로 설정합니다. **Only select repositories**로 설치했다면 `RUNQUILL_REPOSITORY_SCOPE=selected`를 설정합니다. 폴링으로 연결할 때는 앱의 웹훅을 끄고 `RUNQUILL_WEBHOOK_SECRET`을 비워둡니다. [GitHub App 설치](https://docs.github.com/en/apps/using-github-apps/installing-your-own-github-app) · [저장소 러너 JIT API](https://docs.github.com/en/rest/actions/self-hosted-runners#create-configuration-for-a-just-in-time-runner-for-a-repository)
 
 수동으로 작성한 `.env`에 릴리스 이미지를 사용하려면 예제에 있는 매니저와 러너 이미지 이름을 같은 버전 태그로 맞춥니다. 호스트에 러너 이미지가 없으면 매니저가 받아 옵니다.
 

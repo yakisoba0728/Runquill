@@ -9,7 +9,7 @@
 - Compose용으로 게시한 매니저 이미지에는 Docker CLI만 들어 있습니다. Podman을 쓰려면 `podman` CLI가 설치된 머신에서 단독 실행용 `runquill` 바이너리를 실행합니다.
 - 경로가 없는 Podman `ssh://` 호스트에는 `/run/podman/podman.sock`으로 연결합니다. 다른 소켓이 필요하면 호스트 항목 뒤에 경로를 붙입니다. 예를 들어 rootless 사용자는 `ssh://builder@worker.example.com/run/user/1000/podman/podman.sock`처럼 씁니다.
 - Podman 러너는 `k8s-file`로 로그를 남기며, 크기 한도는 10 MB이고 순환 개수는 지정하지 않습니다. 캐시 볼륨은 러너보다 먼저 `podman volume create`로 만듭니다.
-- [러너 로그](panel.ko.md#러너-로그)와 [탄력적 한도](elastic-limits.ko.md)는 항상 `docker` CLI를 호출하므로 Podman 호스트를 지원하지 않습니다.
+- [러너 로그](panel.ko.md#러너-로그)는 설정한 엔진의 CLI를 사용합니다. [탄력적 한도](elastic-limits.ko.md)는 항상 `docker` CLI를 호출하므로 Podman 호스트를 지원하지 않습니다.
 
 `runquill doctor`는 호스트마다 엔진, 버전, 플랫폼, cgroup 버전, rootful 또는 rootless 여부를 보고합니다.
 

@@ -42,7 +42,7 @@ runs-on: ${{ format('runquill-{0}-{1}-build', github.run_id, github.run_attempt)
 | K3s `plain` | 작업당 제한된 Pod 하나. Pod에서 직접 실행 가능한 단계를 지원합니다. |
 | K3s `dind` | 작업당 권한 있는 Docker-in-Docker Pod 하나. Docker 빌드, 서비스 컨테이너, 작업 컨테이너를 지원합니다. |
 
-워커 그룹당 매니저 하나를 실행하고 SQLite 대기열은 영구 스토리지에 보관합니다. 신뢰하는 작업 전용 호스트에서 운영하세요. 매니저는 Docker 데몬을 제어할 수 있고, GitHub App 키에는 설치 범위 안의 저장소에 접근할 수 있는 권한이 있습니다.
+운영 환경마다 매니저 하나를 실행하고 SQLite 대기열은 영구 스토리지에 보관합니다. 신뢰하는 작업 전용 호스트에서 운영하세요. 매니저는 Docker 데몬을 제어할 수 있고, GitHub App 키에는 설치 범위 안의 저장소에 접근할 수 있는 권한이 있습니다.
 
 [Docker 워커와 풀](docs/workers.ko.md) · [K3s 배포](deploy/k3s/README.md)
 
@@ -55,7 +55,7 @@ runs-on: ${{ format('runquill-{0}-{1}-build', github.run_id, github.run_attempt)
 | 작업 실행, 기존 워크플로 이전, 러너 OS 선택 | [워크플로](docs/workflows.ko.md), [마이그레이션](docs/workflow-migration.ko.md), [러너 이미지와 캐시](docs/runner-images.ko.md) |
 | 워커 추가와 용량 설정 | [워커와 풀](docs/workers.ko.md), [아웃바운드 워커](docs/outbound-workers.ko.md), [컨테이너 엔진](docs/container-engines.ko.md), [탄력적 한도](docs/elastic-limits.ko.md) |
 | 상태 확인, 문제 해결, 업그레이드, 백업 | [운영](docs/operations.ko.md), [웹 패널](docs/panel.ko.md), [백업](docs/backups.ko.md), [메트릭](docs/metrics.ko.md) |
-| 스크립트나 코딩 에이전트로 상태 조회 | [원격 CLI](docs/remote-cli.md), [MCP](docs/mcp.md), [패널 API](api/openapi.yaml) |
+| 스크립트나 코딩 에이전트로 운영 | [원격 CLI](docs/remote-cli.md), [MCP](docs/mcp.md), [패널 API](api/openapi.yaml) |
 | 저장소 개발과 기여 | [AGENTS.md](AGENTS.md), [개발과 릴리스](docs/development.ko.md) |
 
 [Apache License 2.0](LICENSE)
