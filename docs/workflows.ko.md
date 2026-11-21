@@ -47,7 +47,7 @@ runs-on: ${{ format('runquill-{0}-{1}-test-{2}', github.run_id, github.run_attem
 
 이 식을 `runs-on`의 단일 라벨로 사용합니다. 접미사는 영문자나 숫자로 시작하고 이후에는 하이픈과 밑줄도 쓸 수 있습니다. 라벨 전체는 100자 이내여야 합니다. Runquill은 작업마다 요청한 라벨로 일회용 러너를 등록하고, GitHub는 라벨이 일치하는 러너에 작업을 배정합니다. [GitHub Actions 컨텍스트 문서](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts)
 
-기존 워크플로에서는 옮길 작업의 `runs-on`을 바꾸고 테스트를 실행합니다. 풀을 지정하려면 [워커 풀 규칙](workers.ko.md#워커-풀로-작업-분리)을 따르세요. 신규 워크플로에 붙여 넣을 완성된 YAML은 [첫 작업 예제](../examples/runquill-first-job.yml)에 있습니다.
+기존 워크플로에서는 옮길 작업의 `runs-on`만 바꾸고 테스트를 실행합니다. 풀을 지정하려면 [워커 풀 규칙](workers.ko.md#워커-풀로-작업-분리)을 따르세요. 신규 워크플로에 붙여 넣을 완성된 YAML은 [첫 작업 예제](../examples/runquill-first-job.yml)에 있습니다.
 
 ### 러너 OS 선택
 
@@ -61,7 +61,7 @@ runs-on: ${{ format('runquill-{0}-{1}-os__ubuntu2204__build', github.run_id, git
 
 ### 다음 작업에서 Docker 빌드 레이어 재사용
 
-루트에 `Dockerfile`이 있는 저장소의 `.github/workflows/`에 [빌드 캐시 예제](../examples/runquill-build-cache.yml)를 복사합니다. 기본 브랜치의 커밋을 빌드하고, 같은 작업의 이후 단계에서 결과 이미지를 사용할 수 있습니다. 새 러너는 GitHub Actions 캐시에서 이전 빌드의 레이어를 복원합니다. 이미지마다 `scope`를 하나씩 정해 캐시 입력과 출력 양쪽에 같은 값을 쓰세요. 캐시 저장에 실패해도 빌드 결과를 사용할 수 있습니다. [Docker GitHub Actions 캐시](https://docs.docker.com/build/cache/backends/gha/)
+루트에 `Dockerfile`이 있는 저장소의 `.github/workflows/`에 [빌드 캐시 예제](../examples/runquill-build-cache.yml)를 복사합니다. 기본 브랜치의 커밋을 빌드하고, 같은 작업의 이후 단계에서 결과 이미지를 사용할 수 있습니다. 새 러너는 GitHub Actions 캐시에서 이전 빌드의 레이어를 복원할 수 있습니다. 이미지마다 `scope`를 하나씩 정해 캐시 입력과 출력 양쪽에 같은 값을 쓰세요. 캐시 저장에 실패해도 빌드 결과를 사용할 수 있습니다. [Docker GitHub Actions 캐시](https://docs.docker.com/build/cache/backends/gha/)
 
 예제는 두 액션을 커밋 SHA로 고정하고 읽기 권한만 사용합니다. 캐시는 기본 브랜치에서 갱신합니다. 빌드 시크릿은 BuildKit 시크릿 마운트로 전달하면 캐시 레이어에 남지 않습니다. [Docker 빌드 시크릿](https://docs.docker.com/build/building/secrets/)
 
