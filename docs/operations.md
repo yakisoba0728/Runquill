@@ -131,6 +131,8 @@ Administrators can open **Settings** to change the fleet limit, per-worker limit
 
 Use `docker compose exec -T manager runquill status --json` for scripts and monitoring. Schema version 1 includes `slot_limit`, `runners`, `hosts`, and `jobs`. Occupied slots are observed on reachable workers. Reserved slots account for offline workers and leases without an observed host. If Docker reports a conflicting topology, the snapshot still includes jobs and a `docker_error`, with `runners` set to `null` and a nonzero exit status.
 
+`runquill doctor --json` prints the checks as one JSON document, such as `{"checks":[{"name":"configuration","ok":false,"error":"set RUNQUILL_OWNER"}],"passed":false}`. Passing checks omit `error`. As with the plain output, the command exits with status 1 when any check fails. When a check fails, the plain output ends with a link to [Troubleshooting](#troubleshooting).
+
 If GitHub shows a queued job that Runquill has not started, run `docker compose exec manager runquill diagnose OWNER/REPO`. It checks the App’s access using a repository-scoped read-only token, reports the last recorded poll, and explains invalid labels, retries, and worker capacity for queued jobs.
 
 Use `docker compose exec manager runquill gc --dry-run` to inventory labelled runner containers without a matching queue lease. It shows the Docker host and state, checks GitHub when the queue contains the associated job, and reports incomplete inventory when a host or queue is unavailable. The command only reads containers and queue data.

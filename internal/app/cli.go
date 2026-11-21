@@ -157,12 +157,13 @@ func Main(buildVersion, registryImage string) {
 	if flag.Arg(0) == "doctor" {
 		flags := flag.NewFlagSet("runquill doctor", flag.ExitOnError)
 		repo := flags.String("repo", "", "also check whether the App covers this repository")
+		asJSON := flags.Bool("json", false, "print the checks as JSON")
 		flags.Parse(flag.Args()[1:])
 		if flags.NArg() != 0 {
 			flags.Usage()
 			os.Exit(2)
 		}
-		if err := doctor(ctx, os.Stdout, *repo); err != nil {
+		if err := doctor(ctx, os.Stdout, *repo, *asJSON); err != nil {
 			os.Exit(1)
 		}
 		return
