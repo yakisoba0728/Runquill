@@ -293,8 +293,10 @@ func (k *kubeRunners) removeOn(ctx context.Context, host, name string) error {
 	if err := k.deletePod(ctx, pod); err != nil {
 		return err
 	}
+	// Each check uses the caller's context: near the poll deadline the client rate
+	// limiter would refuse to wait and turn a slow removal into a failure.
 	err = wait.PollUntilContextTimeout(ctx, 250*time.Millisecond, 8*time.Second, true,
-		func(ctx context.Context) (bool, error) {
+		func(context.Context) (bool, error) {
 			current, err := k.pods.Get(ctx, name, meta.GetOptions{})
 			if apierrors.IsNotFound(err) {
 				return true, nil
