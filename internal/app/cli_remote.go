@@ -159,7 +159,9 @@ func (spec remoteCommandSpec) execute(name string, args []string, stdout, stderr
 	}
 	options := &remoteOptions{stderr: stderr}
 	flags := flag.NewFlagSet("runquill "+name, flag.ContinueOnError)
-	flags.SetOutput(stderr)
+	// Parse output waits until it is known whether help was asked for.
+	var parseOutput strings.Builder
+	flags.SetOutput(&parseOutput)
 	flags.StringVar(&options.url, "url", "", "panel origin (defaults to RUNQUILL_URL)")
 	flags.StringVar(&options.tokenFile, "token-file", "", "file holding the API token (defaults to RUNQUILL_TOKEN)")
 	flags.BoolVar(&options.json, "json", false, "print the panel's JSON instead of a table")
@@ -167,13 +169,17 @@ func (spec remoteCommandSpec) execute(name string, args []string, stdout, stderr
 		spec.define(flags, options)
 	}
 	flags.Usage = func() {
-		fmt.Fprintln(stderr, usage+" [flags]")
+		fmt.Fprintln(flags.Output(), usage+" [flags]")
 		flags.PrintDefaults()
 	}
 	positional, err := parseInterspersed(flags, args)
 	if errors.Is(err, flag.ErrHelp) {
+		// Asked-for help is a normal answer, unlike usage after a mistake.
+		io.WriteString(stdout, parseOutput.String())
 		return 0
 	}
+	io.WriteString(stderr, parseOutput.String())
+	flags.SetOutput(stderr)
 	if err != nil {
 		return 2
 	}
