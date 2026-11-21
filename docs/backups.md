@@ -85,7 +85,7 @@ Apply it with `docker compose -f compose.yaml -f compose.backups.yaml up -d`, ad
 
 ## Restore
 
-A restore prepares a new, fenced queue file, exactly like a plain restore. Run it with the same `RUNQUILL_OWNER` and `RUNQUILL_APP_ID` as the backup, then follow the activation steps in [Back up and recover the queue](operations.md#back-up-and-recover-the-queue).
+A restore prepares a new, fenced queue file, exactly like a plain restore. Run it with the same `RUNQUILL_OWNER` and `RUNQUILL_APP_ID` as the backup, then follow the activation steps in [Back up and recover the queue](operations.md#back-up-and-recover-the-queue). Panel settings in the backup still start on a server with different Docker workers: the manager fits them to its own workers and logs what it changed, as described in [panel navigation](panel.md#navigation).
 
 From a sealed file, provide the passphrase through the environment or `--passphrase-file`. Runquill detects the sealed format by its header. With the overlay above, the backup directory and passphrase are already mounted.
 

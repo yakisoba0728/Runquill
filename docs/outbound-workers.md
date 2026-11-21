@@ -14,7 +14,7 @@ RUNQUILL_DOCKER_HOST_LIMITS=agent://worker-a=1
 RUNQUILL_WORKER_ENROLLMENT_URL=https://workers.example.com
 ```
 
-For Compose, apply `compose.yaml` and `compose.panel.yaml`, plus any overlays used by your current installation. The worker auth overlay is needed for `workers.json` registrations. Configure the trusted proxy as described under [Connect](#connect).
+For Compose, apply `compose.yaml` and `compose.panel.yaml`, plus any overlays used by your current installation. The worker auth overlay is needed for `workers.json` registrations. Configure the trusted proxy as described under [Connect](#connect). If the panel's **Settings** already saved a worker list, the manager adds the new `agent://` host to it at startup and keeps the other saved workers, as described in [panel navigation](panel.md#navigation).
 
 As a panel administrator, open **Hosts & pools**, choose **Enroll worker** on the slot, and run the displayed command on the worker. The command registers its Docker engine, creates a private token file in the current directory, and starts the worker using the image configured for that host. Preload that image before starting. The code expires after ten minutes, works once, and is replaced if you issue a new one. Share it only with the operator of the selected machine.
 
