@@ -386,3 +386,44 @@ func TestSchedulerStopsCallingGitHubAfterRateLimit(t *testing.T) {
 		t.Fatalf("a rate-limited tick is still a successful tick: %+v", report)
 	}
 }
+
+func TestSchedulerFailsJobsOfIneligibleRepositories(t *testing.T) {
+	for _, test := range []struct {
+		organization bool
+		repo, reason string
+	}{
+		{false, `{"id":2,"private":false,"owner":{"login":"owner"}}`, "repository is public"},
+		{false, `{"id":2,"private":true,"archived":true,"owner":{"login":"owner"}}`, "repository is archived"},
+		{false, `{"id":2,"private":true,"disabled":true,"owner":{"login":"owner"}}`, "repository is disabled"},
+		{false, `{"id":3,"private":true,"owner":{"login":"owner"}}`, "GitHub repository ID is 3, not 2"},
+		{true, `{"id":2,"private":true,"visibility":"internal","owner":{"login":"owner"}}`, "repository is internal"},
+	} {
+		gh := testGitHub(t, func(w http.ResponseWriter, r *http.Request) {
+			switch r.Method + " " + r.URL.Path {
+			case "GET /repos/owner/repo/installation":
+				fmt.Fprint(w, `{"id":1,"account":{"login":"owner","type":"Organization"},"repository_selection":"all"}`)
+			case "POST /app/installations/1/access_tokens":
+				fmt.Fprint(w, `{"token":"stub"}`)
+			case "GET /repos/owner/repo":
+				fmt.Fprint(w, test.repo)
+			default:
+				t.Errorf("unexpected API request %s %s", r.Method, r.URL)
+				w.WriteHeader(http.StatusNotFound)
+			}
+		})
+		gh.organization = test.organization
+		q := testQueue(t)
+		now := time.Now()
+		recordTestJob(t, q, 9, "runquill-1-1-ci", now)
+		runtime := &testRuntime{hosts: []dockerHostSnapshot{{Name: "local", Containers: map[string]string{}}}}
+		s := &scheduler{queue: q, github: gh, runtime: runtime, limit: 1}
+		if err := s.tick(t.Context(), now); err != nil {
+			t.Fatal(err)
+		}
+		// The panel must show why the job never ran instead of a plain completion.
+		want := "repository is no longer eligible: " + test.reason
+		if j := readJob(t, q, 9); j.phase != completed || j.failure != want || j.runnerName != "" || len(runtime.started) != 0 {
+			t.Errorf("ineligible repository %s: %+v, want failure %q", test.repo, j, want)
+		}
+	}
+}

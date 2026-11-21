@@ -439,7 +439,30 @@ func (g *github) token(ctx context.Context, j job) (string, error) {
 func (g *github) eligible(ctx context.Context, j job, token string) (repository, bool, error) {
 	var repo repository
 	err := g.request(ctx, http.MethodGet, "/repos/"+j.repository, token, nil, &repo)
-	return repo, repo.ID == j.repositoryID && repo.privateFor(g.owner) && !repo.Archived && !repo.Disabled && (!g.organization || repo.Visibility == "private"), err
+	return repo, g.ineligibility(j, repo) == "", err
+}
+
+// ineligibility says why repo may not run j, or is empty when it may.
+func (g *github) ineligibility(j job, repo repository) string {
+	switch {
+	case repo.ID != j.repositoryID:
+		return fmt.Sprintf("GitHub repository ID is %d, not %d", repo.ID, j.repositoryID)
+	case !strings.EqualFold(repo.Owner.Login, g.owner):
+		return fmt.Sprintf("repository owner is %q, not %q", repo.Owner.Login, g.owner)
+	case !repo.privateFor(g.owner), g.organization && repo.Visibility != "private":
+		if v := repo.Visibility; v != "" && v != "private" {
+			return "repository is " + v
+		}
+		if !repo.Private {
+			return "repository is public"
+		}
+		return "GitHub did not report the repository visibility as private"
+	case repo.Archived:
+		return "repository is archived"
+	case repo.Disabled:
+		return "repository is disabled"
+	}
+	return ""
 }
 
 func (g *github) jobDetails(ctx context.Context, j job, token string) (workflowJob, error) {

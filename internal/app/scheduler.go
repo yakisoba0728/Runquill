@@ -589,7 +589,8 @@ func (s *scheduler) launch(ctx context.Context, j job, host, pool string, now ti
 		return false, err
 	}
 	if !eligible {
-		return false, s.queue.advance(ctx, j.id, completed, now)
+		// Runquill will never run this job, so record why instead of leaving it looking finished.
+		return false, s.fail(ctx, j, now, "repository is no longer eligible: "+s.github.ineligibility(j, repo))
 	}
 	policy := s.pools[pool]
 	if policy.Repositories != nil {
