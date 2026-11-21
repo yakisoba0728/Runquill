@@ -220,8 +220,21 @@ func TestRemoteCommandValidatesArguments(t *testing.T) {
 	if _, code, _, stderr := runRemote(t, "hosts", "list"); code != 2 || !strings.Contains(stderr, "set RUNQUILL_URL or --url") {
 		t.Errorf("missing URL: code %d, %q", code, stderr)
 	}
-	if _, code, stdout, _ := runRemote(t, "hosts", "list", "-h"); code != 0 || stdout != "" {
-		t.Errorf("help: code %d", code)
+	// Help for one command goes to standard output too.
+	for _, test := range []struct {
+		args  []string
+		usage string
+	}{
+		{[]string{"hosts", "list", "-h"}, "Usage: runquill hosts list [flags]"},
+		{[]string{"usage", "--help"}, "Usage: runquill usage [flags]"},
+		{[]string{"elastic", "-help"}, "Usage: runquill elastic [flags]"},
+		{[]string{"jobs", "show", "--help"}, "Usage: runquill jobs show JOB_ID [flags]"},
+		{[]string{"jobs", "list", "--repo", "owner/app", "-h"}, "Usage: runquill jobs list [flags]"},
+	} {
+		_, code, stdout, stderr := runRemote(t, test.args...)
+		if code != 0 || stderr != "" || !strings.HasPrefix(stdout, test.usage+"\n") || !strings.Contains(stdout, "-token-file") {
+			t.Errorf("%v: code %d, stdout %q, stderr %q", test.args, code, stdout, stderr)
+		}
 	}
 	// Help for a group is asked for, so it goes to standard output and succeeds.
 	for _, args := range [][]string{{"hosts", "--help"}, {"jobs", "-h"}, {"fleet", "help"}, {"audit", "-help"}} {
