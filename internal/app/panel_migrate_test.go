@@ -2,11 +2,57 @@ package app
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestPanelMigrateOutlivesServerWriteTimeout(t *testing.T) {
+	q := testQueue(t)
+	access := panelAccessForTest(t, q)
+	fake, api := newFakeMigrationGitHub(t)
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(150 * time.Millisecond) // a slow GitHub response
+		fake.ServeHTTP(w, r)
+	}))
+	t.Cleanup(slow.Close)
+	api.base = slow.URL
+	mux := http.NewServeMux()
+	registerMigrateRoutes(mux, access, migrateDeps{api: api})
+	server := httptest.NewUnstartedServer(mux)
+	server.Config.WriteTimeout = 100 * time.Millisecond
+	server.Start()
+	t.Cleanup(server.Close)
+	admin, err := access.startSession(t.Context(), panelIdentity{GitHubID: 101, Login: "admin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range []struct{ method, path, body, want string }{
+		{"GET", "/api/migrate/status", "", `"ready":true`},
+		{"POST", "/api/migrate/preview", `{"repository":"owner/repo","mapping":[{"from":["ubuntu-latest"]}]}`, `"hash":`},
+	} {
+		req, err := http.NewRequestWithContext(t.Context(), call.method, server.URL+call.path, strings.NewReader(call.body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Host = access.cfg.host
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Origin", access.cfg.origin)
+		req.AddCookie(&http.Cookie{Name: access.cookieName("session"), Value: admin})
+		response, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatalf("%s: %v", call.path, err)
+		}
+		body, err := io.ReadAll(response.Body)
+		response.Body.Close()
+		if err != nil || response.StatusCode != http.StatusOK || !strings.Contains(string(body), call.want) {
+			t.Fatalf("%s: HTTP %d %s, %v", call.path, response.StatusCode, body, err)
+		}
+	}
+}
 
 func TestPanelMigrateRoutes(t *testing.T) {
 	q := testQueue(t)
