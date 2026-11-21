@@ -5,15 +5,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	core "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -25,11 +28,28 @@ const kubeHost = "kubernetes"
 
 const kubeRunnerLabel = "app.kubernetes.io/managed-by=runquill"
 
+// kubeForceDeleteAfter is how long a Pod this manager removed may stay Terminating,
+// for example on a NotReady node, before it is deleted without a grace period.
+const kubeForceDeleteAfter = 5 * time.Minute
+
+// errRunnerRemovalPending reports a removal the runtime accepted while the runner
+// still exists and keeps its slot. The lease can be released; the snapshot keeps
+// counting the runner until it is gone.
+var errRunnerRemovalPending = errors.New("runner removal is still in progress")
+
 type kubeRunners struct {
 	pods    typed.PodInterface
 	events  typed.EventInterface
 	secrets typed.SecretInterface
 	options kubeRunnerOptions
+	// removing is shared by the copies made when settings change; nil never force deletes.
+	removing *kubeRemovals
+}
+
+// kubeRemovals holds the Pods this manager deleted, so only those are ever force deleted.
+type kubeRemovals struct {
+	mu   sync.Mutex
+	uids map[types.UID]bool
 }
 
 type kubeRunnerOptions struct {
@@ -108,6 +128,7 @@ func newKubeRunners(image string) (*kubeRunners, error) {
 	return &kubeRunners{
 		pods: api.Pods(opts.namespace), events: api.Events(opts.namespace),
 		secrets: api.Secrets(opts.namespace), options: opts,
+		removing: &kubeRemovals{uids: make(map[types.UID]bool)},
 	}, nil
 }
 
@@ -137,6 +158,7 @@ func (k *kubeRunners) snapshot(ctx context.Context) ([]dockerHostSnapshot, error
 	host.Containers = make(map[string]string, len(list.Items))
 	host.RunnerDiagnostics = make(map[string]jobDiagnostic)
 	mountCandidates := make(map[string]string)
+	k.forceDeleteStuck(ctx, list.Items, time.Now())
 	for _, pod := range list.Items {
 		host.Containers[pod.Name] = kubePodState(pod)
 		detail := kubePodDiagnostic(pod)
@@ -245,8 +267,12 @@ func (k *kubeRunners) runnerPod(name string) *core.Pod {
 	}
 }
 
+func kubeOwned(pod *core.Pod) bool {
+	return pod.Labels["app.kubernetes.io/managed-by"] == "runquill" && strings.HasPrefix(pod.Name, "runquill-")
+}
+
 func (k *kubeRunners) deletePod(ctx context.Context, pod *core.Pod) error {
-	if pod.Labels["app.kubernetes.io/managed-by"] != "runquill" || !strings.HasPrefix(pod.Name, "runquill-") {
+	if !kubeOwned(pod) {
 		return errors.New("refusing to remove a Pod without Runquill ownership")
 	}
 	err := k.pods.Delete(ctx, pod.Name, meta.DeleteOptions{Preconditions: &meta.Preconditions{UID: &pod.UID}})
@@ -267,10 +293,18 @@ func (k *kubeRunners) removeOn(ctx context.Context, host, name string) error {
 	if err != nil {
 		return err
 	}
+	if !kubeOwned(pod) {
+		return errors.New("refusing to remove a Pod without Runquill ownership")
+	}
+	k.removing.mark(pod.UID)
+	if pod.DeletionTimestamp != nil {
+		// A Pod on a NotReady node can stay Terminating indefinitely. Do not wait for it again.
+		return fmt.Errorf("Pod %s is terminating: %w", name, errRunnerRemovalPending)
+	}
 	if err := k.deletePod(ctx, pod); err != nil {
 		return err
 	}
-	return wait.PollUntilContextTimeout(ctx, 250*time.Millisecond, 8*time.Second, true,
+	err = wait.PollUntilContextTimeout(ctx, 250*time.Millisecond, 8*time.Second, true,
 		func(ctx context.Context) (bool, error) {
 			current, err := k.pods.Get(ctx, name, meta.GetOptions{})
 			if apierrors.IsNotFound(err) {
@@ -281,4 +315,62 @@ func (k *kubeRunners) removeOn(ctx context.Context, host, name string) error {
 			}
 			return current.UID != pod.UID, nil
 		})
+	if wait.Interrupted(err) && ctx.Err() == nil {
+		return fmt.Errorf("Pod %s is still terminating: %w", name, errRunnerRemovalPending)
+	}
+	return err
+}
+
+func (r *kubeRemovals) mark(uid types.UID) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.uids[uid] = true
+}
+
+// stuck returns the marked Pods that have been Terminating for at least
+// kubeForceDeleteAfter and forgets marked Pods that are gone.
+func (r *kubeRemovals) stuck(pods []core.Pod, now time.Time) []core.Pod {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	present := make(map[types.UID]bool, len(pods))
+	var stuck []core.Pod
+	for _, pod := range pods {
+		if !r.uids[pod.UID] {
+			continue
+		}
+		present[pod.UID] = true
+		if pod.DeletionTimestamp != nil && now.Sub(pod.DeletionTimestamp.Time) >= kubeForceDeleteAfter && kubeOwned(&pod) {
+			stuck = append(stuck, pod)
+		}
+	}
+	for uid := range r.uids {
+		if !present[uid] {
+			delete(r.uids, uid)
+		}
+	}
+	return stuck
+}
+
+// forceDeleteStuck deletes, without a grace period, the Pods this manager removed that
+// have been Terminating for longer than kubeForceDeleteAfter. Kubernetes then
+// removes each runner credential Secret through its owner reference.
+func (k *kubeRunners) forceDeleteStuck(ctx context.Context, pods []core.Pod, now time.Time) {
+	for _, pod := range k.removing.stuck(pods, now) {
+		grace := int64(0)
+		err := k.pods.Delete(ctx, pod.Name, meta.DeleteOptions{GracePeriodSeconds: &grace, Preconditions: &meta.Preconditions{UID: &pod.UID}})
+		if err != nil && !apierrors.IsNotFound(err) {
+			if ctx.Err() == nil {
+				slog.Warn("force delete terminating runner Pod", "runner", pod.Name, "error", err)
+			}
+			continue
+		}
+		slog.Warn("force deleted runner Pod stuck terminating", "runner", pod.Name, "node", pod.Spec.NodeName,
+			"terminating_since", pod.DeletionTimestamp.Time)
+	}
 }

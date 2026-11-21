@@ -740,10 +740,17 @@ func (s *scheduler) reconcile(ctx context.Context, j job, state string, detail j
 		}
 	}
 	if state != "" {
-		if err := s.runtime.removeOn(ctx, j.runnerHost, j.runnerName); err != nil {
+		err := s.runtime.removeOn(ctx, j.runnerHost, j.runnerName)
+		switch {
+		case errors.Is(err, errRunnerRemovalPending):
+			// The runtime finishes the removal on its own. Release the lease so the job can
+			// use another runner; the snapshot still counts this one's slot until it is gone.
+			slog.Warn("runner removal still in progress", "runner", j.runnerName, "repository", j.repository, "job", j.id, "error", err)
+		case err != nil:
 			return false, err
+		default:
+			removed = true
 		}
-		removed = true
 	}
 	if j.phase != completed && !outsideInstallation {
 		// A runner can exit before GitHub has sent its final job event, including in polling-only mode.
