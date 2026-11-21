@@ -15,6 +15,7 @@ import (
 
 const (
 	retryDelay      = 15 * time.Second
+	maxLaunchDelay  = 10 * time.Minute
 	idleTimeout     = 5 * time.Minute
 	completionGrace = 30 * time.Second
 	queueExpiry     = 24 * time.Hour
@@ -226,7 +227,8 @@ func (s *scheduler) tickFleet(ctx context.Context, now time.Time, state *operati
 				if s.metrics != nil {
 					s.metrics.launchErrors.Add(1)
 				}
-				if err := s.retry(ctx, r.j, now, "provision runner", r.err); err != nil && first == nil {
+				// A claimed job counts its failure when its lease is released.
+				if err := s.retryAfter(ctx, r.j, now, "provision runner", r.err, launchDelay(r.j.launchFailures), !r.claimed); err != nil && first == nil {
 					first = err
 				}
 			default:
@@ -541,18 +543,41 @@ func (s *scheduler) fail(ctx context.Context, j job, now time.Time, reason strin
 }
 
 func (s *scheduler) retry(ctx context.Context, j job, now time.Time, operation string, cause error) error {
+	return s.retryAfter(ctx, j, now, operation, cause, retryDelay, false)
+}
+
+// retryAfter makes j wait at least delay; failed counts one more failed launch toward launchDelay.
+func (s *scheduler) retryAfter(ctx context.Context, j job, now time.Time, operation string, cause error, delay time.Duration, failed bool) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
 	slog.Warn(operation, "repository", j.repository, "job", j.id, "error", cause)
-	retryAt := now.Add(retryDelay)
+	retryAt := now.Add(delay)
 	var apiErr *githubError
 	if errors.As(cause, &apiErr) && apiErr.retryAt.After(retryAt) {
 		retryAt = apiErr.retryAt
 	}
-	_, err := s.queue.ExecContext(ctx, "UPDATE jobs SET retry_at = ?, retry_reason = ? WHERE job_id = ?",
-		retryAt.Unix(), retryMessage(operation, cause), j.id)
+	increment := 0
+	if failed {
+		increment = 1
+	}
+	_, err := s.queue.ExecContext(ctx, "UPDATE jobs SET retry_at = ?, retry_reason = ?, launch_failures = launch_failures + ? WHERE job_id = ?",
+		retryAt.Unix(), retryMessage(operation, cause), increment, j.id)
 	return err
+}
+
+// launchDelay is how long a queued job waits after failures consecutive launches that no runner
+// picked up. It doubles from retryDelay up to maxLaunchDelay, so a single failure retries as fast
+// as before while a broken runner image cannot spend the GitHub API rate limit.
+func launchDelay(failures int) time.Duration {
+	delay := retryDelay
+	for range failures {
+		if delay >= maxLaunchDelay {
+			break
+		}
+		delay *= 2
+	}
+	return min(delay, maxLaunchDelay)
 }
 
 func retryMessage(operation string, cause error) string {
@@ -759,13 +784,16 @@ func (s *scheduler) reconcile(ctx context.Context, j job, state string, detail j
 	if detail.Message != "" && detail.Code != "pod_terminating" {
 		previousRunner = "Previous runner · " + detail.Message
 	}
+	// A runner released while its job is still queued never picked it up, so the next launch waits longer.
 	_, err = s.queue.ExecContext(ctx, `UPDATE jobs SET runner_name = NULL, runner_host = NULL, runner_id = NULL,
         launched_at = NULL, retry_at = ?,
         runner_cleaned_at = CASE WHEN phase = ? THEN max(changed_at, ?) END,
         runner_cleaned_host = CASE WHEN phase = ? THEN runner_host END,
         retry_reason = CASE WHEN phase = ? THEN coalesce(nullif(?, ''), nullif(retry_reason, ''),
-            'runner became unavailable while the job was queued') ELSE '' END
-        WHERE job_id = ? AND runner_name = ?`, now.Add(retryDelay).Unix(), completed, time.Now().Unix(), completed, queued, previousRunner, j.id, j.runnerName)
+            'runner became unavailable while the job was queued') ELSE '' END,
+        launch_failures = CASE WHEN phase = ? THEN launch_failures + 1 ELSE 0 END
+        WHERE job_id = ? AND runner_name = ?`, now.Add(launchDelay(j.launchFailures)).Unix(), completed, time.Now().Unix(), completed, queued, previousRunner,
+		queued, j.id, j.runnerName)
 	if err != nil {
 		return removed, err
 	}
