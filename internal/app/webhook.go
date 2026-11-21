@@ -117,7 +117,11 @@ func webhook(q *queue, api *github, secret []byte, panel *panelState) http.Handl
 						w.WriteHeader(http.StatusAccepted)
 						return
 					}
-					if err != nil {
+					if transientGitHubError(err) {
+						// GitHub does not redeliver a failed webhook. The scheduler repeats this check before it
+						// requests a token or registers a runner, so record the job instead of losing it.
+						slog.Warn("verify webhook repository access; checking again before launch", "job", job.id, "error", err)
+					} else if err != nil {
 						slog.Warn("verify webhook repository access", "job", job.id, "error", err)
 						w.WriteHeader(http.StatusServiceUnavailable)
 						return
