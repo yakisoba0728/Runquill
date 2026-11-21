@@ -112,7 +112,7 @@ sh install.sh --dir "$HOME/runquill" --repository-scope selected
 ./runquill setup --repository-scope selected
 ```
 
-GitHub에서 **Only select repositories**를 고르고 사용할 비공개 저장소를 선택합니다. 저장소 목록은 GitHub가 관리하고, `setup`은 `.env`에 `RUNQUILL_REPOSITORY_SCOPE=selected`를 기록합니다. 나중에 GitHub App 설치 설정에서 저장소를 추가하면 매니저를 재시작하지 않아도 다음 폴링에서 해당 작업을 발견할 수 있습니다. 웹훅 전용 설정에서는 GitHub가 보내는 이벤트를 통해 작업을 감지합니다. 첫 작업을 실행하기 전 매니저 환경에서 `runquill doctor --repo OWNER/REPO`로 접근을 확인하세요. [GitHub App 저장소 접근 변경](https://docs.github.com/en/apps/using-github-apps/reviewing-and-modifying-installed-github-apps)
+GitHub에서 **Only select repositories**를 고르고 사용할 비공개 저장소를 선택합니다. 저장소 목록은 GitHub가 관리하고, `setup`은 `.env`에 `RUNQUILL_REPOSITORY_SCOPE=selected`를 기록합니다. 저장소 추가·제거는 GitHub App 설치 설정에서 합니다. 폴링을 켰다면 매니저를 재시작하지 않아도 다음 폴링에서 새로 승인한 저장소의 작업을 발견할 수 있습니다. 웹훅 전용 설정에서는 GitHub가 보내는 이벤트를 통해 작업을 감지합니다. 첫 작업을 실행하기 전 매니저 환경에서 `runquill doctor --repo OWNER/REPO`로 접근을 확인하세요. [GitHub App 저장소 접근 변경](https://docs.github.com/en/apps/using-github-apps/reviewing-and-modifying-installed-github-apps)
 
 기존 앱의 설치 범위를 바꾸려면 GitHub 설정을 변경한 뒤 매니저 설정의 `RUNQUILL_REPOSITORY_SCOPE`도 `all` 또는 `selected`로 맞춥니다. Compose 매니저를 다시 만들거나 k3s 설정 Secret을 갱신하고 Deployment를 재시작하세요. 이 값을 생략하면 기본값은 `all`입니다.
 
@@ -126,7 +126,7 @@ GitHub에서 **Only select repositories**를 고르고 사용할 비공개 저�
 
 Compose용 공개 설치 스크립트에도 같은 옵션을 전달할 수 있습니다. k3s에서는 `setup`에 `--k3s`를 추가합니다. 기본적으로 작업을 요청한 저장소에 러너를 등록하며, 저장소 **Actions 읽기**와 **Administration 읽기·쓰기** 권한을 사용합니다. 기존 App을 사용한다면 `.env`에 `RUNQUILL_OWNER=YOUR_ORG`와 `RUNQUILL_OWNER_TYPE=organization`을 설정합니다. 조직의 패널 설정에는 실제 관리자의 GitHub 사용자 ID를 입력합니다. [GitHub App 등록](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest)
 
-조직 러너 그룹을 사용하려면 **선택한 저장소**만 허용하고 공개 저장소 접근을 끈 조직 소유 그룹을 만듭니다. 그룹의 GitHub 워크플로 단위 제한은 사용하지 않습니다. App이 접근할 수 있는 비공개 저장소만 그룹에 추가하고 `setup` 또는 설치 스크립트에 `--runner-group-id ID`를 전달합니다. 기존 App은 `RUNQUILL_RUNNER_GROUP_ID=ID`와 조직의 **Self-hosted runners 읽기·쓰기** 권한을 설정합니다. Runquill은 러너를 등록할 때마다 먼저 그룹 정책과 저장소 접근을 확인합니다. 워크플로에서 러너 그룹을 지정한다면 설정한 그룹 이름을 쓰고, 작업별 라벨은 그대로 유지합니다. GitHub는 그룹 접근과 일치하는 라벨로 조직 러너에 작업을 배정하므로, 서로의 워크플로를 신뢰하는 저장소끼리만 그룹을 공유하세요. [GitHub 러너 그룹](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/manage-access) · [조직 러너 API](https://docs.github.com/en/rest/actions/self-hosted-runners#create-configuration-for-a-just-in-time-runner-for-an-organization)
+조직 러너 그룹을 사용하려면 **선택한 저장소**만 허용하고 공개 저장소 접근을 끈 조직 소유 그룹을 만듭니다. 그룹의 GitHub 워크플로 단위 제한은 사용하지 않습니다. App이 접근할 수 있는 비공개 저장소만 그룹에 추가하고 `setup` 또는 설치 스크립트에 `--runner-group-id ID`를 전달합니다. 기존 App은 `.env`에 `RUNQUILL_RUNNER_GROUP_ID=ID`를 설정하고 조직의 **Self-hosted runners 읽기·쓰기** 권한을 부여합니다. Runquill은 러너를 등록할 때마다 먼저 그룹 정책과 저장소 접근을 확인합니다. 워크플로에서 러너 그룹을 지정한다면 설정한 그룹 이름을 쓰고, 작업별 라벨은 그대로 유지합니다. GitHub는 그룹 접근과 일치하는 라벨로 조직 러너에 작업을 배정하므로, 서로의 워크플로를 신뢰하는 저장소끼리만 그룹을 공유하세요. [GitHub 러너 그룹](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/manage-access) · [조직 러너 API](https://docs.github.com/en/rest/actions/self-hosted-runners#create-configuration-for-a-just-in-time-runner-for-an-organization)
 
 `runquill doctor --repo YOUR_ORG/REPO`로 App과 그룹 범위를, `runquill diagnose YOUR_ORG/REPO`로 대기 작업을 확인할 수 있습니다.
 
