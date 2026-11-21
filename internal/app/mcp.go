@@ -722,8 +722,8 @@ type mcpJob struct {
 	Runner        string `json:"runner,omitempty"`
 }
 
-// getJob reads one row with readPanelHistory's columns and panelHistoryRow,
-// then adds the live status the snapshot holds for active jobs.
+// getJob reads the row GET /api/jobs/{id} serves, then adds the live status
+// the snapshot holds for active jobs.
 func (s *mcpServer) getJob(ctx context.Context, args mcpArgs) (any, error) {
 	if _, ok := args["id"]; !ok {
 		return nil, mcpToolError("id is required.")
@@ -732,24 +732,14 @@ func (s *mcpServer) getJob(ctx context.Context, args mcpArgs) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	var j job
-	var cleanedAt int64
-	err = s.db.QueryRowContext(ctx, `SELECT job_id, repository, route, phase, changed_at,
-        coalesce(runner_name, ''), coalesce(runner_host, runner_cleaned_host, ''), retry_at, retry_reason,
-        coalesce(failure, ''), coalesce(github_created_at, 0), coalesce(discovered_at, 0),
-        coalesce(provisioned_at, 0), coalesce(github_started_at, 0), coalesce(runner_cleaned_at, 0),
-        coalesce(discovery_source, ''), `+jobLaunchTimingColumns+`
-        FROM jobs WHERE job_id = ?`, id).Scan(&j.id, &j.repository, &j.route, &j.phase, &j.changedAt, &j.runnerName,
-		&j.runnerHost, &j.retryAt, &j.retryReason, &j.failure, &j.githubCreatedAt, &j.discoveredAt,
-		&j.provisionedAt, &j.githubStartedAt, &cleanedAt, &j.discoverySource,
-		&j.jitRequestedMS, &j.jitRegisteredMS, &j.runnerLaunchMS)
-	if errors.Is(err, sql.ErrNoRows) {
+	row, err := readPanelJob(ctx, s.db, id, s.panel.usagePools(), s.now())
+	if errors.Is(err, errPanelJobMissing) {
 		return nil, mcpToolError(fmt.Sprintf("Job %d is not in the job history. Finished jobs are kept for seven days.", id))
 	}
 	if err != nil {
 		return nil, err
 	}
-	out := mcpJob{panelHistoryJob: panelHistoryRow(j, cleanedAt, s.panel.usagePools(), s.now())}
+	out := mcpJob{panelHistoryJob: row}
 	if fleet := s.snapshot().Fleet; fleet != nil {
 		for _, live := range fleet.Jobs {
 			if live.ID == id {

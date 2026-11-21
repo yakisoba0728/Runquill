@@ -56,6 +56,7 @@ type panelHistoryFilter struct {
 
 var errPanelJobNotWaiting = errors.New("This job is no longer waiting for a runner.")
 var errPanelJobNoDelay = errors.New("This job has no retry delay to clear.")
+var errPanelJobMissing = errors.New("This job is not in the job history.")
 
 func parsePanelHistoryFilter(query url.Values) (panelHistoryFilter, bool) {
 	filter := panelHistoryFilter{limit: panelHistoryPage, repository: strings.ToLower(strings.TrimSpace(query.Get("repository"))),
@@ -112,6 +113,31 @@ func (p *panelState) jobHistory(w http.ResponseWriter, r *http.Request, db *sql.
 	p.mu.RUnlock()
 	page.addLiveDiagnostics(fleet)
 	panelJSON(w, http.StatusOK, page)
+}
+
+// jobDetail serves one row of the job history, exactly as GET /api/jobs lists it.
+func (p *panelState) jobDetail(w http.ResponseWriter, r *http.Request, db *sql.DB) {
+	id, ok := panelJobID(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	row, err := readPanelJob(ctx, db, id, p.usagePools(), time.Now())
+	if errors.Is(err, errPanelJobMissing) {
+		http.Error(w, "This job is not in the job history.", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, "Could not read the job history.", http.StatusServiceUnavailable)
+		return
+	}
+	page := panelHistoryPageResponse{Jobs: []panelHistoryJob{row}}
+	p.mu.RLock()
+	fleet := p.snapshot.Fleet
+	p.mu.RUnlock()
+	page.addLiveDiagnostics(fleet)
+	panelJSON(w, http.StatusOK, page.Jobs[0])
 }
 
 func (page *panelHistoryPageResponse) addLiveDiagnostics(fleet *statusReport) {
@@ -201,6 +227,29 @@ func readPanelHistory(ctx context.Context, db *sql.DB, filter panelHistoryFilter
 		page.Jobs = append(page.Jobs, panelHistoryRow(j, cleanedAt, pools, now))
 	}
 	return page, rows.Err()
+}
+
+// readPanelJob reads one job with readPanelHistory's columns and
+// panelHistoryRow. A job that is not in the table is errPanelJobMissing.
+func readPanelJob(ctx context.Context, db *sql.DB, id int64, pools workerPools, now time.Time) (panelHistoryJob, error) {
+	var j job
+	var cleanedAt int64
+	err := db.QueryRowContext(ctx, `SELECT job_id, repository, route, phase, changed_at,
+        coalesce(runner_name, ''), coalesce(runner_host, runner_cleaned_host, ''), retry_at, retry_reason,
+        coalesce(failure, ''), coalesce(github_created_at, 0), coalesce(discovered_at, 0),
+        coalesce(provisioned_at, 0), coalesce(github_started_at, 0), coalesce(runner_cleaned_at, 0),
+        coalesce(discovery_source, ''), `+jobLaunchTimingColumns+`
+        FROM jobs WHERE job_id = ?`, id).Scan(&j.id, &j.repository, &j.route, &j.phase, &j.changedAt, &j.runnerName,
+		&j.runnerHost, &j.retryAt, &j.retryReason, &j.failure, &j.githubCreatedAt, &j.discoveredAt,
+		&j.provisionedAt, &j.githubStartedAt, &cleanedAt, &j.discoverySource,
+		&j.jitRequestedMS, &j.jitRegisteredMS, &j.runnerLaunchMS)
+	if errors.Is(err, sql.ErrNoRows) {
+		return panelHistoryJob{}, errPanelJobMissing
+	}
+	if err != nil {
+		return panelHistoryJob{}, err
+	}
+	return panelHistoryRow(j, cleanedAt, pools, now), nil
 }
 
 func panelHistoryRow(j job, cleanedAt int64, pools workerPools, now time.Time) panelHistoryJob {

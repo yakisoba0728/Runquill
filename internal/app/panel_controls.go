@@ -83,6 +83,9 @@ func (a *panelAccess) register(mux *http.ServeMux, panel *panelState) {
 	mux.HandleFunc("GET /api/jobs", a.require("fleet:read", func(w http.ResponseWriter, r *http.Request, _ panelIdentity) {
 		panel.jobHistory(w, r, a.db)
 	}))
+	mux.HandleFunc("GET /api/jobs/{id}", a.require("fleet:read", func(w http.ResponseWriter, r *http.Request, _ panelIdentity) {
+		panel.jobDetail(w, r, a.db)
+	}))
 	mux.HandleFunc("POST /api/jobs/{id}/cancel", a.require("jobs:write", a.cancelJob))
 	mux.HandleFunc("POST /api/jobs/{id}/retry", a.require("jobs:write", a.retryJob))
 	mux.HandleFunc("POST /api/hosts/cordon", a.require("hosts:write", func(w http.ResponseWriter, r *http.Request, user panelIdentity) {
