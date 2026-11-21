@@ -153,6 +153,25 @@ func TestRemoteCommandNamesDoNotShadowMainCommands(t *testing.T) {
 	}
 }
 
+// The top-level usage spells out the remote commands that are a group by
+// themselves exactly as the group help does.
+func TestMainUsageListsSingleRemoteCommands(t *testing.T) {
+	for name := range remoteCommands {
+		if strings.Contains(name, " ") {
+			continue
+		}
+		var line string
+		for l := range strings.SplitSeq(remoteUsage, "\n") {
+			if strings.HasPrefix(strings.TrimSpace(l), "runquill "+name+" ") {
+				line = strings.TrimSpace(l)
+			}
+		}
+		if line == "" || !strings.Contains(mainUsage, "| "+line+" |") {
+			t.Errorf("top-level usage does not show %q as the group help does", line)
+		}
+	}
+}
+
 func TestRemoteCommandValidatesArguments(t *testing.T) {
 	newRemoteFixture(t)
 	t.Setenv("RUNQUILL_TOKEN", testAPIToken)
