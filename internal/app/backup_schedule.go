@@ -256,6 +256,7 @@ func takeScheduledBackup(ctx context.Context, deps backupScheduleDeps, at time.T
 		return "", 0, err
 	}
 	removeStaleBackupStages(cfg.dir)
+	removeStaleVerifyDirs(cfg.dir)
 	stage, err := os.MkdirTemp(cfg.dir, backupStagePrefix+"*")
 	if err != nil {
 		return "", 0, err

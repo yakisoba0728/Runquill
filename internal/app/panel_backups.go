@@ -110,6 +110,8 @@ func backupVerificationError(err error) string {
 	switch {
 	case errors.Is(err, errBackupVerificationPassphrase):
 		return "Could not load the backup passphrase for verification."
+	case errors.Is(err, errBackupVerificationWorkspace):
+		return "Could not create a temporary directory in the backup directory for verification."
 	case errors.Is(err, backupseal.ErrAuthentication) || errors.Is(err, backupseal.ErrHeader):
 		return "The sealed backup is damaged or the passphrase is wrong."
 	case errors.Is(err, errQueueBackupIdentity):
