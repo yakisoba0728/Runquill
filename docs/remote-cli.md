@@ -21,6 +21,7 @@ runquill jobs list --token-file ~/.config/runquill/token --outcome failed --sinc
 
 | Command | Token scope | Output |
 | --- | --- | --- |
+| `fleet status [--check]` | `fleet:read` | Queue depth, running jobs, host totals and current problems from the latest snapshot, the same summary as the MCP `fleet_status` tool. |
 | `jobs list [--repo OWNER/NAME] [--outcome waiting\|running\|finished\|failed] [--since 24h\|7d] [--limit 1-100]` | `fleet:read` | Newest jobs first from the seven-day history. |
 | `jobs show JOB_ID` | `fleet:read` | One job from the history: outcome, failure or retry reason, diagnostic, times, wait, stage timing and its GitHub URL. |
 | `runners list` | `fleet:read` | Runners in the latest snapshot. |
@@ -32,8 +33,8 @@ runquill jobs list --token-file ~/.config/runquill/token --outcome failed --sinc
 
 `hosts:write` and `jobs:write` tokens need an operator or administrator owner. Because a token has one scope, reading and changing the fleet needs two tokens.
 
-Add `--json` to any command for machine-readable output. `jobs list` prints the panel's `GET /api/jobs` page, `jobs show` prints the `GET /api/jobs/{id}` row, `runners list` and `hosts list` print the snapshot's `runner_inventory` and `fleet.hosts` arrays, and `pools list` prints its own summary. The change commands print `{"job_id":…,"action":…}` or `{"host":…,"cordoned":…}`.
+Add `--json` to any command for machine-readable output. `jobs list` prints the panel's `GET /api/jobs` page, `jobs show` prints the `GET /api/jobs/{id}` row, `runners list` and `hosts list` print the snapshot's `runner_inventory` and `fleet.hosts` arrays, `fleet status` prints the MCP `fleet_status` result, and `pools list` prints its own summary. The change commands print `{"job_id":…,"action":…}` or `{"host":…,"cordoned":…}`.
 
-The CLI exits with status 0 on success, 1 when the panel refuses or fails the request, and 2 for invalid arguments or a missing URL or token.
+The CLI exits with status 0 on success, 1 when the panel refuses or fails the request, and 2 for invalid arguments or a missing URL or token. `fleet status --check` also exits with status 1 when the summary lists a problem, after printing it, so a scheduled check can alert on it.
 
 The remote CLI is covered by tests against a local test server. Use it against your own panel before you script it.
