@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -382,8 +383,9 @@ type usageQuery struct {
 
 var errUsageQuery = errors.New("Use dates as YYYY-MM-DD at most 400 days apart, group day, repository, pool or host, and a valid repository.")
 
-func parseUsageQuery(r *http.Request, now time.Time) (usageQuery, error) {
-	query := r.URL.Query()
+// parseUsageQuery reads the GET /api/usage parameters, which the MCP
+// usage_summary tool also builds.
+func parseUsageQuery(query url.Values, now time.Time) (usageQuery, error) {
 	u := usageQuery{group: cmp.Or(query.Get("group"), "day"),
 		repository: strings.ToLower(strings.TrimSpace(query.Get("repository")))}
 	switch u.group {
@@ -521,7 +523,7 @@ func (p *panelState) usagePools() workerPools {
 
 func registerUsageRoutes(mux *http.ServeMux, a *panelAccess, pools func() workerPools) {
 	mux.HandleFunc("GET /api/usage", a.require("fleet:read", func(w http.ResponseWriter, r *http.Request, _ panelIdentity) {
-		u, err := parseUsageQuery(r, time.Now())
+		u, err := parseUsageQuery(r.URL.Query(), time.Now())
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
