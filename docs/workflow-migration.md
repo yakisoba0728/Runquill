@@ -56,6 +56,7 @@ runquill workflow check --json path/to/workflow.yml
 | `untrusted-trigger` | high | A self-hosted job runs on `pull_request_target` or `workflow_run`. |
 | `fork-trigger` | warning | A self-hosted job runs on `pull_request` or review events, which can run fork code. |
 | `runs-on` | warning | A Runquill label is malformed: not the only label, not built with `format()`, a matrix job (one whose `strategy` has a `matrix` key) without `strategy.job-index`, an invalid pool or `os__` suffix or a label that can exceed 100 characters. Also flags self-hosted jobs that Runquill will not serve. |
+| `duplicate-suffix` | warning | Two jobs in the same file build the same Runquill label, so either job can take the other's runner. The whole lowercase suffix is compared, including `pool__` and `os__` selectors, and a matrix suffix with `strategy.job-index` also matches a literal suffix such as `test-1`. |
 | `pool` | warning | The label names a pool missing from `RUNQUILL_WORKER_POOLS`. |
 | `runner-image` | warning | The label selects an `os__NAME__` image missing from the runner image catalogue, or one its pool's `images` list does not allow. |
 | `docker` | warning | The job seems to need Docker (by a heuristic), but its pool sets `privileged: false`. |
