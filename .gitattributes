@@ -1,2 +1,2 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# Check out text files with LF on every OS so gofmt, scripts and tests agree.
+* text=auto eol=lf
