@@ -4,10 +4,12 @@ package app
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"strings"
 	"syscall"
@@ -54,9 +56,23 @@ func TestRunnerLogsFollowKillsDockerOnDisconnect(t *testing.T) {
 	}
 	cancel()
 	for _, pid := range pids {
-		waitFor(t, "process "+strconv.Itoa(pid)+" to exit", func() bool {
-			return errors.Is(syscall.Kill(pid, 0), syscall.ESRCH)
-		})
+		waitFor(t, "process "+strconv.Itoa(pid)+" to exit", func() bool { return processExited(pid) })
 	}
 	waitFor(t, "stream slot release", func() bool { return len(f.logs.streams) == 0 })
+}
+
+// processExited reports whether pid is gone or a zombie. The killed grandchild is
+// reparented to PID 1, and a container whose PID 1 is not an init, such as
+// go test run directly by docker run, never reaps it.
+func processExited(pid int) bool {
+	if errors.Is(syscall.Kill(pid, 0), syscall.ESRCH) {
+		return true
+	}
+	stat, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return false
+	}
+	// The state follows the parenthesised command name.
+	end := bytes.LastIndexByte(stat, ')')
+	return end >= 0 && len(stat) > end+2 && stat[end+2] == 'Z'
 }
