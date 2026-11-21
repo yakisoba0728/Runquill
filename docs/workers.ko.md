@@ -4,9 +4,7 @@
 
 ## Docker 작업 서버 추가
 
-NAT 뒤에 있는 워커는 [아웃바운드 워커](outbound-workers.ko.md)로 등록해 HTTPS로 매니저에 연결할 수 있습니다.
-
-매니저 한 대에서 로컬 Docker와 SSH로 연결한 여러 Docker 서버를 사용합니다. 각 서버는 Linux의 rootful Docker, cgroup v2, Docker 소켓에 접근할 수 있는 SSH 계정이 필요합니다. `RUNQUILL_RUNNER_IMAGE`에 해당하는 이미지는 매니저가 이 연결로 각 서버에 받습니다.
+매니저 한 대가 사용할 Docker 엔진을 `.env`에 나열합니다. 각 서버는 Linux의 rootful Docker, cgroup v2, Docker 소켓에 접근할 수 있는 SSH 계정이 필요합니다. `RUNQUILL_RUNNER_IMAGE`에 해당하는 이미지는 매니저가 이 연결로 각 서버에 받습니다. 전용 SSH 키를 쓰고, `known_hosts`를 채울 때 서버의 호스트 키를 확인합니다.
 
 ```dotenv
 RUNQUILL_DOCKER_HOSTS=local,ssh://builder@worker.example.com
@@ -15,7 +13,7 @@ RUNQUILL_DOCKER_HOST_LIMITS=local=2,ssh://builder@worker.example.com=1
 RUNQUILL_SSH_DIR=/path/to/runquill-ssh
 ```
 
-지정한 디렉터리에 전용 SSH 키, 서버의 키를 확인한 `known_hosts`, SSH `config`를 넣습니다. `config`에는 `IdentityFile /root/.ssh/id_ed25519`처럼 컨테이너 안의 키 경로와 `BatchMode yes`, `StrictHostKeyChecking yes`를 설정합니다.
+지정한 디렉터리에 전용 SSH 키, `known_hosts`, SSH `config`를 넣습니다. `config`에는 `IdentityFile /root/.ssh/id_ed25519`처럼 컨테이너 안의 키 경로와 `BatchMode yes`, `StrictHostKeyChecking yes`를 설정합니다.
 
 ```sh
 docker compose -f compose.yaml -f compose.ssh.yaml up -d
@@ -26,7 +24,7 @@ docker compose -f compose.yaml -f compose.ssh.yaml exec manager runquill doctor
 
 서버 연결이 끊기면 해당 서버의 러너 기록과 마지막으로 확인한 미추적 러너 슬롯을 전체 한도에 반영합니다. 정상 서버는 남는 슬롯으로 작업을 계속 받습니다. 연결한 적이 없는 서버의 슬롯은 서버별 한도만큼 예약하며, 서버별 한도가 없으면 전체 한도만큼 예약합니다.
 
-정비 전 `cordon`을 실행하면 해당 서버의 새 작업 배정이 멈추고 기존 작업은 계속 실행됩니다. `status`에서 서버 연결 상태, 정비 상태, 슬롯 사용량을 확인할 수 있습니다. 서버를 목록에서 빼기 전에는 해당 서버의 슬롯이 모두 비었는지 확인하세요. 새 작업을 다시 받으려면 `uncordon`을 실행합니다. 정비 상태는 매니저를 재시작해도 유지됩니다.
+정비 전 `cordon`을 실행하면 해당 서버의 새 작업 배정이 멈추고 기존 작업은 계속 실행됩니다. `status`에서 서버 연결 상태, 정비 상태, 슬롯 사용량을 확인할 수 있습니다. 서버를 목록에서 빼기 전에는 해당 서버의 슬롯이 모두 비었는지 확인하세요. 새 작업을 다시 받으려면 `uncordon`을 실행합니다. 정비 상태는 대기열 볼륨에 저장되므로 매니저를 재시작해도 유지됩니다.
 
 ```sh
 docker compose -f compose.yaml -f compose.ssh.yaml exec manager runquill host cordon ssh://builder@worker.example.com
@@ -34,9 +32,11 @@ docker compose -f compose.yaml -f compose.ssh.yaml exec manager runquill status
 docker compose -f compose.yaml -f compose.ssh.yaml exec manager runquill host uncordon ssh://builder@worker.example.com
 ```
 
+NAT 뒤에 있는 워커는 HTTPS로 매니저에 연결하는 [아웃바운드 워커](outbound-workers.ko.md)로 추가합니다.
+
 ## 워커 풀로 작업 분리
 
-`.env`에 `RUNQUILL_WORKER_POOLS` JSON을 설정하면 작업을 워커 풀로 보낼 수 있습니다. `hosts`에는 `RUNQUILL_DOCKER_HOSTS`에 적은 이름을 그대로 사용합니다. 호스트는 풀 하나에 속하고, 목록에 없는 호스트는 `default` 풀에 속합니다.
+`.env`에 `RUNQUILL_WORKER_POOLS` JSON 객체를 설정하면 워커 풀을 사용합니다. 키는 풀 이름이고, `hosts`에는 `RUNQUILL_DOCKER_HOSTS`에 적은 이름을 그대로 사용합니다. 호스트는 풀 하나에 속하고, 목록에 없는 호스트는 `default` 풀에 속합니다. 풀 설정은 `default`에도 적용할 수 있습니다.
 
 ```dotenv
 RUNQUILL_WORKER_POOLS='{"build":{"hosts":["ssh://builder@worker.example.com"],"repositories":["you/project"],"cpus":4,"memory_mib":8192}}'

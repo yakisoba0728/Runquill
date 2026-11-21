@@ -29,9 +29,9 @@ CGO_ENABLED=0 go build -o runquill .
 
 러너 이미지를 빌드한 뒤 `RUNQUILL_TEST_DOCKER_IMAGE=runquill-runner:local go test ./internal/app -run '^TestDockerRunner$' -v`로 중첩 Docker 검증을 실행합니다. 로컬 GitHub 리스너 대역으로 Docker 빌드, PostgreSQL, 바인드 마운트, 컨테이너 삭제를 확인합니다.
 
-[CI](../.github/workflows/ci.yml)는 amd64와 arm64 Linux에서 Go 테스트와 중첩 Docker 검증을 실행합니다. amd64에서는 임시 k3s 클러스터도 띄워 배정을 멈추면 작업이 대기하고, 재개하면 러너가 시작되며, 작업이 끝나면 러너 Pod와 자격 증명 Secret이 삭제되는지 확인합니다. 관리자와 뷰어에 별도 GitHub 계정을 쓰는 [OAuth 검증](../internal/app/panel_live_oauth_test.go)은 전용 OAuth 앱을 준비해 로컬에서 실행할 수 있습니다.
+[CI](../.github/workflows/ci.yml)는 Go 점검을 amd64와 arm64 네이티브 이미지 빌드, 중첩 Docker 검증과 병렬로 실행합니다. amd64 런타임 점검에서는 K3s도 실행해 호스트 정비, 러너 배정, Pod와 Secret 정리를 확인합니다. 러너 이미지나 그 빌드 워크플로가 바뀌면 추가 OS 빌드 4개도 실행합니다. 관리자와 뷰어에 별도 GitHub 계정을 쓰는 [OAuth 검증](../internal/app/panel_live_oauth_test.go)은 전용 OAuth 앱을 준비해 실행할 수 있습니다.
 
-버전 태그를 올리면 [릴리스 워크플로](../.github/workflows/release.yml)가 CI를 실행하고, amd64와 arm64 이미지를 GHCR에 게시하며, 같은 버전의 Linux 바이너리와 체크섬을 릴리스에 첨부합니다. 이 저장소에 게시한 뒤에는 두 아키텍처의 깨끗한 Linux 컨테이너에서 공개 설치 스크립트로 해당 태그를 검증합니다. 처음 게시한 뒤 익명으로 받을 수 있어야 한다면 두 패키지를 공개로 바꿉니다. 워크플로는 저장소 소유자의 네임스페이스에 게시하므로 포크는 자체 이미지 이름을 사용합니다. [GitHub Container registry 접근](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
+버전 태그를 올리면 [릴리스 워크플로](../.github/workflows/release.yml)가 아키텍처와 OS별 네이티브 작업에서 각 이미지를 한 번씩 빌드합니다. 테스트한 이미지를 GHCR에 게시하고, 단독 실행 파일은 같은 매니저 이미지에서 꺼냅니다. 그런 다음 두 아키텍처에서 공개 설치 스크립트로 게시된 릴리스를 검증합니다. 포크는 자기 GitHub 소유자의 네임스페이스에 게시합니다. 익명으로 받을 수 있게 하려면 두 패키지를 공개로 바꿉니다. [GitHub Container registry 접근](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
 
 ## 설치와 업그레이드 검증
 

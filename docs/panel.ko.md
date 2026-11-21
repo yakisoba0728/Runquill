@@ -44,7 +44,7 @@
 
 | 범위 | 경로 |
 | --- | --- |
-| `fleet:read` | `GET /snapshot`, `GET /api/events`, `GET /api/jobs`, `GET /api/elastic`, `GET /api/usage`, `POST /mcp` |
+| `fleet:read` | `GET /snapshot`, `GET /api/events`, `GET /api/jobs`, `GET /api/jobs/{id}`, `GET /api/elastic`, `GET /api/usage`, `POST /mcp` |
 | `hosts:write` | `POST /api/hosts/cordon` |
 | `jobs:write` | `POST /api/jobs/{id}/cancel`, `POST /api/jobs/{id}/retry` |
 
@@ -72,11 +72,11 @@ macOS에서는 Cmd+K, 그 밖의 환경에서는 Ctrl+K를 누르거나, 입력�
 
 ## 러너 로그
 
-Operator와 Admin은 현재 작업을 맡은 러너의 컨테이너 출력을 볼 수 있습니다. GitHub 단계 로그가 아니라 러너 프로세스의 출력(`docker logs --timestamps`)이며, 단계 로그는 GitHub에 남습니다. 조회할 때마다 `runner.logs`로 감사 기록에 남습니다.
+Operator와 Admin은 현재 작업을 맡은 러너의 컨테이너 출력을 볼 수 있습니다. GitHub 단계 로그가 아니라 러너 프로세스의 출력(`docker logs --timestamps`, `RUNQUILL_CONTAINER_ENGINE=podman`이면 `podman logs`)이며, 단계 로그는 GitHub에 남습니다. 조회할 때마다 `runner.logs`로 감사 기록에 남습니다.
 
 - `local` Docker 호스트와 `ssh://` 호스트의 러너만 지원합니다. Kubernetes와 `agent://` 러너는 로그를 볼 수 없다고 응답합니다.
 - 요청 하나는 최근 2000줄까지 반환하거나, 최대 15분 동안 새 줄을 이어서 받습니다. 출력은 8 MiB에서 멈추며, 러너 인증 정보를 한 번 더 보호하기 위해 200자 이상 이어진 base64 문자는 `[redacted]`로 바꿉니다.
 - 로그 요청은 동시에 최대 8개까지 실행합니다. API 토큰으로는 로그를 읽을 수 없습니다.
-- `RUNQUILL_CONTAINER_ENGINE=podman`이어도 매니저는 로그를 읽을 때 항상 `docker` CLI를 실행합니다.
+- 매니저는 `RUNQUILL_CONTAINER_ENGINE`이 선택한 CLI로 로그를 읽고, `ssh://` 호스트에는 러너를 시작할 때와 같은 방식으로 접속합니다.
 
-러너 로그 스트리밍은 가짜 Docker 명령으로만 테스트했습니다. 실제 운영 환경에서는 아직 실행하지 않았습니다.
+러너 로그 스트리밍은 가짜 엔진 명령으로만 테스트했습니다. 실제 운영 환경에서는 아직 실행하지 않았습니다.
