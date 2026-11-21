@@ -17,6 +17,8 @@ import (
 // takes longer than the panel's 10s write timeout allows.
 const panelMigrateTimeout = 90 * time.Second
 
+const panelMigrateStatusTimeout = 15 * time.Second
+
 type migrateDeps struct {
 	api *github
 }
@@ -97,7 +99,13 @@ func (deps migrateDeps) status(w http.ResponseWriter, r *http.Request, _ panelId
 	if !ok {
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	// The permission check may outlast the panel's 10s write timeout.
+	err := http.NewResponseController(w).SetWriteDeadline(time.Now().Add(panelMigrateStatusTimeout + 5*time.Second))
+	if err != nil && !errors.Is(err, http.ErrNotSupported) {
+		http.Error(w, "Could not prepare the request.", http.StatusServiceUnavailable)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), panelMigrateStatusTimeout)
 	defer cancel()
 	missing, err := api.migrationPermissionStatus(ctx)
 	if err != nil {
