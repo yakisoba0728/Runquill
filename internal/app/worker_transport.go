@@ -31,6 +31,9 @@ const (
 	workerTaskTTL    = 25 * time.Second
 	workerBodyLimit  = 256 << 10
 	workerJITLimit   = 2 << 20
+	// A worker that sends this header accepts ttl_ms, so its deadline does not depend on clock sync.
+	workerFeatureHeader = "Runquill-Worker-Features"
+	workerFeatureTTL    = "task-ttl"
 )
 
 const workerObservationSchema = `
@@ -76,6 +79,8 @@ type workerTask struct {
 	Unprivileged    bool      `json:"unprivileged,omitempty"`
 	CacheRepository int64     `json:"cache_repository_id,omitempty"`
 	Expires         time.Time `json:"expires_at"`
+	// Remaining milliseconds at delivery, sent only to workers that advertise workerFeatureTTL.
+	TTL *int64 `json:"ttl_ms,omitempty"`
 }
 
 type workerClaim struct {
@@ -294,6 +299,10 @@ func (f *workerFleet) poll(w http.ResponseWriter, r *http.Request) {
 			claim.delivered = true
 			task := claim.task
 			host.mu.Unlock()
+			if workerAcceptsTTL(r.Header) {
+				ttl := max(time.Until(task.Expires).Milliseconds(), 1)
+				task.TTL = &ttl
+			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(task)
 			return
@@ -308,6 +317,17 @@ func (f *workerFleet) poll(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+func workerAcceptsTTL(header http.Header) bool {
+	for _, value := range header.Values(workerFeatureHeader) {
+		for feature := range strings.SplitSeq(value, ",") {
+			if strings.TrimSpace(feature) == workerFeatureTTL {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (f *workerFleet) secureRequest(r *http.Request) bool {

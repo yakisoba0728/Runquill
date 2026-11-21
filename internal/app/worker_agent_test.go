@@ -385,3 +385,99 @@ func TestWorkerRemovalVerifiesLabelsAndContainerID(t *testing.T) {
 		t.Fatalf("unexpected container removal: %s (%v)", log, err)
 	}
 }
+
+func TestWorkerTaskToleratesManagerClockSkew(t *testing.T) {
+	for _, skew := range []time.Duration{-10 * time.Second, 10 * time.Second} {
+		dir := workerTestDocker(t)
+		ttl := workerTaskTTL.Milliseconds()
+		task := workerTask{ID: rand.Text(), Operation: "start", Name: testWorkerJob, Image: testWorkerImage,
+			JIT: "test-jit", Expires: time.Now().Add(skew + workerTaskTTL), TTL: &ttl}
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = io.Copy(io.Discard, r.Body)
+			_ = json.NewEncoder(w).Encode(task)
+		}))
+		c := &workerClient{endpoint: server.URL, token: testWorkerToken, engine: "worker-engine", session: rand.Text(),
+			target: docker{image: testWorkerImage, worker: testWorkerName}, client: server.Client()}
+		err := c.exchange(t.Context())
+		server.Close()
+		log, _ := os.ReadFile(filepath.Join(dir, "commands"))
+		if err != nil || c.last == nil || !c.last.OK || !strings.Contains(string(log), "create --name ") {
+			t.Fatalf("task with a %v manager clock skew failed: %v %+v %s", skew, err, c.last, log)
+		}
+	}
+}
+
+func TestWorkerTaskDeadline(t *testing.T) {
+	now := time.Now()
+	ms := func(v int64) *int64 { return &v }
+	limit := workerTaskTTL + 5*time.Second
+	for _, tc := range []struct {
+		name    string
+		task    workerTask
+		want    time.Time
+		invalid bool
+	}{
+		{"old manager in sync", workerTask{Expires: now.Add(workerTaskTTL)}, now.Add(workerTaskTTL), false},
+		{"old manager expired", workerTask{Expires: now.Add(-time.Second)}, time.Time{}, true},
+		{"old manager too far ahead", workerTask{Expires: now.Add(limit + time.Second)}, time.Time{}, true},
+		{"ttl ignores expiry", workerTask{Expires: now.Add(-time.Minute), TTL: ms(20_000)}, now.Add(20 * time.Second), false},
+		{"ttl zero", workerTask{Expires: now.Add(workerTaskTTL), TTL: ms(0)}, time.Time{}, true},
+		{"ttl negative", workerTask{Expires: now.Add(workerTaskTTL), TTL: ms(-1)}, time.Time{}, true},
+		{"ttl clamped", workerTask{Expires: now.Add(workerTaskTTL), TTL: ms(1 << 62)}, now.Add(limit), false},
+	} {
+		got, err := workerTaskDeadline(tc.task, now, now)
+		if (err != nil) != tc.invalid || !got.Equal(tc.want) {
+			t.Errorf("%s: got %v (%v), want %v", tc.name, got, err, tc.want)
+		}
+	}
+}
+
+func TestWorkerPollSendsTTLOnlyToWorkersThatAcceptIt(t *testing.T) {
+	fleet, _ := workerTestFleet(t)
+	server := httptest.NewServer(fleet.workers.route(http.NotFoundHandler()))
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	h := fleet.workers.hosts[testWorkerName]
+	session := rand.Text()
+	observation := workerObservation{Image: testWorkerImage, ImageReady: true, Containers: map[string]string{}}
+	h.mu.Lock()
+	h.seen, h.session, h.snapshot = time.Now(), session, observation
+	h.mu.Unlock()
+	start, stop := context.WithCancel(ctx)
+	result := make(chan error, 1)
+	go func() { result <- fleet.startOn(start, testWorkerHost, testWorkerJob, "test-jit") }()
+	data, err := json.Marshal(workerReport{Engine: "worker-engine", Session: session, Observation: observation})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The claim stays pending without a result, so both polls receive the same task.
+	for _, features := range []string{"", "other, " + workerFeatureTTL} {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/worker/v1/"+testWorkerName+"/poll", bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer "+testWorkerToken)
+		if features != "" {
+			req.Header.Set(workerFeatureHeader, features)
+		}
+		res, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var task workerTask
+		err = decodeWorkerJSON(res.Body, &task)
+		res.Body.Close()
+		if err != nil || res.StatusCode != http.StatusOK || !validWorkerTask(task) {
+			t.Fatalf("dispatch failed with HTTP %d: %v", res.StatusCode, err)
+		}
+		if features == "" && task.TTL != nil {
+			t.Fatal("sent ttl_ms to a worker that rejects unknown fields")
+		}
+		if features != "" && (task.TTL == nil || *task.TTL <= 0 || *task.TTL > workerTaskTTL.Milliseconds()) {
+			t.Fatalf("missing or invalid ttl_ms: %v", task.TTL)
+		}
+	}
+	stop()
+	<-result
+}
