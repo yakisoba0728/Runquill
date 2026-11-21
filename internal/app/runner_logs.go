@@ -37,16 +37,14 @@ var (
 )
 
 type runnerLogs struct {
-	db      *sql.DB
-	command func(ctx context.Context, args ...string) *exec.Cmd
+	db *sql.DB
+	// command runs the container engine CLI named by binary.
+	command func(ctx context.Context, binary string, args ...string) *exec.Cmd
 	streams chan struct{}
 }
 
 func newRunnerLogs(db *sql.DB) *runnerLogs {
-	return &runnerLogs{db: db, streams: make(chan struct{}, runnerLogMaxStreams),
-		command: func(ctx context.Context, args ...string) *exec.Cmd {
-			return exec.CommandContext(ctx, "docker", args...)
-		}}
+	return &runnerLogs{db: db, streams: make(chan struct{}, runnerLogMaxStreams), command: exec.CommandContext}
 }
 
 // registerRunnerLogRoutes serves GET /api/runners/{name}/logs?tail=N&follow=1.
@@ -110,7 +108,7 @@ func (l *runnerLogs) serve(w http.ResponseWriter, r *http.Request, user panelIde
 		http.Error(w, "Could not read the runner.", http.StatusServiceUnavailable)
 		return
 	}
-	var args []string
+	var target docker
 	switch {
 	case host == kubeHost:
 		runnerLogUnavailable(w, "Runner logs are not available for Kubernetes runners.")
@@ -120,13 +118,22 @@ func (l *runnerLogs) serve(w http.ResponseWriter, r *http.Request, user panelIde
 		return
 	case host == "local":
 	default:
-		// Re-validate the stored host with the fleet's own parser before it reaches docker.
+		// Re-validate the stored host with the fleet's own parser before it reaches the engine.
 		fleet, err := parseDockerFleet("", host)
 		if err != nil || len(fleet.hosts) != 1 || !strings.HasPrefix(host, "ssh://") {
 			runnerLogUnavailable(w, "Runner logs are not available for this runner host.")
 			return
 		}
-		args = []string{"--host", host}
+		target = fleet.hosts[0]
+	}
+	engine, err := target.containerEngine()
+	if err != nil {
+		runnerLogUnavailable(w, "Runner logs are not available for this runner host.")
+		return
+	}
+	var args []string
+	if target.host != "" {
+		args = engine.remoteArgs(target.host)
 	}
 	select {
 	case l.streams <- struct{}{}:
@@ -155,7 +162,7 @@ func (l *runnerLogs) serve(w http.ResponseWriter, r *http.Request, user panelIde
 			}
 		}()
 	}
-	if err := l.stream(ctx, w, append(args, name), follow); err != nil {
+	if err := l.stream(ctx, w, engine.name, append(args, name), follow); err != nil {
 		slog.Warn("runner logs", "runner", name, "runner_host", host, "error", err)
 	}
 }
@@ -170,7 +177,7 @@ type runnerLogOutput struct {
 }
 
 // write streams a follow response immediately; a tail is buffered so a failed
-// docker command can still return an error status.
+// engine command can still return an error status.
 func (o *runnerLogOutput) write(chunk []byte) error {
 	if !o.follow {
 		o.buffered = append(o.buffered, chunk...)
@@ -179,14 +186,22 @@ func (o *runnerLogOutput) write(chunk []byte) error {
 	if !o.started {
 		o.header()
 	}
-	err := o.control.SetWriteDeadline(time.Now().Add(runnerLogWriteWindow))
-	if err != nil && !errors.Is(err, http.ErrNotSupported) {
+	if err := o.extendDeadline(); err != nil {
 		return err
 	}
 	if _, err := o.w.Write(chunk); err != nil {
 		return err
 	}
 	return o.control.Flush()
+}
+
+// extendDeadline outlasts the panel server's WriteTimeout, which a log command can exceed.
+func (o *runnerLogOutput) extendDeadline() error {
+	err := o.control.SetWriteDeadline(time.Now().Add(runnerLogWriteWindow))
+	if err != nil && !errors.Is(err, http.ErrNotSupported) {
+		return err
+	}
+	return nil
 }
 
 func (o *runnerLogOutput) header() {
@@ -196,14 +211,14 @@ func (o *runnerLogOutput) header() {
 	o.w.WriteHeader(http.StatusOK)
 }
 
-func (l *runnerLogs) stream(ctx context.Context, w http.ResponseWriter, args []string, follow bool) error {
+func (l *runnerLogs) stream(ctx context.Context, w http.ResponseWriter, binary string, args []string, follow bool) error {
 	reader, writer, err := os.Pipe()
 	if err != nil {
 		http.Error(w, "Could not read the runner logs.", http.StatusBadGateway)
 		return err
 	}
 	defer reader.Close()
-	cmd := l.command(ctx, args...)
+	cmd := l.command(ctx, binary, args...)
 	// docker writes container stderr to its own stderr; keep both, in order.
 	cmd.Stdout, cmd.Stderr = writer, writer
 	// Kill the whole group so an ssh helper does not outlive the docker CLI.
@@ -244,6 +259,10 @@ func (l *runnerLogs) stream(ctx context.Context, w http.ResponseWriter, args []s
 		}
 		// Disconnects and the duration cap are normal ends of a follow.
 		return ignoreRunnerLogLimit(copyErr)
+	}
+	// A tail can outlast the server's WriteTimeout before its first write.
+	if err := output.extendDeadline(); err != nil {
+		return errors.Join(err, waitErr, ignoreRunnerLogLimit(copyErr))
 	}
 	if waitErr != nil && !errors.Is(copyErr, errRunnerLogLimit) {
 		http.Error(w, "Could not read the runner logs.", http.StatusBadGateway)

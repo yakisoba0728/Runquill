@@ -70,11 +70,11 @@ The scheduler folds finished jobs into a daily rollup before the seven-day job h
 
 ## Runner logs
 
-Operators and administrators can read the container output of a runner that currently holds a job. This is the output of the runner process (`docker logs --timestamps`), not the GitHub step log, which stays on GitHub. Each view is audited as `runner.logs`.
+Operators and administrators can read the container output of a runner that currently holds a job. This is the output of the runner process (`docker logs --timestamps`, or `podman logs` with `RUNQUILL_CONTAINER_ENGINE=podman`), not the GitHub step log, which stays on GitHub. Each view is audited as `runner.logs`.
 
 - Only runners on the `local` Docker host and `ssh://` hosts are supported. Kubernetes and `agent://` runners answer that logs are unavailable.
 - A request returns up to 2000 recent lines, or follows new lines for up to 15 minutes. Output stops at 8 MiB, and runs of 200 or more base64 characters are replaced with `[redacted]` as a second guard for runner credentials.
 - At most 8 log requests run at once. API tokens cannot read logs.
-- The manager always runs the `docker` CLI for logs, even with `RUNQUILL_CONTAINER_ENGINE=podman`.
+- The manager reads logs with the CLI that `RUNQUILL_CONTAINER_ENGINE` selects and reaches `ssh://` hosts the same way it starts runners there.
 
-Runner log streaming has been tested against a fake Docker command only. It has not yet been exercised on a real fleet.
+Runner log streaming has been tested against a fake engine command only. It has not yet been exercised on a real fleet.
