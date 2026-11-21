@@ -1,5 +1,7 @@
 # MCP for coding agents
 
+[Runquill README](../README.md) · [한국어](mcp.ko.md)
+
 Runquill exposes a read-only [Model Context Protocol](https://modelcontextprotocol.io/) server so an agent can inspect the fleet. It cannot change anything.
 
 ## Tools

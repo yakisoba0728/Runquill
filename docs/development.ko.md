@@ -23,7 +23,7 @@ go vet ./...
 CGO_ENABLED=0 go build -o runquill .
 ```
 
-매니저와 워커는 Linux에서만 실행하며 테스트도 Linux에서 실행합니다. Windows와 macOS 빌드는 [원격 CLI](remote-cli.md)와 `runquill workflow check`용이며 CI가 두 OS의 교차 컴파일을 확인합니다.
+매니저와 워커는 Linux에서만 실행하며 테스트도 Linux에서 실행합니다. Windows와 macOS 빌드는 [원격 CLI](remote-cli.ko.md)와 `runquill workflow check`용이며 CI가 두 OS의 교차 컴파일을 확인합니다.
 
 러너 Dockerfile은 GitHub Actions 러너 이미지를 다이제스트로 고정합니다. `--build-arg RUNQUILL_RUNNER_BASE=IMAGE`로 호환 이미지에 자체 도구를 추가할 수 있습니다. 다른 기반 이미지는 `--build-arg RUNQUILL_RUNNER_OS=`에 `ubuntu22.04`, `ubuntu26.04`, `debian12`, `debian13` 중 하나를 넣어 빌드합니다. Kubernetes `plain` 모드와 `privileged: false` 풀을 위해 러너 파일은 `/home/runner`에 두고 사용자 UID는 1001로 유지합니다.
 

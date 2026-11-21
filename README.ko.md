@@ -55,7 +55,7 @@ runs-on: ${{ format('runquill-{0}-{1}-build', github.run_id, github.run_attempt)
 | 작업 실행, 기존 워크플로 이전, 러너 OS 선택 | [워크플로](docs/workflows.ko.md), [마이그레이션](docs/workflow-migration.ko.md), [러너 이미지와 캐시](docs/runner-images.ko.md) |
 | 워커 추가와 용량 설정 | [워커와 풀](docs/workers.ko.md), [아웃바운드 워커](docs/outbound-workers.ko.md), [컨테이너 엔진](docs/container-engines.ko.md), [탄력적 한도](docs/elastic-limits.ko.md) |
 | 상태 확인, 문제 해결, 업그레이드, 백업 | [운영](docs/operations.ko.md), [웹 패널](docs/panel.ko.md), [백업](docs/backups.ko.md), [메트릭](docs/metrics.ko.md) |
-| 스크립트나 코딩 에이전트로 운영 | [원격 CLI](docs/remote-cli.md), [MCP](docs/mcp.md), [패널 API](api/openapi.yaml) |
+| 스크립트나 코딩 에이전트로 운영 | [원격 CLI](docs/remote-cli.ko.md), [MCP](docs/mcp.ko.md), [패널 API](api/openapi.yaml) |
 | 저장소 개발과 기여 | [AGENTS.md](AGENTS.md), [개발과 릴리스](docs/development.ko.md) |
 
 [Apache License 2.0](LICENSE)
