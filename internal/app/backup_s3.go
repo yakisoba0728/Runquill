@@ -626,7 +626,7 @@ func uploadBackupCommand(ctx context.Context, out io.Writer, database, output st
 	}
 	name := backupObjectName(time.Now(), seal)
 	if output == "" {
-		dir, err := os.MkdirTemp("", "runquill-upload-")
+		dir, err := uploadStagingDir(database)
 		if err != nil {
 			return err
 		}
@@ -651,6 +651,21 @@ func uploadBackupCommand(ctx context.Context, out io.Writer, database, output st
 	}
 	_, err = fmt.Fprintf(out, "Uploaded Runquill queue backup to s3://%s/%s.\n", cfg.bucket, client.key(name))
 	return err
+}
+
+// uploadStagingDir creates a private directory for a one-off upload in RUNQUILL_BACKUP_DIR, or
+// beside the queue, so the plaintext copy never lands in a shared or memory-backed temp dir.
+// The dot prefix keeps it out of backup retention and remote sync.
+func uploadStagingDir(database string) (string, error) {
+	parent := strings.TrimSpace(os.Getenv("RUNQUILL_BACKUP_DIR"))
+	if parent != "" {
+		if err := os.MkdirAll(parent, 0700); err != nil {
+			return "", fmt.Errorf("create RUNQUILL_BACKUP_DIR: %w", err)
+		}
+	} else {
+		parent = filepath.Dir(database)
+	}
+	return os.MkdirTemp(parent, ".runquill-upload-*")
 }
 
 // restoreFromS3Command downloads a backup by key, or by name under the

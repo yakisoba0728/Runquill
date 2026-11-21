@@ -47,7 +47,7 @@ Add these variables to copy each scheduled backup to a bucket.
 
 Runquill refuses to upload an unsealed backup. With a schedule and a bucket configured but no passphrase, the manager does not start unless `RUNQUILL_BACKUP_S3_ALLOW_PLAINTEXT=true`, and then it logs a warning for every unsealed upload. `runquill backup --upload` without `--seal` is refused the same way. Uploads use AWS Signature Version 4, never follow redirects, and are confirmed by comparing the object size. After each run the manager uploads any kept local backup not yet confirmed, oldest first, then deletes the oldest Runquill objects beyond `RUNQUILL_BACKUP_S3_KEEP`. A failed upload is retried at the next run.
 
-`runquill backup --upload --seal` makes and uploads a single backup with the same settings. Add `--output FILE` to keep a local copy too.
+`runquill backup --upload --seal` makes and uploads a single backup with the same settings. Add `--output FILE` to keep a local copy too. Without it, the backup is staged in a private directory inside `RUNQUILL_BACKUP_DIR`, or beside the queue when that is unset, and deleted afterwards.
 
 The scheduled sealed upload and restore path has also been tested against an authenticated local SeaweedFS S3 service. To test your own S3-compatible service, set the S3 connection variables above for a test bucket and run `RUNQUILL_TEST_BACKUP_S3=1 go test ./internal/app -run '^TestLiveS3BackupRestore$' -v`. The smoke test writes one synthetic backup under a unique subprefix, restores and checks its queue, and deletes only that test object. It needs permission to put, read and delete that object.
 
