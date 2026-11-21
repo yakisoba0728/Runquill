@@ -627,18 +627,35 @@ func runAuditTail(ctx context.Context, c *apiClient, o *remoteOptions, _ []strin
 	return table.Flush()
 }
 
-// validateUsage checks the flags with the panel's own parser, so a bad range
-// is refused before a request is sent.
+// validateUsage names the flag that is wrong, then checks the range with the
+// panel's own parser, so a bad query is refused before a request is sent.
 func validateUsage(o *remoteOptions, _ []string) error {
 	o.repo = strings.ToLower(strings.TrimSpace(o.repo))
+	switch cmp.Or(o.group, "day") {
+	case "day", "repository", "pool", "host":
+	default:
+		return errors.New("--group must be day, repository, pool or host")
+	}
+	if o.repo != "" && !repositoryName.MatchString(o.repo) {
+		return errors.New("--repo must be OWNER/NAME")
+	}
+	for _, day := range [][2]string{{"from", o.from}, {"to", o.to}} {
+		if _, err := time.Parse(time.DateOnly, day[1]); day[1] != "" && err != nil {
+			return fmt.Errorf("--%s must be a date as YYYY-MM-DD", day[0])
+		}
+	}
 	query := url.Values{"group": {o.group}}
 	for name, value := range map[string]string{"from": o.from, "to": o.to, "repository": o.repo} {
 		if value != "" {
 			query.Set(name, value)
 		}
 	}
-	if _, err := parseUsageQuery(query, remoteNow()); err != nil {
-		return errors.New("use --from and --to as YYYY-MM-DD at most 400 days apart, --group day, repository, pool or host, and --repo OWNER/NAME")
+	// Only the range can still be wrong; --to defaults to today.
+	if u, err := parseUsageQuery(query, remoteNow()); err != nil {
+		if u.to.Before(u.from) {
+			return errors.New("--from must not be after --to")
+		}
+		return fmt.Errorf("--from and --to must cover at most %d days", usageMaxRangeDays)
 	}
 	o.usageQuery = query
 	return nil
