@@ -515,7 +515,7 @@ func TestRemoteJobsShowAgainstPanel(t *testing.T) {
 		t.Fatalf("jobs show --json: code %d\n%s\n%s", code, stdout, listed)
 	}
 	_, code, _, stderr = runRemote(t, "jobs", "show", "99")
-	if code != 1 || !strings.Contains(stderr, "HTTP 404: This job is not in the job history.") {
+	if code != 1 || strings.TrimSpace(stderr) != "runquill jobs show: the panel answered HTTP 404: This job is not in the job history." {
 		t.Fatalf("jobs show 99: code %d, %q", code, stderr)
 	}
 	// A jobs:write token cannot read the fleet.

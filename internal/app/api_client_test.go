@@ -90,6 +90,22 @@ func TestAPIClientSendsTokenAndDecodesErrors(t *testing.T) {
 	}
 }
 
+// The demo panel has no API, so its bare 404 explains what the address lacks.
+func TestAPIClientExplainsMissingAPI(t *testing.T) {
+	server := httptest.NewServer(panelHandler(nil, nil))
+	defer server.Close()
+	client, err := newAPIClient(server.URL, testAPIToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = client.snapshot(t.Context())
+	var apiErr *apiError
+	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusNotFound ||
+		apiErr.Message != "404 page not found; this address serves no Runquill panel API at /snapshot. Check RUNQUILL_URL and the manager version; runquill panel --demo serves no API" {
+		t.Fatalf("demo panel error = %v", err)
+	}
+}
+
 func TestAPIClientBoundsResponses(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
