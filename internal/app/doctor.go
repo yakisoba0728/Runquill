@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,15 +16,32 @@ import (
 	"time"
 )
 
-func doctor(ctx context.Context, out io.Writer, repo string) error {
+const doctorTroubleshooting = "https://github.com/yakisoba0728/Runquill/blob/main/docs/operations.md#troubleshooting"
+
+type doctorCheck struct {
+	Name  string `json:"name"`
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
+func doctor(ctx context.Context, out io.Writer, repo string, asJSON bool) error {
 	var failures []error
+	checks := []doctorCheck{}
+	jsonOut := out
+	if asJSON {
+		// JSON mode prints only the final document.
+		out = io.Discard
+	}
 	report := func(name string, err error) {
+		check := doctorCheck{Name: name, OK: err == nil}
 		if err != nil {
+			check.Error = err.Error()
 			failures = append(failures, err)
 			fmt.Fprintf(out, "FAIL %s: %s\n", name, err)
-			return
+		} else {
+			fmt.Fprintf(out, "OK   %s\n", name)
 		}
-		fmt.Fprintf(out, "OK   %s\n", name)
+		checks = append(checks, check)
 	}
 	cfg, err := loadConfig()
 	report("configuration", err)
@@ -69,8 +87,19 @@ func doctor(ctx context.Context, out io.Writer, repo string) error {
 			fmt.Fprintf(out, "Open %s/ and sign in to verify the GitHub callback registration and OAuth credentials.\n", cfg.origin)
 		}
 	}
-	if len(failures) == 0 {
+	if asJSON {
+		enc := json.NewEncoder(jsonOut)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(struct {
+			Checks []doctorCheck `json:"checks"`
+			Passed bool          `json:"passed"`
+		}{checks, len(failures) == 0}); err != nil {
+			failures = append(failures, err)
+		}
+	} else if len(failures) == 0 {
 		fmt.Fprintln(out, "Preflight passed. Run your first workflow to verify job discovery, runner assignment, and cleanup.")
+	} else {
+		fmt.Fprintf(out, "Next: fix the failed checks above. See %s\n", doctorTroubleshooting)
 	}
 	return errors.Join(failures...)
 }

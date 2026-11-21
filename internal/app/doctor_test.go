@@ -3,6 +3,7 @@ package app
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -124,5 +125,65 @@ func TestDoctorChecksPersonalInstallation(t *testing.T) {
 				t.Fatalf("got %d checks and failures %v, want 6 checks and %q", checks, failed, test.wantFailures)
 			}
 		})
+	}
+}
+
+func TestDoctorJSONAndNextStep(t *testing.T) {
+	const secret = "doctor-test-webhook-secret"
+	t.Setenv("RUNQUILL_OWNER", "")
+	t.Setenv("RUNQUILL_APP_ID", "")
+	t.Setenv("RUNQUILL_KEY_FILE", "")
+	t.Setenv("RUNQUILL_WEBHOOK_SECRET", secret)
+	t.Setenv("RUNQUILL_DB", filepath.Join(t.TempDir(), "missing.sqlite3"))
+	t.Setenv("RUNQUILL_BACKEND", "invalid")
+	t.Setenv("RUNQUILL_PANEL_ADDR", "")
+
+	var out strings.Builder
+	if err := doctor(t.Context(), &out, "", true); err == nil {
+		t.Fatal("doctor passed without configuration")
+	}
+	if strings.Contains(out.String(), secret) {
+		t.Fatalf("doctor JSON exposes the webhook secret:\n%s", out.String())
+	}
+	var result struct {
+		Checks []struct {
+			Name  string
+			OK    *bool
+			Error string
+		}
+		Passed *bool
+	}
+	if err := json.Unmarshal([]byte(out.String()), &result); err != nil {
+		t.Fatalf("doctor --json is not a JSON document: %v\n%s", err, out.String())
+	}
+	if result.Passed == nil || *result.Passed || len(result.Checks) == 0 {
+		t.Fatalf("got %+v, want failed checks", result)
+	}
+	found := false
+	for _, check := range result.Checks {
+		if check.OK == nil || *check.OK != (check.Error == "") {
+			t.Errorf("check %q has inconsistent ok and error fields", check.Name)
+		}
+		if check.Name == "configuration" {
+			found = true
+			if !strings.Contains(check.Error, "RUNQUILL_OWNER") {
+				t.Errorf("configuration error = %q", check.Error)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("missing configuration check in %+v", result.Checks)
+	}
+
+	out.Reset()
+	if err := doctor(t.Context(), &out, "", false); err == nil {
+		t.Fatal("doctor passed without configuration")
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if last := lines[len(lines)-1]; !strings.HasPrefix(last, "Next: ") || !strings.HasSuffix(last, "docs/operations.md#troubleshooting") {
+		t.Errorf("last line = %q, want a pointer to the troubleshooting section", last)
+	}
+	if !strings.Contains(out.String(), "FAIL configuration: ") {
+		t.Errorf("missing human-readable failure:\n%s", out.String())
 	}
 }

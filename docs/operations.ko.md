@@ -131,6 +131,8 @@ docker compose exec manager runquill status
 
 스크립트나 모니터링 도구에서는 `docker compose exec -T manager runquill status --json`을 사용합니다. 스키마 버전 1에 `slot_limit`, `runners`, `hosts`, `jobs`가 들어 있습니다. 사용 중인 슬롯은 응답한 서버에서 관측한 값이고, 예약 슬롯에는 오프라인 서버와 소유 서버를 확인할 수 없는 러너 기록이 포함됩니다. Docker 호스트 구성이 충돌하면 작업 목록과 `docker_error`가 출력되고, `runners`는 `null`이며 명령은 실패 코드로 종료합니다.
 
+`runquill doctor --json`은 점검 결과를 `{"checks":[{"name":"configuration","ok":false,"error":"set RUNQUILL_OWNER"}],"passed":false}` 형식의 JSON 문서 하나로 출력합니다. 통과한 항목에는 `error`가 없습니다. 하나라도 실패하면 사람이 읽는 출력과 같이 종료 코드 1로 끝납니다. 사람이 읽는 출력은 실패가 있으면 마지막 줄에 이 문서의 [증상별 점검](#증상별-점검) 링크를 안내합니다.
+
 GitHub에서 작업이 대기 중이라면 `docker compose exec manager runquill diagnose OWNER/REPO`로 원인을 확인할 수 있습니다. 저장소 범위의 읽기 전용 토큰으로 App의 접근 권한을 확인하고, 마지막 저장소 폴링 결과, 잘못된 라벨, 재시도 이유, 워커 슬롯 부족을 함께 보여줍니다.
 
 `docker compose exec manager runquill gc --dry-run`은 대기열 리스와 맞지 않는 Runquill 러너 컨테이너를 찾아 Docker 호스트와 상태를 보여줍니다. 큐에 관련 작업 정보가 있으면 GitHub 작업 상태도 조회하고, 큐나 호스트가 응답하지 않으면 부분 조회임을 표시합니다. 이 명령은 컨테이너와 큐 데이터를 읽기만 합니다.
