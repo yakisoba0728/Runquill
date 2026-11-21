@@ -23,6 +23,8 @@ go vet ./...
 CGO_ENABLED=0 go build -o runquill .
 ```
 
+The manager and worker run only on Linux, and the tests run there. Windows and macOS builds are for the [remote CLI](remote-cli.md) and `runquill workflow check`, and CI cross-compiles both.
+
 The runner Dockerfile pins the upstream GitHub Actions runner image by digest. Use `--build-arg RUNQUILL_RUNNER_BASE=IMAGE` to extend a compatible image with your own toolchain. Pass `--build-arg RUNQUILL_RUNNER_OS=` with `ubuntu22.04`, `ubuntu26.04`, `debian12` or `debian13` to build another base. Keep the runner files in `/home/runner` and its user at UID 1001 for Kubernetes plain mode and pools with `privileged: false`.
 
 Run the nested Docker smoke test with `RUNQUILL_TEST_DOCKER_IMAGE=runquill-runner:local go test ./internal/app -run '^TestDockerRunner$' -v` after building the runner image. It checks Docker build, PostgreSQL, bind mounts, and removal with a local stand-in for the GitHub listener.

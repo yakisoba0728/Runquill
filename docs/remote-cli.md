@@ -1,6 +1,6 @@
 # Remote CLI
 
-The `runquill` binary can query and operate a manager from another machine through the panel API with an API token. Create the token under **Team & tokens** in the panel. Nothing else needs to be configured on the client.
+The `runquill` binary can query and operate a manager from another machine through the panel API with an API token. Create the token under **Team & tokens** in the panel. Nothing else needs to be configured on the client. Releases include only Linux binaries, so on Windows or macOS build the client from a source checkout with `go build -o runquill .` (`-o runquill.exe` on Windows).
 
 ## Connect
 
