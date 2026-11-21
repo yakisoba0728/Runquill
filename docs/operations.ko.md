@@ -95,17 +95,17 @@ Operator와 Admin은 러너 없이 대기 중인 작업을 패널이나 `jobs:wr
 
 감사 기록에는 로그인, 팀, 토큰, 호스트, 작업, 설정, 백업 변경과 러너 로그 조회, 워크플로 이전이 실행한 사람의 로그인과 함께 남습니다. 작업 종류나 실행한 사람의 로그인 또는 ID로 필터링하고, 이전 기록을 페이지 단위로 불러올 수 있습니다. 설정 변경은 바뀐 항목마다 이전 값과 새 값을 기록하며, 이름이 비밀값으로 보이는 항목은 값을 남기지 않습니다.
 
-패널은 Server-Sent Events로 실시간 갱신하고, 스트림을 쓸 수 없으면 폴링으로 전환합니다. Cmd+K 또는 Ctrl+K로 명령 팔레트를 열고, 밝은 테마·어두운 테마·시스템 설정 중에서 고를 수 있습니다. 화면별 기능과 사용 권한은 [패널 가이드](panel.md)에서 확인하세요.
+패널은 Server-Sent Events로 실시간 갱신하고, 스트림을 쓸 수 없으면 폴링으로 전환합니다. Cmd+K 또는 Ctrl+K로 명령 팔레트를 열고, 밝은 테마·어두운 테마·시스템 설정 중에서 고를 수 있습니다. 화면별 기능과 사용 권한은 [패널 가이드](panel.ko.md)에서 확인하세요.
 
 패널에서 작업을 선택하면 러너 라벨, 대기 또는 시작 원인, 최근 재시도 이유를 확인할 수 있습니다. 설정된 GitHub App 접근 범위는 **GitHub 연결**에 표시됩니다. 패널에는 발견한 작업만 표시되므로, 화면에 작업이 없으면 `runquill diagnose OWNER/REPO`로 GitHub App의 접근 범위, 작업의 GitHub 라벨, 이벤트 전달을 점검하세요. 같은 원인은 `runquill status --json`의 작업별 `diagnostic` 객체에 `code`와 `message`로도 표시됩니다.
 
 ## 사용량 통계
 
-**사용량** 화면과 `GET /api/usage`는 끝난 작업의 수, 실패, 러너 사용 시간, 대기 시간을 UTC 날짜, 저장소, 풀, 호스트별로 보여줍니다. 작업은 끝난 UTC 날짜에 한 번만 집계합니다. 실패는 Runquill이 포기했거나 패널에서 취소한 작업이며 GitHub 작업 결과와는 다릅니다. 일별 합계는 대기열 DB에 400일 동안 보관하지만 대기열 백업에는 포함되지 않습니다. [자세히](panel.md#usage-statistics)
+**사용량** 화면과 `GET /api/usage`는 끝난 작업의 수, 실패, 러너 사용 시간, 대기 시간을 UTC 날짜, 저장소, 풀, 호스트별로 보여줍니다. 작업은 끝난 UTC 날짜에 한 번만 집계합니다. 실패는 Runquill이 포기했거나 패널에서 취소한 작업이며 GitHub 작업 결과와는 다릅니다. 일별 합계는 대기열 DB에 400일 동안 보관하지만 대기열 백업에는 포함되지 않습니다. [자세히](panel.ko.md#사용량-통계)
 
 ## 러너 로그
 
-Operator와 Admin은 **로그** 화면에서 작업을 맡은 러너의 컨테이너 출력을 보거나 이어서 받을 수 있습니다. GitHub 단계 로그가 아니라 러너 프로세스의 로그입니다. `local`과 `ssh://` 호스트의 러너만 지원하며 API 토큰으로는 볼 수 없습니다. 실제 운영 환경에서는 아직 검증하지 않았습니다. [자세히](panel.md#runner-logs)
+Operator와 Admin은 **로그** 화면에서 작업을 맡은 러너의 컨테이너 출력을 보거나 이어서 받을 수 있습니다. GitHub 단계 로그가 아니라 러너 프로세스의 로그입니다. `local`과 `ssh://` 호스트의 러너만 지원하며 API 토큰으로는 볼 수 없습니다. 실제 운영 환경에서는 아직 검증하지 않았습니다. [자세히](panel.ko.md#러너-로그)
 
 ## 원격 CLI
 
@@ -117,7 +117,7 @@ Operator와 Admin은 **로그** 화면에서 작업을 맡은 러너의 컨테�
 
 ## 상태 확인과 업그레이드
 
-대기 작업 수, 러너 슬롯 사용량, 시작 및 정리 횟수를 모니터링하려면 별도 [Prometheus 메트릭 리스너](metrics.md)를 활성화하세요.
+대기 작업 수, 러너 슬롯 사용량, 시작 및 정리 횟수를 모니터링하려면 별도 [Prometheus 메트릭 리스너](metrics.ko.md)를 활성화하세요.
 
 ```sh
 docker compose exec manager runquill status
@@ -139,7 +139,7 @@ GitHub에서 작업이 대기 중이라면 `docker compose exec manager runquill
 
 정리하려면 `docker compose exec manager runquill gc --remove-orphans`를 실행합니다. 대기열 리스가 없고 작업을 실행하고 있을 수 없는 러너 컨테이너를 삭제하며, 남겨둔 러너는 이유와 함께 출력합니다. `--grace`(기본 `10m`, 최소 `1m`)보다 최근에 만든 러너는 건드리지 않으므로 시작 중인 러너는 안전합니다. 리스가 다른 호스트에 기록된 러너, 큐에 작업 기록이 없는데 실행 중인 러너, GitHub에서 작업이 끝나지 않았거나 러너가 사용 중으로 보이는 경우, GitHub에 연결할 수 없는 경우에는 러너를 남깁니다. 큐에 작업이 있는 러너는 GitHub 러너 등록을 먼저 삭제한 뒤 Docker ID로 컨테이너를 삭제합니다. `local`과 `ssh://` 호스트에서만 동작하며, `agent://` 워커와 Kubernetes 백엔드는 건너뛰었다고 표시합니다. 호스트 조회나 삭제에 실패하면 상태 코드 1로 종료합니다.
 
-`docker compose exec manager runquill gc --unused --dry-run`은 Runquill이 받은 러너 이미지와 캐시 볼륨 중 `RUNQUILL_CLEANUP_AFTER`(기본 `30d`) 동안 어떤 러너도 쓰지 않은 항목을 보여줍니다. `--dry-run` 없이 실행하면 삭제하며, 매니저도 `RUNQUILL_CLEANUP_INTERVAL`마다 같은 기준으로 정리합니다. `--older-than`으로 다른 보존 기간을 지정할 수 있습니다. 직접 받거나 빌드한 이미지는 삭제하지 않습니다. [정리](runner-images.md#cleanup-of-unused-images-and-cache-volumes)
+`docker compose exec manager runquill gc --unused --dry-run`은 Runquill이 받은 러너 이미지와 캐시 볼륨 중 `RUNQUILL_CLEANUP_AFTER`(기본 `30d`) 동안 어떤 러너도 쓰지 않은 항목을 보여줍니다. `--dry-run` 없이 실행하면 삭제하며, 매니저도 `RUNQUILL_CLEANUP_INTERVAL`마다 같은 기준으로 정리합니다. `--older-than`으로 다른 보존 기간을 지정할 수 있습니다. 직접 받거나 빌드한 이미지는 삭제하지 않습니다. [정리](runner-images.ko.md#사용하지-않는-이미지와-캐시-볼륨-정리)
 
 - `RUNQUILL_MAX_RUNNERS`(기본 2)가 전체 저장소의 동시 실행 수를 정합니다. 정원이 차면 SQLite에 대기합니다. 생성에 실패했거나 러너가 작업을 받지 못하고 종료된 작업은 15초 뒤 재시도하며, 그동안 다음 작업이 빈자리를 사용할 수 있습니다. 연속으로 실패할 때마다 대기 시간이 두 배로 늘어 최대 10분이 되므로, 러너 이미지가 손상되어도 GitHub API 요청 한도를 소진하지 않습니다. **지금 재시도**를 누르면 다시 15초부터 시작합니다. GitHub는 24시간 넘게 대기한 self-hosted 작업을 실패 처리합니다. [GitHub 러너 배정 규칙](https://docs.github.com/en/actions/reference/runners/self-hosted-runners#routing-precedence-for-self-hosted-runners)
 - Runquill은 24시간 안에 시작하지 못한 작업을 사유와 마지막 재시도 오류와 함께 실패로 기록합니다. 패널에서 취소한 작업도 실패로 기록됩니다. 실패한 작업은 대기열로 돌아오지 않습니다. GitHub의 실행은 GitHub에서 취소하거나 다시 실행할 때까지 대기 상태로 남고, 다시 실행하면 새 작업이 생깁니다. 사유는 패널의 작업 기록에 표시되며, 기한이 지난 작업은 매니저 로그에도 `job failed`로 남습니다.
@@ -200,7 +200,7 @@ services:
       RUNQUILL_CLEANUP_INTERVAL: ${RUNQUILL_CLEANUP_INTERVAL:-}
 ```
 
-`docker compose -f compose.yaml -f compose.settings.yaml up -d`로 적용합니다. 다른 오버레이도 함께 전달하고, 릴리스 이미지를 쓴다면 `--no-build`를 추가합니다. 예약 백업에는 백업 디렉터리 마운트와 암호 파일도 필요하므로 [백업 가이드](backups.md#compose)의 오버레이를 사용합니다. 탄력적 한도 변수는 [탄력적 한도 가이드](elastic-limits.md#compose)에 있습니다. 비공개 레지스트리에서 받으려면 [비공개 레지스트리](runner-images.md#private-registries)처럼 Docker 로그인 정보를 매니저에 마운트하고 `DOCKER_CONFIG`를 설정합니다. 매니저 이미지에는 Docker CLI만 있으므로 Compose에서 `RUNQUILL_CONTAINER_ENGINE=podman`은 쓸 수 없습니다. k3s에서는 매니저가 `runquill-config` Secret의 모든 변수를 읽으므로 `.env`에 추가하고 Secret을 다시 만든 뒤 Deployment를 재시작합니다.
+`docker compose -f compose.yaml -f compose.settings.yaml up -d`로 적용합니다. 다른 오버레이도 함께 전달하고, 릴리스 이미지를 쓴다면 `--no-build`를 추가합니다. 예약 백업에는 백업 디렉터리 마운트와 암호 파일도 필요하므로 [백업 가이드](backups.ko.md#compose)의 오버레이를 사용합니다. 탄력적 한도 변수는 [탄력적 한도 가이드](elastic-limits.ko.md#compose)에 있습니다. 비공개 레지스트리에서 받으려면 [비공개 레지스트리](runner-images.ko.md#비공개-레지스트리)처럼 Docker 로그인 정보를 매니저에 마운트하고 `DOCKER_CONFIG`를 설정합니다. 매니저 이미지에는 Docker CLI만 있으므로 Compose에서 `RUNQUILL_CONTAINER_ENGINE=podman`은 쓸 수 없습니다. k3s에서는 매니저가 `runquill-config` Secret의 모든 변수를 읽으므로 `.env`에 추가하고 Secret을 다시 만든 뒤 Deployment를 재시작합니다.
 
 ## 알림 보내기
 
@@ -214,7 +214,7 @@ services:
 
 저장소별 한도를 설정한 경우 이미 실행 중인 러너가 있는 저장소의 작업은 대기 시간 계산에서 빠지므로, 한도 때문에 기다리는 작업만으로는 `queue_stalled`가 발생하지 않습니다. 문제가 계속되면 `RUNQUILL_NOTIFY_COOLDOWN`(기본 `30m`)마다 다시 알립니다. 복구 알림은 해당 문제를 알린 경우에만 한 번 보냅니다.
 
-`RUNQUILL_NOTIFY_FORMAT=slack`(기본값)은 `text`와 함께 `source`, `kind`, `host`, `repository`, `job`(러너 라벨), `job_id`, `reason`, `waiting_seconds`, `timestamp`를 보냅니다. `{"text": ...}`만 받는 수신 서비스에는 `text`를 사용합니다. 이벤트마다 최대 세 번, 요청당 10초 제한으로 보내며 네트워크 오류와 HTTP 429, 5xx 응답에서 재시도합니다. 메모리에 최대 64개를 대기시키고, 가득 차면 가장 오래된 이벤트를 버립니다. 매니저가 종료될 때는 남은 알림 전송을 최대 10초 기다립니다. [메트릭](metrics.md)을 켜면 `runquill_notifications_*` 카운터로 전송 결과를 확인할 수 있습니다.
+`RUNQUILL_NOTIFY_FORMAT=slack`(기본값)은 `text`와 함께 `source`, `kind`, `host`, `repository`, `job`(러너 라벨), `job_id`, `reason`, `waiting_seconds`, `timestamp`를 보냅니다. `{"text": ...}`만 받는 수신 서비스에는 `text`를 사용합니다. 이벤트마다 최대 세 번, 요청당 10초 제한으로 보내며 네트워크 오류와 HTTP 429, 5xx 응답에서 재시도합니다. 메모리에 최대 64개를 대기시키고, 가득 차면 가장 오래된 이벤트를 버립니다. 매니저가 종료될 때는 남은 알림 전송을 최대 10초 기다립니다. [메트릭](metrics.ko.md)을 켜면 `runquill_notifications_*` 카운터로 전송 결과를 확인할 수 있습니다.
 
 ## 대기열 백업과 복구
 
@@ -250,7 +250,7 @@ SSH 워커나 패널을 사용한다면 기존 Compose 파일 조합을 그대�
 
 ## 백업 예약, 암호화, 업로드
 
-`RUNQUILL_BACKUP_INTERVAL`과 `RUNQUILL_BACKUP_DIR`을 설정하면 백업을 자동으로 만들고, `RUNQUILL_BACKUP_PASSPHRASE` 또는 `RUNQUILL_BACKUP_PASSPHRASE_FILE`을 설정하면 암호화합니다. 관리자는 패널의 **최신 백업 검증**에서 가장 최근 로컬 백업을 확인할 수 있습니다. `runquill backup --seal`로 같은 형식의 암호화 백업을 직접 만들 수 있고, `runquill restore --from`에 암호를 주면 복구합니다. `RUNQUILL_BACKUP_S3_*` 변수를 설정하면 매니저가 백업을 S3 호환 버킷에도 복사하며 `runquill restore --from-s3`로 복구합니다. `RUNQUILL_BACKUP_S3_ALLOW_PLAINTEXT=true`가 없으면 암호화하지 않은 백업은 올리지 않습니다. [백업 가이드](backups.md)
+`RUNQUILL_BACKUP_INTERVAL`과 `RUNQUILL_BACKUP_DIR`을 설정하면 백업을 자동으로 만들고, `RUNQUILL_BACKUP_PASSPHRASE` 또는 `RUNQUILL_BACKUP_PASSPHRASE_FILE`을 설정하면 암호화합니다. 관리자는 패널의 **최신 백업 검증**에서 가장 최근 로컬 백업을 확인할 수 있습니다. `runquill backup --seal`로 같은 형식의 암호화 백업을 직접 만들 수 있고, `runquill restore --from`에 암호를 주면 복구합니다. `RUNQUILL_BACKUP_S3_*` 변수를 설정하면 매니저가 백업을 S3 호환 버킷에도 복사하며 `runquill restore --from-s3`로 복구합니다. `RUNQUILL_BACKUP_S3_ALLOW_PLAINTEXT=true`가 없으면 암호화하지 않은 백업은 올리지 않습니다. [백업 가이드](backups.ko.md)
 
 ## 제거
 
@@ -294,6 +294,6 @@ Runquill 문서에서 설명하는 기능은 Go 테스트로 확인하며, CI의
 
 러너 이미지 자동 받기와 실제 Docker에서의 정리, 다섯 가지 OS 변형의 러너 실행, 저장소별 도구 캐시 디렉터리 유지는 개발자 컴퓨터의 실제 Docker로 확인했지만 운영 환경에서는 아직 확인하지 않았습니다.
 
-암호화된 예약 백업의 업로드와 복구는 인증을 켠 로컬 SeaweedFS에서 확인했습니다. [S3 검증 테스트](backups.md#upload-to-s3-compatible-storage)
+암호화된 예약 백업의 업로드와 복구는 인증을 켠 로컬 SeaweedFS에서 확인했습니다. [S3 검증 테스트](backups.ko.md#s3-호환-스토리지에-업로드)
 
 이 기능에서 문제를 발견하면 이슈로 알려주세요.

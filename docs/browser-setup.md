@@ -1,5 +1,7 @@
 # Browser setup
 
+[Runquill README](../README.md) · [한국어](browser-setup.ko.md)
+
 On your Linux host, run the installer and open the printed setup link.
 
 ```sh

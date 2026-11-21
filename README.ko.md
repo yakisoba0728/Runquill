@@ -18,7 +18,7 @@ cd ~ && curl -fsSLO https://github.com/yakisoba0728/Runquill/releases/latest/dow
 
 출력된 URL을 엽니다. SSH로 접속했다면 내 컴퓨터에서 안내된 포트 포워딩 명령을 먼저 실행합니다. 마법사에서 GitHub를 연결하고 **전체 저장소** 또는 **선택한 저장소**에 App을 설치한 뒤 배포합니다. 설치 URL은 비공개로 보관하세요. 폴링이나 별도 터널을 쓸 때는 `--no-tailscale`을 붙여 Tailscale 자동 설정을 건너뛸 수 있습니다.
 
-[설치 가이드](docs/install.ko.md) · [설치 마법사](docs/browser-setup.md) · [Cloudflare Tunnel](docs/cloudflare-tunnel.ko.md)
+[설치 가이드](docs/install.ko.md) · [설치 마법사](docs/browser-setup.ko.md) · [Cloudflare Tunnel](docs/cloudflare-tunnel.ko.md)
 
 ### 첫 작업 확인
 
@@ -32,7 +32,7 @@ runs-on: ${{ format('runquill-{0}-{1}-build', github.run_id, github.run_attempt)
 
 작업마다 `build`, `test`처럼 다른 접미사를 붙입니다. 매트릭스 작업은 `strategy.job-index`도 추가합니다. 같은 계정에 App을 **전체 저장소** 범위로 설치했다면 다른 비공개 저장소에 Runquill 시크릿이나 웹훅을 따로 추가할 필요가 없습니다.
 
-[워크플로와 매트릭스 예제](docs/workflows.ko.md) · [기존 워크플로 이전](docs/workflow-migration.md)
+[워크플로와 매트릭스 예제](docs/workflows.ko.md) · [기존 워크플로 이전](docs/workflow-migration.ko.md)
 
 ## 실행 환경 선택
 
@@ -52,9 +52,9 @@ runs-on: ${{ format('runquill-{0}-{1}-build', github.run_id, github.run_attempt)
 | --- | --- |
 | 설치, 저장소 접근 범위 선택, 조직 App 등록 | [설치](docs/install.ko.md) |
 | 공개 HTTPS로 패널 열기와 서명된 웹훅 받기 | [Cloudflare Tunnel](docs/cloudflare-tunnel.ko.md), [Tailscale와 기타 프록시](docs/install.ko.md#기존-github-app-또는-웹훅-사용) |
-| 작업 실행, 기존 워크플로 이전, 러너 OS 선택 | [워크플로](docs/workflows.ko.md), [마이그레이션](docs/workflow-migration.md), [러너 이미지와 캐시](docs/runner-images.md) |
-| 워커 추가와 용량 설정 | [워커와 풀](docs/workers.ko.md), [아웃바운드 워커](docs/outbound-workers.md), [컨테이너 엔진](docs/container-engines.md), [탄력적 한도](docs/elastic-limits.md) |
-| 상태 확인, 문제 해결, 업그레이드, 백업 | [운영](docs/operations.ko.md), [웹 패널](docs/panel.md), [백업](docs/backups.md), [메트릭](docs/metrics.md) |
+| 작업 실행, 기존 워크플로 이전, 러너 OS 선택 | [워크플로](docs/workflows.ko.md), [마이그레이션](docs/workflow-migration.ko.md), [러너 이미지와 캐시](docs/runner-images.ko.md) |
+| 워커 추가와 용량 설정 | [워커와 풀](docs/workers.ko.md), [아웃바운드 워커](docs/outbound-workers.ko.md), [컨테이너 엔진](docs/container-engines.ko.md), [탄력적 한도](docs/elastic-limits.ko.md) |
+| 상태 확인, 문제 해결, 업그레이드, 백업 | [운영](docs/operations.ko.md), [웹 패널](docs/panel.ko.md), [백업](docs/backups.ko.md), [메트릭](docs/metrics.ko.md) |
 | 스크립트나 코딩 에이전트로 상태 조회 | [원격 CLI](docs/remote-cli.md), [MCP](docs/mcp.md), [패널 API](api/openapi.yaml) |
 | 저장소 개발과 기여 | [AGENTS.md](AGENTS.md), [개발과 릴리스](docs/development.ko.md) |
 
