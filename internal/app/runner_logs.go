@@ -13,7 +13,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -208,8 +207,7 @@ func (l *runnerLogs) stream(ctx context.Context, w http.ResponseWriter, args []s
 	// docker writes container stderr to its own stderr; keep both, in order.
 	cmd.Stdout, cmd.Stderr = writer, writer
 	// Kill the whole group so an ssh helper does not outlive the docker CLI.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	killProcessGroupOnCancel(cmd)
 	cmd.WaitDelay = time.Second
 	if err := cmd.Start(); err != nil {
 		writer.Close()

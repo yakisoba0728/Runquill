@@ -14,7 +14,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -90,7 +89,7 @@ func setup(ctx context.Context, out io.Writer, dir string, client *http.Client, 
 		return fmt.Errorf("open setup lock: %w", err)
 	}
 	defer lock.Close()
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := lockExclusive(lock); err != nil {
 		return fmt.Errorf("lock setup directory: %w", err)
 	}
 	web := currentWizard(ctx)
