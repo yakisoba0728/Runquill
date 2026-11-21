@@ -38,8 +38,7 @@ func newStuckPodAPI(t *testing.T, pods ...core.Pod) (*stuckPodAPI, *kubeRunners)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return fake, &kubeRunners{pods: api.Pods("runner-fixture"), events: api.Events("runner-fixture"), options: kubeRunnerOptions{namespace: "runner-fixture"},
-		removing: &kubeRemovals{uids: make(map[types.UID]bool)}}
+	return fake, &kubeRunners{pods: api.Pods("runner-fixture"), events: api.Events("runner-fixture"), options: kubeRunnerOptions{namespace: "runner-fixture"}}
 }
 
 func (f *stuckPodAPI) serve(w http.ResponseWriter, r *http.Request) {
@@ -186,14 +185,19 @@ func TestKubernetesTerminatingPodReleasesLeaseButKeepsSlot(t *testing.T) {
 	}
 }
 
-func TestKubernetesForceDeletesOnlyPodsItRemoved(t *testing.T) {
-	old := time.Now().Add(-time.Hour)
-	fake, runtime := newStuckPodAPI(t, stuckRunnerPod("runquill-1-0123456789ab", &old))
+func TestKubernetesForceDeletesStuckPodsAfterRestart(t *testing.T) {
+	old, recent := time.Now().Add(-kubeForceDeleteAfter-time.Second), time.Now().Add(-time.Minute)
+	foreign := stuckRunnerPod("builder-0123456789ab", &old)
+	unlabelled := stuckRunnerPod("runquill-4-0123456789ab", &old)
+	unlabelled.Labels = nil
+	// A fresh runtime has not removed any of these Pods, as after a manager restart.
+	fake, runtime := newStuckPodAPI(t, stuckRunnerPod("runquill-1-0123456789ab", &old), stuckRunnerPod("runquill-2-0123456789ab", &recent),
+		stuckRunnerPod("runquill-3-0123456789ab", nil), foreign, unlabelled)
 	if _, err := runtime.snapshot(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if forced := fake.forcedDeletes(); len(forced) != 0 {
-		t.Fatalf("a Pod this manager did not remove was force deleted: %v", forced)
+	if forced := fake.forcedDeletes(); len(forced) != 1 || forced[0] != "runquill-1-0123456789ab" {
+		t.Fatalf("force deleted %v, want only the Runquill Pod Terminating for %s", forced, kubeForceDeleteAfter)
 	}
 }
 
