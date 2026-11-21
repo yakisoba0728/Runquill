@@ -45,7 +45,9 @@ func TestCheckWorkflowFindings(t *testing.T) {
 		{"static runquill label", "permissions: {}\njobs:\n  a:\n    runs-on: runquill-1-1-a\n    timeout-minutes: 1\n", nil,
 			[]string{"a:runs-on:warning"}},
 		{"strategy without matrix", "permissions: {}\njobs:\n  a:\n    strategy: {fail-fast: false}\n    runs-on: " + routeBuild + "\n    timeout-minutes: 1\n", nil, nil},
-		{"matrix without index","permissions: {}\njobs:\n  a:\n    strategy:\n      matrix: {x: [1]}\n    runs-on: " + routeBuild + "\n    timeout-minutes: 1\n", nil,
+		{"duplicate suffix", "permissions: {}\njobs:\n  a:\n    runs-on: " + routeBuild + "\n    timeout-minutes: 1\n  b:\n    runs-on: " + routeBuild + "\n    timeout-minutes: 1\n", nil,
+			[]string{"b:duplicate-suffix:warning"}},
+		{"matrix without index", "permissions: {}\njobs:\n  a:\n    strategy:\n      matrix: {x: [1]}\n    runs-on: " + routeBuild + "\n    timeout-minutes: 1\n", nil,
 			[]string{"a:runs-on:warning"}},
 		{"bad pool suffix", "permissions: {}\njobs:\n  a:\n    runs-on: ${{ format('runquill-{0}-{1}-pool__lint', github.run_id, github.run_attempt) }}\n    timeout-minutes: 1\n", nil,
 			[]string{"a:runs-on:warning"}},
@@ -151,6 +153,68 @@ func TestWorkflowCheckCommand(t *testing.T) {
 	}
 	if code, _, errs := workflowCheckCommandIn(t.TempDir()); code != 2 || !strings.Contains(errs, "no .github/workflows directory") {
 		t.Fatalf("no workflows: %d %s", code, errs)
+	}
+}
+
+func TestWorkflowCheckSavedPools(t *testing.T) {
+	dir := t.TempDir()
+	src := "permissions: {}\njobs:\n" +
+		"  a:\n    runs-on: ${{ format('runquill-{0}-{1}-pool__lint__a', github.run_id, github.run_attempt) }}\n    timeout-minutes: 1\n    container: node:22\n" +
+		"  b:\n    runs-on: ${{ format('runquill-{0}-{1}-pool__gpu__b', github.run_id, github.run_attempt) }}\n    timeout-minutes: 1\n"
+	if err := os.WriteFile(filepath.Join(dir, "ci.yml"), []byte(src), 0644); err != nil {
+		t.Fatal(err)
+	}
+	envPools := `{"gpu": {"hosts": ["local"]}}`
+	run := func(db string) (string, string) {
+		var out, errs bytes.Buffer
+		workflowCheckCommand([]string{"ci.yml"}, dir, &out, &errs, func(key string) string {
+			switch key {
+			case "RUNQUILL_DB":
+				return db
+			case "RUNQUILL_WORKER_POOLS":
+				return envPools
+			}
+			return ""
+		})
+		return out.String(), errs.String()
+	}
+	envOnly := func(label, db string) {
+		t.Helper()
+		out, errs := run(db)
+		if errs != "" || !strings.Contains(out, `[pool] job a: Worker pool "lint" is not configured in RUNQUILL_WORKER_POOLS`) {
+			t.Fatalf("%s: %s\n%s", label, errs, out)
+		}
+	}
+	envOnly("no database", "")
+	envOnly("missing database", "missing.sqlite3")
+	if err := os.WriteFile(filepath.Join(dir, "junk.sqlite3"), []byte("not a database"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	envOnly("unreadable database", "junk.sqlite3")
+
+	q, err := openQueue(filepath.Join(dir, "runquill.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	envOnly("no saved settings", "runquill.sqlite3")
+	if _, err := q.Exec("INSERT INTO operation_settings VALUES (1, 1, ?)",
+		`{"worker_pools":{"lint":{"hosts":["local"],"privileged":false}}}`); err != nil {
+		t.Fatal(err)
+	}
+	q.close()
+	before, err := os.ReadFile(filepath.Join(dir, "runquill.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, errs := run("runquill.sqlite3")
+	if !strings.Contains(errs, "Using the operation settings saved in") ||
+		!strings.Contains(out, "[docker] job a:") ||
+		!strings.Contains(out, `[pool] job b: Worker pool "gpu" is not configured in the operation settings saved in the panel`) {
+		t.Fatalf("saved pools: %s\n%s", errs, out)
+	}
+	after, err := os.ReadFile(filepath.Join(dir, "runquill.sqlite3"))
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("database changed: %v", err)
 	}
 }
 

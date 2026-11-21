@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -49,6 +50,38 @@ func workerPoolsFromEnv(getenv func(string) string) (workerPools, error) {
 	return pools, nil
 }
 
+// savedWorkerPools reads the pools saved in the panel from RUNQUILL_DB without changing it.
+// It reports false when the database is missing, unreadable or has no saved settings.
+func savedWorkerPools(ctx context.Context, dir string, getenv func(string) string, envPools workerPools) (workerPools, string, bool) {
+	path := strings.TrimSpace(getenv("RUNQUILL_DB"))
+	if path == "" {
+		return nil, "", false
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(dir, path)
+	}
+	if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
+		return nil, "", false
+	}
+	db, err := openQueueDB(path, "ro")
+	if err != nil {
+		return nil, "", false
+	}
+	defer db.Close()
+	policy, saved, err := readOperationPolicy(ctx, db, operationPolicy{Pools: envPools})
+	if err != nil || !saved {
+		return nil, "", false
+	}
+	pools := policy.Pools
+	if len(pools) == 0 {
+		return nil, path, true
+	}
+	if _, ok := pools[defaultWorkerPool]; !ok {
+		pools[defaultWorkerPool] = workerPool{}
+	}
+	return pools, path, true
+}
+
 func workflowFiles(dir string, args []string) ([]string, error) {
 	if len(args) == 0 {
 		args = []string{filepath.Join(dir, ".github", "workflows")}
@@ -92,6 +125,14 @@ func workflowCheckCommand(args []string, dir string, stdout, stderr io.Writer, g
 		return 2
 	}
 	pools, poolErr := workerPoolsFromEnv(getenv)
+	poolSource := ""
+	if saved, path, ok := savedWorkerPools(context.Background(), dir, getenv, pools); ok {
+		pools, poolSource = saved, "the operation settings saved in the panel"
+		if saved != nil {
+			poolErr = nil
+		}
+		fmt.Fprintf(stderr, "Using the operation settings saved in %s (read-only) for pool checks.\n", path)
+	}
 	if poolErr != nil {
 		fmt.Fprintln(stderr, poolErr)
 	}
@@ -114,6 +155,7 @@ func workflowCheckCommand(args []string, dir string, stdout, stderr io.Writer, g
 		return 2
 	}
 	options := workflowCheckOptions(pools, images)
+	options.PoolSource = poolSource
 	findings := []workflow.Finding{}
 	for _, file := range files {
 		data, err := readWorkflowFile(file)
