@@ -26,7 +26,7 @@ The manager takes a backup once per interval when these variables are set. At st
 
 Files are named `runquill-queue-YYYYMMDDTHHMMSSZ.sqlite3`, with `.sealed` appended when sealed. Each one is checked against the manager's `RUNQUILL_OWNER` and `RUNQUILL_APP_ID` before it is published, and only files with this name pattern are pruned. Invalid settings stop the manager at startup. A failed run is logged, shown on the panel's **Backups** screen and retried at the next interval.
 
-On **Backups**, an administrator can use **Verify latest backup** to check the most recent retained local copy. The manager authenticates a sealed copy with its configured passphrase and checks the SQLite format, integrity and GitHub App identity. The check keeps the original file and active queue intact. The panel shows the file, time and result from the latest verification since startup. Completed and failed checks are recorded as `queue.backup.verify` attempts in the audit log.
+On **Backups**, an administrator can use **Verify latest backup** to check the most recent retained local copy. The manager authenticates a sealed copy with its configured passphrase and checks the SQLite format, integrity and GitHub App identity. It unseals into a private temporary directory in `RUNQUILL_BACKUP_DIR`, so that directory needs free space for one plaintext copy and must be writable. The check keeps the original file and active queue intact. The panel shows the file, time and result from the latest verification since startup. Completed and failed checks are recorded as `queue.backup.verify` attempts in the audit log.
 
 ## Upload to S3-compatible storage
 

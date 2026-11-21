@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/yakisoba0728/Runquill/internal/backupseal"
 )
@@ -27,7 +28,12 @@ const queueBackupOptionalJobColumns = "jit_requested_ms jit_registered_ms runner
 var (
 	errQueueBackupIdentity          = errors.New("queue backup belongs to another GitHub owner or app")
 	errBackupVerificationPassphrase = errors.New("could not load the backup passphrase for verification")
+	errBackupVerificationWorkspace  = errors.New("could not create a temporary directory beside the backup for verification")
 )
+
+// backupVerifyPrefix names the private directory that holds an unsealed copy
+// during verification. Dot-prefixed directories never match backupFileName.
+const backupVerifyPrefix = ".runquill-verify-"
 
 type queueBackupIdentity struct {
 	owner, appID string
@@ -413,9 +419,13 @@ func verifyLocalBackup(ctx context.Context, path string) error {
 		if err != nil || backupseal.CheckPassphrase(passphrase) != nil {
 			return errBackupVerificationPassphrase
 		}
-		dir, err := os.MkdirTemp("", "runquill-verify-backup-")
+		// Unseal beside the backup, not in the system temporary directory, which
+		// may be a small tmpfs. Without a writable backup directory, fail rather
+		// than put plaintext elsewhere.
+		removeStaleVerifyDirs(filepath.Dir(path))
+		dir, err := os.MkdirTemp(filepath.Dir(path), backupVerifyPrefix+"*")
 		if err != nil {
-			return err
+			return fmt.Errorf("%w: %w", errBackupVerificationWorkspace, err)
 		}
 		defer os.RemoveAll(dir)
 		plain := filepath.Join(dir, "queue.sqlite3")
@@ -425,6 +435,23 @@ func verifyLocalBackup(ctx context.Context, path string) error {
 		path = plain
 	}
 	return verifyQueueBackup(ctx, path, identity)
+}
+
+// removeStaleVerifyDirs deletes verification directories an interrupted check
+// left. A running check ends within panelBackupTimeout, so younger ones stay.
+func removeStaleVerifyDirs(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), backupVerifyPrefix) {
+			continue
+		}
+		if info, err := entry.Info(); err == nil && time.Since(info.ModTime()) > 2*panelBackupTimeout {
+			os.RemoveAll(filepath.Join(dir, entry.Name()))
+		}
+	}
 }
 
 func currentQueueBackupIdentity() (queueBackupIdentity, error) {

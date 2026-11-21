@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yakisoba0728/Runquill/internal/backupseal"
 )
@@ -114,6 +115,60 @@ func TestSealedBackupRestoresEndToEnd(t *testing.T) {
 	jobs, err := restored.jobs(ctx, "ORDER BY sequence")
 	if err != nil || len(jobs) != 1 || jobs[0].id != 7 {
 		t.Fatalf("restored jobs %+v, %v", jobs, err)
+	}
+}
+
+func TestVerifyLocalBackupUnsealsBesideBackup(t *testing.T) {
+	t.Setenv("RUNQUILL_OWNER", "owner")
+	t.Setenv("RUNQUILL_APP_ID", "123")
+	t.Setenv("RUNQUILL_BACKUP_PASSPHRASE", testPassphrase)
+	t.Setenv("RUNQUILL_BACKUP_PASSPHRASE_FILE", "")
+	root := t.TempDir()
+	live := filepath.Join(root, "live.sqlite3")
+	q, err := openQueue(live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer q.close()
+	dir := filepath.Join(root, "backups")
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	name := backupObjectName(time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), true)
+	if err := sealedBackupCommand(t.Context(), io.Discard, live, filepath.Join(dir, name), ""); err != nil {
+		t.Fatal(err)
+	}
+	stale, fresh := filepath.Join(dir, backupVerifyPrefix+"stale"), filepath.Join(dir, backupVerifyPrefix+"fresh")
+	for _, d := range []string{stale, fresh} {
+		if err := os.Mkdir(d, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := time.Now().Add(-3 * panelBackupTimeout)
+	if err := os.Chtimes(stale, old, old); err != nil {
+		t.Fatal(err)
+	}
+	// An unusable system temporary directory must not matter.
+	missing := filepath.Join(root, "no-tmp")
+	t.Setenv("TMPDIR", missing)
+	t.Setenv("TMP", missing)
+	t.Setenv("TEMP", missing)
+	if err := verifyLocalBackup(t.Context(), filepath.Join(dir, name)); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var left []string
+	for _, entry := range entries {
+		left = append(left, entry.Name())
+	}
+	if strings.Join(left, ",") != backupVerifyPrefix+"fresh,"+name {
+		t.Fatalf("backup directory after verification: %v", left)
+	}
+	if names, _ := listLocalBackups(dir); len(names) != 1 {
+		t.Fatalf("verification left files counted as backups: %v", names)
 	}
 }
 
