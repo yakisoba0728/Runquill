@@ -22,6 +22,7 @@ var (
 	pinnedRef     = regexp.MustCompile(`^[0-9a-f]{40}$`)
 	dockerUsage   = regexp.MustCompile(`(^|[\s;&|(])(docker|docker-compose)(\s|$)|uses:\s+["']?docker://`)
 	flowMapKey    = regexp.MustCompile(`[{,]\s*["']?([A-Za-z_]+)["']?\s*:`)
+	jobIndex      = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)
 )
 
 type Finding struct {
@@ -76,7 +77,9 @@ func (d *wfDoc) workflowEvents() []string {
 type routeInfo struct {
 	runquill, selfHosted bool
 	pool, os             string
-	problem              string
+	// suffix is the lowercase label suffix, ending in -{2} when it adds strategy.job-index.
+	suffix  string
+	problem string
 }
 
 func checkRoute(labels []string, matrix bool) routeInfo {
@@ -110,6 +113,7 @@ func checkRoute(labels []string, matrix bool) routeInfo {
 		info.problem = "the {2} placeholder and strategy.job-index must be used together"
 		return info
 	}
+	info.suffix = strings.ToLower(m[1] + m[2])
 	if matrix && m[2] == "" {
 		info.problem = "matrix jobs need strategy.job-index in the Runquill label so each job gets its own runner"
 		return info
@@ -177,6 +181,22 @@ func (d *wfDoc) hasMatrix(j *wfJob) bool {
 	return true
 }
 
+// suffixesOverlap reports whether two label suffixes can produce the same label in one run.
+func suffixesOverlap(a, b string) bool {
+	if a == b {
+		return true
+	}
+	indexed, literal := a, b
+	if !strings.HasSuffix(indexed, "-{2}") {
+		indexed, literal = b, a
+	}
+	if !strings.HasSuffix(indexed, "-{2}") || strings.HasSuffix(literal, "-{2}") {
+		return false
+	}
+	index, ok := strings.CutPrefix(literal, strings.TrimSuffix(indexed, "{2}"))
+	return ok && jobIndex.MatchString(index)
+}
+
 func jobNeedsDocker(d *wfDoc, j *wfJob) bool {
 	if _, ok := j.prop("container"); ok {
 		return true
@@ -219,6 +239,11 @@ func Check(path string, src []byte, options CheckOptions) []Finding {
 		add(1, "", severityWarning, "permissions", "The workflow does not set permissions, so jobs get the repository's default GITHUB_TOKEN permissions. Add a top-level permissions block.")
 	}
 	events := d.workflowEvents()
+	type labelled struct {
+		job, suffix string
+		line        int
+	}
+	var routes []labelled
 	for _, j := range d.jobs {
 		line := j.line + 1
 		if j.code != "" {
@@ -240,6 +265,20 @@ func Check(path string, src []byte, options CheckOptions) []Finding {
 		}
 		if info.problem != "" {
 			add(line, j.id, severityWarning, "runs-on", info.problem+".")
+		}
+		if info.suffix != "" {
+			for _, other := range routes {
+				switch {
+				case info.suffix == other.suffix:
+					add(line, j.id, severityWarning, "duplicate-suffix", fmt.Sprintf("Suffix %q is also used by job %s (line %d), so both jobs get the same Runquill label and can take each other's runner. Use a unique suffix for each job.", info.suffix, other.job, other.line))
+				case suffixesOverlap(info.suffix, other.suffix):
+					add(line, j.id, severityWarning, "duplicate-suffix", fmt.Sprintf("Suffix %q can produce the same Runquill label as suffix %q of job %s (line %d), so the jobs can take each other's runner. Use a unique suffix for each job.", info.suffix, other.suffix, other.job, other.line))
+				default:
+					continue
+				}
+				break
+			}
+			routes = append(routes, labelled{j.id, info.suffix, line})
 		}
 		if info.selfHosted {
 			for _, event := range events {
