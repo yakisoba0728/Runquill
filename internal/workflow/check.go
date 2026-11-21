@@ -131,6 +131,52 @@ func checkRoute(labels []string, matrix bool) routeInfo {
 	return info
 }
 
+// hasMatrix reports whether the job's strategy defines a matrix.
+func (d *wfDoc) hasMatrix(j *wfJob) bool {
+	p, ok := j.prop("strategy")
+	if !ok {
+		return false
+	}
+	switch p.value.form {
+	case formEmpty:
+		indent := -1
+		for _, i := range d.nested(p) {
+			if indent < 0 {
+				indent = d.lines[i].indent
+			}
+			if d.lines[i].indent != indent {
+				continue
+			}
+			if key, _, ok := parseYAMLKey(d.text(i), indent); ok && key == "matrix" {
+				return true
+			}
+		}
+		return false
+	case formFlowMap:
+		text := p.value.text
+		depth, from := 0, 0
+		for _, m := range flowMapKey.FindAllStringSubmatchIndex(text, -1) {
+			for _, c := range text[from : m[0]+1] {
+				switch c {
+				case '{', '[':
+					depth++
+				case '}', ']':
+					depth--
+				}
+			}
+			from = m[0] + 1
+			if depth == 1 && text[m[2]:m[3]] == "matrix" {
+				return true
+			}
+		}
+		return false
+	case formPlain, formDouble, formSingle:
+		return false
+	}
+	// Anchors and tags hide the value, so assume a matrix.
+	return true
+}
+
 func jobNeedsDocker(d *wfDoc, j *wfJob) bool {
 	if _, ok := j.prop("container"); ok {
 		return true
@@ -179,7 +225,7 @@ func Check(path string, src []byte, options CheckOptions) []Finding {
 			add(line, j.id, severityInfo, "unparsed", "Could not check this job: "+j.refusal+".")
 			continue
 		}
-		_, matrix := j.prop("strategy")
+		matrix := d.hasMatrix(j)
 		_, reusable := j.prop("uses")
 		var info routeInfo
 		if p, ok := j.prop("runs-on"); ok {
