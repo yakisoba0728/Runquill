@@ -13,7 +13,7 @@ import (
 type config struct {
 	owner, appID, secret, keyPath, runnerImage string
 	repositoryScope                            string
-	organization                               bool
+	organization, allowPublic                  bool
 	runnerGroupID                              int64
 	limit, maxPerRepository, workers           int
 	pollInterval                               time.Duration
@@ -60,6 +60,9 @@ func loadConfig() (config, error) {
 	if err != nil {
 		return cfg, err
 	}
+	if cfg.allowPublic, err = parseAllowPublic(os.Getenv(allowPublicEnv)); err != nil {
+		return cfg, err
+	}
 	if cfg.organization && !setupLogin.MatchString(cfg.owner) {
 		return cfg, errors.New("set RUNQUILL_OWNER to the GitHub organization login")
 	}
@@ -92,7 +95,22 @@ func (cfg config) github() (*github, error) {
 	}
 	return &github{client: &http.Client{Timeout: 10 * time.Second}, base: githubAPIBase,
 		appID: cfg.appID, key: key, owner: cfg.owner, repositoryScope: cfg.repositoryScope,
-		organization: cfg.organization, runnerGroupID: cfg.runnerGroupID}, nil
+		organization: cfg.organization, runnerGroupID: cfg.runnerGroupID, allowPublic: cfg.allowPublic}, nil
+}
+
+// allowPublicEnv lets jobs from public repositories run. Only the deployment can set it.
+const allowPublicEnv = "RUNQUILL_ALLOW_PUBLIC_REPOSITORIES"
+
+func parseAllowPublic(value string) (bool, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false, nil
+	}
+	allow, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, fmt.Errorf("%s must be true or false", allowPublicEnv)
+	}
+	return allow, nil
 }
 
 func env(name, fallback string) string {

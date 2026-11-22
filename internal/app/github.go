@@ -40,7 +40,9 @@ type github struct {
 	repositoryScope string
 	organization    bool
 	runnerGroupID   int64
-	ready           *readiness
+	// allowPublic accepts jobs from the owner's public repositories, except workflow runs from forks.
+	allowPublic bool
+	ready       *readiness
 
 	mu           sync.Mutex
 	tokens       map[string]installationToken
@@ -460,14 +462,17 @@ func (g *github) ineligibility(j job, repo repository) string {
 		return fmt.Sprintf("GitHub repository ID is %d, not %d", repo.ID, j.repositoryID)
 	case !strings.EqualFold(repo.Owner.Login, g.owner):
 		return fmt.Sprintf("repository owner is %q, not %q", repo.Owner.Login, g.owner)
-	case !repo.privateFor(g.owner), g.organization && repo.Visibility != "private":
-		if v := repo.Visibility; v != "" && v != "private" {
+	case !repo.acceptedFor(g.owner, g.allowPublic), g.organization && repo.Visibility == "":
+		if v := repo.Visibility; v != "" && v != "private" && (v != "public" || !g.allowPublic) {
 			return "repository is " + v
 		}
-		if !repo.Private {
+		if !repo.Private && !g.allowPublic {
 			return "repository is public"
 		}
-		return "GitHub did not report the repository visibility as private"
+		if !g.allowPublic {
+			return "GitHub did not report the repository visibility as private"
+		}
+		return "GitHub did not report a consistent repository visibility"
 	case repo.Archived:
 		return "repository is archived"
 	case repo.Disabled:
@@ -481,6 +486,39 @@ func (g *github) jobDetails(ctx context.Context, j job, token string) (workflowJ
 	path := fmt.Sprintf("/repos/%s/actions/jobs/%d", j.repository, j.id)
 	err := g.request(ctx, http.MethodGet, path, token, nil, &out)
 	return out, err
+}
+
+// forkRun says why the workflow run of a public repository's job came from a fork, or is empty
+// when the run's head repository is the job's repository. Anyone can open a pull request from a
+// fork of a public repository and change runs-on, so such runs never reach a Runquill runner.
+func (g *github) forkRun(ctx context.Context, j job, runID int64, token string) (string, error) {
+	if runID <= 0 {
+		return "", fmt.Errorf("GitHub did not report the workflow run of job %d", j.id)
+	}
+	var run struct {
+		ID         int64 `json:"id"`
+		Repository *struct {
+			ID int64 `json:"id"`
+		} `json:"repository"`
+		HeadRepository *struct {
+			ID       int64  `json:"id"`
+			FullName string `json:"full_name"`
+		} `json:"head_repository"`
+	}
+	path := fmt.Sprintf("/repos/%s/actions/runs/%d", j.repository, runID)
+	if err := g.request(ctx, http.MethodGet, path, token, nil, &run); err != nil {
+		return "", err
+	}
+	switch {
+	case run.ID != runID || run.Repository == nil || run.Repository.ID != j.repositoryID:
+		return "", fmt.Errorf("GitHub returned a different workflow run for run %d", runID)
+	case run.HeadRepository == nil:
+		return "the workflow run comes from a fork that no longer exists; Runquill does not run workflow runs from forks of public repositories", nil
+	case run.HeadRepository.ID != j.repositoryID:
+		return fmt.Sprintf("the workflow run comes from the fork %s; Runquill does not run workflow runs from forks of public repositories",
+			run.HeadRepository.FullName), nil
+	}
+	return "", nil
 }
 
 func (g *github) provision(ctx context.Context, j job, name, token string) (int64, string, error) {

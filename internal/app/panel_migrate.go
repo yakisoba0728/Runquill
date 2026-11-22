@@ -53,7 +53,7 @@ func writeMigrateFailure(w http.ResponseWriter, err error) {
 	case errors.Is(err, errRepositoryOutsideInstallation):
 		panelJSON(w, http.StatusForbidden, migrateFailure{Error: "The repository is outside the GitHub App installation.", Code: "scope"})
 	case errors.Is(err, errMigrationPublic):
-		panelJSON(w, http.StatusBadRequest, migrateFailure{Error: "Runquill only runs jobs from private repositories.", Code: "public"})
+		panelJSON(w, http.StatusBadRequest, migrateFailure{Error: "Workflow migration only changes private repositories.", Code: "public"})
 	case errors.Is(err, errMigrationInstallScope):
 		panelJSON(w, http.StatusConflict, migrateFailure{Error: "The GitHub App installation's repository access does not match the Runquill configuration.", Code: "installation_scope"})
 	case errors.Is(err, errMigrationTooMany):

@@ -19,7 +19,7 @@ export default {
       ["slots", "Slots in use"]], { label: "Fleet capacity" });
     const hosts = createKv([["total", "Worker hosts"], ["up", "Ready"], ["offline", "Offline"], ["unavailable", "Unavailable"],
       ["cordoned", "On maintenance"]], { label: "Host health" });
-    const github = createKv([["scope", "Configured access"], ["app", "App connection"], ["webhook", "Last matched webhook"],
+    const github = createKv([["scope", "Configured access"], ["public", "Public repositories"], ["app", "App connection"], ["webhook", "Last matched webhook"],
       ["poll", "Last successful poll"]], { label: "GitHub connection" });
     const steps = [
       ["app", "Connect the GitHub App"],
@@ -87,6 +87,9 @@ export default {
     const scope = snapshot?.fleet?.repository_scope;
     github.show("scope", scope === "selected" || scope === "all");
     github.set("scope", tr(scope === "selected" ? "Only selected repositories" : "All repositories"));
+    // RUNQUILL_ALLOW_PUBLIC_REPOSITORIES is a deployment setting, so the panel only reports it.
+    github.show("public", !!snapshot?.fleet?.public_repositories);
+    github.set("public", tr("Allowed, fork runs refused"));
     const connected = !!(snapshot?.last_webhook || snapshot?.last_poll);
     github.set("app", connected ? state("UP", "Activity verified") : state("UNKNOWN", "Awaiting evidence"));
     github.set("webhook", snapshot?.webhook ? format.relative(snapshot.last_webhook) : tr("Disabled"));

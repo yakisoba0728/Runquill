@@ -75,6 +75,7 @@ func inspectStatus(ctx context.Context, db *sql.DB) (*statusReport, error) {
 	repoCap, _ := strconv.Atoi(os.Getenv("RUNQUILL_MAX_PER_REPOSITORY"))
 	report.configure(runners.kind, scope, runners.pools, jobs, hosts,
 		jobPlacementDiagnostics{images: runners.images, runtime: runners.runtime, repoCap: repoCap})
+	report.PublicRepositories, _ = parseAllowPublic(os.Getenv(allowPublicEnv))
 	if probeErr != nil {
 		report.DockerError = strings.Join(strings.Fields(probeErr.Error()), " ")
 	}
@@ -135,15 +136,16 @@ func readStatusJobs(ctx context.Context, db *sql.DB) ([]job, error) {
 }
 
 type statusReport struct {
-	Backend         string         `json:"backend,omitempty"`
-	RepositoryScope string         `json:"repository_scope,omitempty"`
-	SchemaVersion   int            `json:"schema_version"`
-	SlotLimit       int            `json:"slot_limit"`
-	Runners         *statusRunners `json:"runners"`
-	Hosts           []statusHost   `json:"hosts"`
-	Jobs            []statusJob    `json:"jobs"`
-	DockerError     string         `json:"docker_error,omitempty"`
-	pools           workerPools
+	Backend            string         `json:"backend,omitempty"`
+	RepositoryScope    string         `json:"repository_scope,omitempty"`
+	PublicRepositories bool           `json:"public_repositories,omitempty"` // only the deployment sets it
+	SchemaVersion      int            `json:"schema_version"`
+	SlotLimit          int            `json:"slot_limit"`
+	Runners            *statusRunners `json:"runners"`
+	Hosts              []statusHost   `json:"hosts"`
+	Jobs               []statusJob    `json:"jobs"`
+	DockerError        string         `json:"docker_error,omitempty"`
+	pools              workerPools
 }
 
 type statusRunners struct {

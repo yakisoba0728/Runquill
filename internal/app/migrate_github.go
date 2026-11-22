@@ -33,7 +33,7 @@ var (
 	errMigrationStale        = errors.New("the workflow files changed since the preview; preview again before opening the pull request")
 	errNothingToMigrate      = errors.New("no job matches the mapping, so there is nothing to change")
 	errMigrationRepository   = errors.New("use OWNER/REPO for a repository owned by RUNQUILL_OWNER")
-	errMigrationPublic       = errors.New("Runquill only runs jobs from private repositories")
+	errMigrationPublic       = errors.New("workflow migration only changes private repositories")
 	errMigrationInstallScope = errors.New("the GitHub App installation's repository access does not match the Runquill configuration")
 	errMigrationTooMany      = fmt.Errorf("the repository has more than %d workflow files", maxMigrationFiles)
 	workflowFileName         = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]*\.ya?ml$`)

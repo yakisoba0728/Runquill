@@ -94,7 +94,7 @@ func TestWebhookAcceptsOSSelectorsWithinTheLabelLimit(t *testing.T) {
 	repo := repository{ID: 1, FullName: "owner/repo", Private: true}
 	repo.Owner.Login = "owner"
 	accept := func(label string) bool {
-		_, ok, err := workflowJob{ID: 5, RunID: 7, Labels: []string{label}}.queueJob("owner", repo, 1, "queued")
+		_, ok, err := workflowJob{ID: 5, RunID: 7, Labels: []string{label}}.queueJob("owner", false, repo, 1, "queued")
 		return ok && err == nil
 	}
 	for _, label := range []string{"runquill-7-1-os__ubuntu2204__build", "runquill-7-1-pool__big__os__ubuntu-latest__build-2", "runquill-7-1-build"} {
