@@ -648,6 +648,15 @@ func (s *scheduler) launch(ctx context.Context, j job, host, pool string, now ti
 		if reason != "" {
 			return false, s.fail(ctx, j, now, reason)
 		}
+		// The runner takes any queued job with its label, and public labels are predictable, so a
+		// fork job could claim it. Errors wait with the launch backoff until the repository is safe.
+		adminToken := token
+		if s.github.runnerGroupID > 0 {
+			adminToken = "" // runner group installations read repositories with an Actions-only token
+		}
+		if err := s.github.guardPublicRepository(ctx, j, token, adminToken); err != nil {
+			return false, err
+		}
 	}
 	if s.github.runnerGroupID > 0 {
 		token, err = s.github.organizationJobToken(ctx, j, true)

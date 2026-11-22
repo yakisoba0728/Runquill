@@ -90,6 +90,12 @@ func diagnoseRepository(ctx context.Context, out io.Writer, api *github, db *sql
 	}
 	if !repo.Private {
 		fmt.Fprintln(out, "Public repository: Runquill refuses workflow runs from forks")
+		j := job{repository: name, repositoryID: repo.ID, installationID: inst.ID}
+		if err := api.guardPublicRepository(ctx, j, token.Token, ""); err != nil {
+			fmt.Fprintf(out, "Public repository jobs wait: %s\n", strings.Join(strings.Fields(err.Error()), " "))
+		} else {
+			fmt.Fprintf(out, "Fork pull request approval: %s, and no fork run waits for a Runquill runner\n", forkApprovalPolicy)
+		}
 	}
 	if api.runnerGroupID > 0 {
 		if permissionErr != nil {

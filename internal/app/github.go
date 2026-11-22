@@ -15,6 +15,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -519,6 +520,102 @@ func (g *github) forkRun(ctx context.Context, j job, runID int64, token string) 
 			run.HeadRepository.FullName), nil
 	}
 	return "", nil
+}
+
+// forkApprovalPolicy is the only fork pull request approval policy under which an outside
+// contributor's fork workflow cannot queue a job without an administrator's approval.
+const forkApprovalPolicy = "all_external_contributors"
+
+// unfinishedRunStatuses are the workflow run states whose jobs can be queued for a runner.
+var unfinishedRunStatuses = []string{"queued", "in_progress", "waiting"}
+
+// guardPublicRepository fails, so the job waits and retries, unless the public repository requires
+// approval for every external contributor and no fork workflow run has an unfinished job with a
+// Runquill label that could take the runner registered for j. token reads Actions; adminToken,
+// minted when empty, reads the repository's Actions settings.
+func (g *github) guardPublicRepository(ctx context.Context, j job, token, adminToken string) error {
+	if adminToken == "" {
+		var err error
+		if adminToken, err = g.repositoryAdminToken(ctx, j); err != nil {
+			return err
+		}
+	}
+	var approval struct {
+		Policy string `json:"approval_policy"`
+	}
+	err := g.request(ctx, http.MethodGet, "/repos/"+j.repository+"/actions/permissions/fork-pr-contributor-approval", adminToken, nil, &approval)
+	var apiErr *githubError
+	if errors.As(err, &apiErr) && (apiErr.status == http.StatusForbidden && apiErr.retryAt.IsZero() || apiErr.status == http.StatusNotFound) {
+		return fmt.Errorf("read the fork pull request approval policy of public repository %s (grant the GitHub App repository Administration read access): %w", j.repository, err)
+	}
+	if err != nil {
+		return err
+	}
+	if approval.Policy != forkApprovalPolicy {
+		return fmt.Errorf("public repository %s must require approval for all external contributors (%s) before fork pull request workflows run (Settings → Actions → General)",
+			j.repository, forkApprovalPolicy)
+	}
+	type headRun struct {
+		ID             int64 `json:"id"`
+		HeadRepository *struct {
+			ID       int64  `json:"id"`
+			FullName string `json:"full_name"`
+		} `json:"head_repository"`
+	}
+	pages := &poller{github: g, token: installationToken{Token: token}, cache: make(map[string]pollPage)}
+	base := "/repos/" + j.repository + "/actions/runs"
+	seen := make(map[int64]bool)
+	for _, status := range unfinishedRunStatuses {
+		runs, err := polledPages[headRun](ctx, pages, base+"?per_page=100&status="+status, "workflow_runs")
+		if err != nil {
+			return err
+		}
+		for _, run := range runs {
+			if run.ID <= 0 || seen[run.ID] || run.HeadRepository != nil && run.HeadRepository.ID == j.repositoryID {
+				continue
+			}
+			seen[run.ID] = true
+			jobs, err := polledPages[struct {
+				Status string   `json:"status"`
+				Labels []string `json:"labels"`
+			}](ctx, pages, fmt.Sprintf("%s/%d/jobs?per_page=100&filter=latest", base, run.ID), "jobs")
+			if err != nil {
+				return err
+			}
+			for _, candidate := range jobs {
+				if candidate.Status == "completed" || !slices.ContainsFunc(candidate.Labels, runquillLabel) {
+					continue
+				}
+				fork := "a deleted fork"
+				if run.HeadRepository != nil {
+					fork = run.HeadRepository.FullName
+				}
+				return fmt.Errorf("a fork workflow run (#%d from %s) is waiting for a Runquill runner in %s; cancel that run", run.ID, fork, j.repository)
+			}
+		}
+	}
+	return nil
+}
+
+func runquillLabel(label string) bool {
+	return strings.HasPrefix(strings.ToLower(label), "runquill-")
+}
+
+// repositoryAdminToken mints a token that can read j's repository Actions settings.
+func (g *github) repositoryAdminToken(ctx context.Context, j job) (string, error) {
+	jwt, err := g.jwt(time.Now())
+	if err != nil {
+		return "", err
+	}
+	out, err := g.mintCached(ctx, jwt, j.installationID, map[string]any{
+		"repository_ids": []int64{j.repositoryID},
+		"permissions":    map[string]string{"actions": "read", "administration": "read"},
+	})
+	var apiErr *githubError
+	if errors.As(err, &apiErr) && apiErr.status == http.StatusUnprocessableEntity {
+		return "", fmt.Errorf("grant the GitHub App repository Administration read access to run jobs from public repository %s: %w", j.repository, err)
+	}
+	return out.Token, err
 }
 
 func (g *github) provision(ctx context.Context, j job, name, token string) (int64, string, error) {
