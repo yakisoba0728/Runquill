@@ -1239,18 +1239,12 @@ paths:
     get:
       operationId: startGitHubSignIn
       tags: [auth]
-      summary: Starts GitHub OAuth with PKCE and sets the short-lived rq_oauth state cookie.
+      summary: Starts GitHub OAuth with PKCE and sets the short-lived, encrypted rq_oauth cookie holding the state and verifier.
       x-runquill-permission: public
       security: []
       responses:
         '302':
           description: Redirect to github.com/login/oauth/authorize.
-        '429':
-          description: 'Body "Too many sign-in attempts. Try again later."'
-          content:
-            text/plain:
-              schema:
-                $ref: '#/components/schemas/Error'
   /auth/github/callback:
     get:
       operationId: finishGitHubSignIn
