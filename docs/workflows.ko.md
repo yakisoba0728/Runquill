@@ -4,7 +4,7 @@
 
 ## 사용할 저장소 연결
 
-- **전체 저장소**로 설치했다면 같은 개인 계정이나 조직 소유의 다른 비공개 저장소에도 아래 워크플로를 적용할 수 있습니다. Runquill 인증 정보와 웹훅은 App 설치에 속하므로 저장소마다 Runquill 시크릿이나 웹훅을 추가할 필요가 없습니다.
+- **전체 저장소**로 설치했다면 같은 개인 계정이나 조직 소유의 다른 비공개 저장소에도 아래 워크플로를 적용할 수 있습니다. 공개 저장소는 [아래 설정](#공개-저장소에서-작업-실행)을 켜야 합니다. Runquill 인증 정보와 웹훅은 App 설치에 속하므로 저장소마다 Runquill 시크릿이나 웹훅을 추가할 필요가 없습니다.
 - **선택한 저장소**로 설치했다면 GitHub의 App 설치 설정에서 대상 저장소를 추가합니다.
 - 다른 조직이 소유한 저장소에서 쓰려면 해당 조직에 [별도 설치](install.ko.md#github-조직-연결)를 구성합니다.
 
@@ -70,3 +70,19 @@ runs-on: ${{ format('runquill-{0}-{1}-os__ubuntu2204__build', github.run_id, git
 관리자는 패널의 **마이그레이션** 화면에서 GitHub 호스팅 라벨을 쓰는 작업을 Runquill 라벨로 바꾸는 풀 리퀘스트를 열 수 있습니다. Contents, Pull requests, Workflows 쓰기 권한이 필요하며, 새 App에서는 `runquill setup --migrate`만 이 권한을 요청합니다. Runquill은 먼저 diff를 미리 보여주고 `runs-on`만 바꿉니다. 안전하게 바꿀 수 없는 작업은 이유와 함께 그대로 두며, 병합은 하지 않습니다. `ubuntu-22.04` 같은 GitHub 호스팅 Ubuntu 버전 라벨은 매니저의 러너 이미지 목록에 그 OS가 있으면 `os__` 선택자로 바뀝니다. 실제 GitHub 저장소에서는 아직 검증하지 않았습니다. [워크플로 이전](workflow-migration.ko.md)
 
 `runquill workflow check`는 로컬 워크플로 파일에서 잘못된 Runquill 라벨, 같은 파일의 여러 작업이 함께 쓰는 접미사, 설정되지 않은 풀과 러너 OS 이름, self-hosted 러너의 위험한 트리거, 권한과 시간 제한 누락, 고정되지 않은 액션을 찾습니다. 심각도가 high인 항목이 있으면 상태 코드 1로 종료합니다. `--strict`를 붙이면 항목이 하나라도 있을 때 1로 종료하고, `--json`은 결과를 JSON으로 출력합니다. [점검 코드](workflow-migration.ko.md#오프라인-워크플로-점검)
+
+## 공개 저장소에서 작업 실행
+
+배포에서 `RUNQUILL_ALLOW_PUBLIC_REPOSITORIES=true`를 설정하지 않으면 Runquill은 공개 저장소의 작업을 무시합니다. 값을 `.env`에 두고 [Compose 오버레이](operations.ko.md#매니저-설정-추가)로 전달하거나 K3s의 `runquill-config` Secret에 추가합니다. 패널의 설정 화면에서는 바꿀 수 없으며, 켜져 있으면 패널 개요, `runquill status --json`, `runquill doctor`에 표시됩니다. 조직의 internal 저장소는 계속 제외합니다.
+
+설정을 켜면 `RUNQUILL_OWNER`가 소유한 공개 저장소의 작업도 받고, 소유자, 저장소 ID, 보관(archived)·비활성 상태, App 설치 범위 같은 나머지 검사는 그대로 적용합니다. 공개 저장소는 누구나 포크한 뒤 풀 리퀘스트에서 `runs-on`을 Runquill 라벨로 바꿔 내 서버에서 코드를 실행할 수 있습니다. 그래서 Runquill은 공개 저장소에 러너를 등록하기 전에 GitHub에서 작업의 워크플로 실행을 조회하고, 실행의 head 저장소가 포크이거나 더 이상 없으면 패널에 이유를 남기고 작업을 실패 처리합니다. GitHub가 응답하지 않으면 작업은 대기하고 다시 확인합니다. 비공개 저장소에서는 이 API 호출을 하지 않습니다.
+
+포크가 계기가 되었더라도 GitHub가 원본 저장소에서 시작한 워크플로 실행은 그대로 실행합니다. `pull_request_target`, `workflow_run`, `issue_comment` 워크플로는 원본 저장소의 권한으로 실행되므로 Runquill 라벨을 쓰는 작업에서 풀 리퀘스트 코드를 체크아웃하거나 빌드하지 마세요. 오프라인 `fork-trigger` 점검은 위험한 트리거를 알려 주지만 저장소가 공개인지는 알 수 없습니다.
+
+이 밖에 다음을 권장합니다.
+
+- 저장소나 조직의 **Settings → Actions → General**에서 모든 외부 기여자의 포크 풀 리퀘스트 워크플로에 승인을 요구합니다.
+- 공개 저장소 작업은 전용 호스트나 `repositories`를 그 저장소로 제한한 [워커 풀](workers.ko.md#워커-풀로-작업-분리)에서 실행하고, Docker-in-Docker가 없는 비특권 풀을 우선 사용합니다.
+- [조직 러너 그룹](install.ko.md#github-조직-연결)을 쓴다면 그룹에서 공개 저장소를 허용합니다. GitHub는 공개 저장소를 허용하지 않는 그룹에 공개 저장소의 작업을 배정하지 않으며, Runquill은 공개 저장소를 허용하지 않는데 공개 저장소가 들어 있는 그룹을 오류로 알립니다.
+
+[GitHub self-hosted 러너 보안 강화](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#hardening-for-self-hosted-runners)

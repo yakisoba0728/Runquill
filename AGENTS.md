@@ -2,7 +2,7 @@
 
 [README](README.md) · [한국어](README.ko.md) · [Development and release](docs/development.md)
 
-Runquill is a Go manager and CLI for ephemeral GitHub Actions runners in private repositories. The GitHub App receives or polls jobs, SQLite stores the queue and leases, and the scheduler starts runners on Docker hosts or K3s. The panel UI is shipped with the binary.
+Runquill is a Go manager and CLI for ephemeral GitHub Actions runners in private repositories, and in public ones only with `RUNQUILL_ALLOW_PUBLIC_REPOSITORIES`. The GitHub App receives or polls jobs, SQLite stores the queue and leases, and the scheduler starts runners on Docker hosts or K3s. The panel UI is shipped with the binary.
 
 ## Where to start
 
@@ -12,7 +12,7 @@ Runquill is a Go manager and CLI for ephemeral GitHub Actions runners in private
 | --- | --- |
 | Install or upgrade | `install.sh`, `internal/app/setup*.go`, `internal/app/wizard*.go`, `compose*.yaml`, `deploy/k3s/`. See [installation](docs/install.md) and [operations](docs/operations.md). |
 | Match a workflow or accept a job | `internal/workflow/`, `internal/route/`, `internal/app/webhook.go`, `internal/app/poller.go`, `examples/`. Use the [job-specific label rules](docs/workflows.md). |
-| Retry, place or clean up jobs | In `internal/app/`, start at `queue.go`, `scheduler.go`, `worker_*.go`, `docker*.go`, `kubernetes*.go`, or `gc.go`. Preserve GitHub job ID deduplication and runner lease reconciliation. |
+| Retry, place or clean up jobs | In `internal/app/`, start at `queue.go`, `scheduler.go`, `worker_*.go`, `docker*.go`, `kubernetes*.go`, or `gc.go`. Preserve GitHub job ID deduplication and runner lease reconciliation. Never start a runner for a public repository's workflow run from a fork. |
 | Debug runner images, OS or cache | `runner/`, `internal/app/runner_images*.go`, `internal/app/runner_runtime.go`, `internal/app/worker_pools.go`. See [runner images](docs/runner-images.md). |
 | Change the panel, CLI or MCP | `internal/webui/`, `internal/app/panel*.go`, `internal/app/cli*.go`, `internal/app/mcp*.go`, `api/openapi.yaml`. See [panel roles](docs/panel.md#roles-and-tokens), [remote CLI](docs/remote-cli.md) and [MCP](docs/mcp.md). |
 | Change backup storage or the sealed format | `internal/app/backup*.go`, `internal/backupseal/`. See [backups](docs/backups.md). |

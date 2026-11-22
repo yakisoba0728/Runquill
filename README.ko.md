@@ -2,7 +2,7 @@
 
 [English](README.md) · 한국어
 
-Runquill은 비공개 저장소의 GitHub Actions 작업을 내 Linux 서버에서 실행합니다. GitHub App으로 웹훅이나 폴링을 통해 작업을 받고, 지정한 작업마다 일회용 러너를 띄운 뒤 완료되면 정리합니다.
+Runquill은 비공개 저장소의 GitHub Actions 작업을 내 Linux 서버에서 실행합니다. 공개 저장소는 [별도로 켜야](docs/workflows.ko.md#공개-저장소에서-작업-실행) 하며, 포크에서 온 워크플로 실행은 켜도 실행하지 않습니다. GitHub App으로 웹훅이나 폴링을 통해 작업을 받고, 지정한 작업마다 일회용 러너를 띄운 뒤 완료되면 정리합니다.
 
 [빠른 시작](#빠른-시작) · [첫 작업](#첫-작업-확인) · [샘플 패널](https://yakisoba0728.github.io/Runquill/) · [릴리스](https://github.com/yakisoba0728/Runquill/releases)
 
