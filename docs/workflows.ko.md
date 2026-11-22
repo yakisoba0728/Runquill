@@ -75,14 +75,28 @@ runs-on: ${{ format('runquill-{0}-{1}-os__ubuntu2204__build', github.run_id, git
 
 배포에서 `RUNQUILL_ALLOW_PUBLIC_REPOSITORIES=true`를 설정하지 않으면 Runquill은 공개 저장소의 작업을 무시합니다. 값을 `.env`에 두고 [Compose 오버레이](operations.ko.md#매니저-설정-추가)로 전달하거나 K3s의 `runquill-config` Secret에 추가합니다. 패널의 설정 화면에서는 바꿀 수 없으며, 켜져 있으면 패널 개요, `runquill status --json`, `runquill doctor`에 표시됩니다. 조직의 internal 저장소는 계속 제외합니다.
 
-설정을 켜면 `RUNQUILL_OWNER`가 소유한 공개 저장소의 작업도 받고, 소유자, 저장소 ID, 보관(archived)·비활성 상태, App 설치 범위 같은 나머지 검사는 그대로 적용합니다. 공개 저장소는 누구나 포크한 뒤 풀 리퀘스트에서 `runs-on`을 Runquill 라벨로 바꿔 내 서버에서 코드를 실행할 수 있습니다. 그래서 Runquill은 공개 저장소에 러너를 등록하기 전에 GitHub에서 작업의 워크플로 실행을 조회하고, 실행의 head 저장소가 포크이거나 더 이상 없으면 패널에 이유를 남기고 작업을 실패 처리합니다. GitHub가 응답하지 않으면 작업은 대기하고 다시 확인합니다. 비공개 저장소에서는 이 API 호출을 하지 않습니다.
+설정을 켜면 `RUNQUILL_OWNER`가 소유한 공개 저장소의 작업도 받고, 소유자, 저장소 ID, 보관(archived)·비활성 상태, App 설치 범위 같은 나머지 검사는 그대로 적용합니다.
 
-포크가 계기가 되었더라도 GitHub가 원본 저장소에서 시작한 워크플로 실행은 그대로 실행합니다. `pull_request_target`, `workflow_run`, `issue_comment` 워크플로는 원본 저장소의 권한으로 실행되므로 Runquill 라벨을 쓰는 작업에서 풀 리퀘스트 코드를 체크아웃하거나 빌드하지 마세요. 오프라인 `fork-trigger` 점검은 위험한 트리거를 알려 주지만 저장소가 공개인지는 알 수 없습니다.
+### 모든 외부 기여자 승인 요구
 
-이 밖에 다음을 권장합니다.
+공개 저장소에 러너를 띄우기 전에 Runquill은 저장소의 포크 풀 리퀘스트 승인 정책을 읽습니다. 정책은 `all_external_contributors`여야 합니다. 저장소의 **Settings → Actions → General**에서 포크 풀 리퀘스트 워크플로 승인 항목을 모든 외부 기여자 승인 요구로 설정합니다. 설정하기 전이나 GitHub App이 정책을 읽을 수 없는 동안에는 작업이 패널에 이유를 남기고 대기하며, 점점 긴 간격으로 다시 확인합니다. 정책을 읽으려면 저장소 **Administration** 읽기 권한이 필요합니다. 저장소에 러너를 등록하는 App에는 이미 있고, 조직 러너 그룹용으로 등록한 App에는 추가해야 합니다. 공개 저장소에서는 `runquill diagnose OWNER/REPO`가 결과를 보여 줍니다.
 
-- 저장소나 조직의 **Settings → Actions → General**에서 모든 외부 기여자의 포크 풀 리퀘스트 워크플로에 승인을 요구합니다.
-- 공개 저장소 작업은 전용 호스트나 `repositories`를 그 저장소로 제한한 [워커 풀](workers.ko.md#워커-풀로-작업-분리)에서 실행하고, Docker-in-Docker가 없는 비특권 풀을 우선 사용합니다.
-- [조직 러너 그룹](install.ko.md#github-조직-연결)을 쓴다면 그룹에서 공개 저장소를 허용합니다. GitHub는 공개 저장소를 허용하지 않는 그룹에 공개 저장소의 작업을 배정하지 않으며, Runquill은 공개 저장소를 허용하지 않는데 공개 저장소가 들어 있는 그룹을 오류로 알립니다.
+### 포크 실행이 러너를 쓰지 못하게 하는 방법
 
-[GitHub self-hosted 러너 보안 강화](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#hardening-for-self-hosted-runners)
+공개 저장소는 누구나 포크한 뒤 풀 리퀘스트에서 `runs-on`을 Runquill 라벨로 바꿀 수 있고, 라벨은 워크플로 파일과 실행 ID로 예측할 수 있습니다. GitHub는 같은 라벨로 대기 중인 저장소의 어떤 작업에도 Runquill 러너를 배정하므로, 포크 작업이 Runquill이 받은 작업의 라벨을 노릴 수 있습니다. Runquill은 두 가지로 막습니다.
+
+- 작업 자체의 워크플로 실행이 포크나 삭제된 포크에서 왔다면 패널에 이유를 남기고 작업을 실패 처리합니다.
+- 러너를 등록하기 전마다 저장소의 queued, in_progress, waiting 상태 워크플로 실행을 조회합니다. 포크에서 온 실행에 `runquill-` 라벨을 쓰는 미완료 작업이 있으면 그 실행 번호를 이유로 남기고 작업을 대기시킵니다. 그 실행을 취소하면 진행합니다.
+
+러너를 띄울 때마다 승인 정책 조회 1회와 실행 목록 조회 3회, 미완료 포크 실행마다 작업 목록 조회가 추가됩니다. 비공개 저장소에서는 이 호출을 하지 않습니다. 남는 위험도 있습니다. 관리자가 Runquill 라벨을 쓰는 포크 풀 리퀘스트를 승인하면 그 실행이 끝나거나 취소될 때까지 공개 저장소 작업은 대기합니다. 승인하기 전에 `runs-on` 변경을 확인하세요. 검사와 러너가 작업을 잡는 사이의 몇 초 동안 승인된 포크 작업이 러너를 가져갈 수 있으며, Runquill은 러너가 다른 작업을 잡은 경우를 감지하지 않습니다.
+
+### 원본 저장소에서 실행되는 워크플로
+
+저장소 밖의 사람이 계기를 만들었더라도 GitHub가 원본 저장소에서 시작한 워크플로 실행은 그대로 실행합니다. `pull_request_target`, `workflow_run`, `issue_comment`, `issues`, `pull_request_review`, `pull_request_review_comment`, `discussion`, `discussion_comment`, `fork`, `watch`는 GitHub 계정만 있으면 누구나 원본 저장소의 워크플로를 시작할 수 있고, 이 워크플로는 저장소 시크릿을 읽을 수 있습니다. Runquill 라벨을 쓰는 작업에서는 풀 리퀘스트 코드를 체크아웃하거나 빌드하거나 실행하지 마세요. 이슈나 풀 리퀘스트의 제목·본문 같은 이벤트 값을 `run:` 스크립트에 그대로 넣으면 스크립트 인젝션이 되므로 `env:` 변수로 전달합니다. 오프라인 `fork-trigger` 점검은 일부 위험한 트리거를 알려 주지만 저장소가 공개인지는 알 수 없습니다.
+
+### 공개 저장소 작업 분리
+
+- 전용 호스트에서 `privileged: false`이고 `cache: true`를 쓰지 않으며 `repositories`를 공개 저장소로 제한한 비특권 [워커 풀](workers.ko.md#워커-풀로-작업-분리)로 실행합니다. 같은 저장소의 작업은 캐시 볼륨을 공유하므로 캐시를 쓰는 풀에서는 한 작업이 다음 작업을 오염시킬 수 있습니다.
+- [조직 러너 그룹](install.ko.md#github-조직-연결)을 쓴다면 공개 저장소 전용 그룹을 만들고 공개 저장소를 허용합니다. 비공개 저장소를 그 그룹에 섞지 마세요. GitHub는 공개 저장소를 허용하지 않는 그룹에 공개 저장소의 작업을 배정하지 않으며, Runquill은 공개 저장소를 허용하지 않는데 공개 저장소가 들어 있는 그룹을 오류로 알립니다.
+
+[GitHub self-hosted 러너 보안 강화](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#hardening-for-self-hosted-runners) · [스크립트 인젝션](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#understanding-the-risk-of-script-injections)

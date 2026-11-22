@@ -2,7 +2,7 @@
 
 English · [한국어](README.ko.md)
 
-Runquill runs GitHub Actions jobs from private repositories on your own Linux servers. Public repositories are an [opt-in](docs/workflows.md#run-jobs-from-public-repositories) that never runs workflow runs from forks. A GitHub App receives jobs by webhook, polling, or both. Runquill starts a disposable runner for each matching job and removes it when the job finishes.
+Runquill runs GitHub Actions jobs from private repositories on your own Linux servers. Public repositories are an [opt-in](docs/workflows.md#run-jobs-from-public-repositories) that refuses workflow runs from forks and requires approval for all external contributors. A GitHub App receives jobs by webhook, polling, or both. Runquill starts a disposable runner for each matching job and removes it when the job finishes.
 
 [Quickstart](#quickstart) · [First job](#verify-your-first-job) · [Sample panel](https://yakisoba0728.github.io/Runquill/) · [Releases](https://github.com/yakisoba0728/Runquill/releases)
 
