@@ -2,11 +2,14 @@ package app
 
 import (
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,7 +28,7 @@ const (
 	panelCallbackPath    = "/auth/github/callback"
 	panelSessionLifetime = 12 * time.Hour
 	panelLoginLifetime   = 10 * time.Minute
-	panelPendingLimit    = 256
+	panelSecretLength    = 43
 )
 
 var errPanelUnauthorized = errors.New("panel sign-in required")
@@ -44,17 +47,16 @@ type panelIdentity struct {
 	credential [32]byte
 }
 
-type panelLogin struct {
-	verifier string
-	expires  time.Time
-}
-
+// panelAccess keeps no table of pending sign-ins, so anonymous requests cannot
+// crowd out other browsers. The state and PKCE verifier travel in a sealed
+// cookie; only states of completed sign-ins are remembered until they expire.
 type panelAccess struct {
-	db     *sql.DB
-	cfg    panelOAuthConfig
-	oauth  *http.Client
-	mu     sync.Mutex
-	logins map[[32]byte]panelLogin
+	db    *sql.DB
+	cfg   panelOAuthConfig
+	oauth *http.Client
+	login cipher.AEAD
+	mu    sync.Mutex
+	used  map[[32]byte]time.Time
 }
 
 const panelAccessSchema = `
@@ -214,7 +216,18 @@ func newPanelAccess(ctx context.Context, db *sql.DB, cfg panelOAuthConfig) (*pan
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
-	return &panelAccess{db: db, cfg: cfg, logins: make(map[[32]byte]panelLogin), oauth: &http.Client{
+	// A key made at startup only invalidates sign-ins in progress on restart.
+	var key [32]byte
+	rand.Read(key[:])
+	block, err := aes.NewCipher(key[:])
+	if err != nil {
+		return nil, err
+	}
+	login, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	return &panelAccess{db: db, cfg: cfg, login: login, used: make(map[[32]byte]time.Time), oauth: &http.Client{
 		Timeout: 8 * time.Second,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
@@ -245,37 +258,55 @@ func (a *panelAccess) setCookie(w http.ResponseWriter, suffix, value string, sec
 		Secure: a.cfg.secure, HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: seconds})
 }
 
-func (a *panelAccess) registerLogin(state, verifier string, now time.Time) bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	for key, login := range a.logins {
-		if !login.expires.After(now) {
-			delete(a.logins, key)
-		}
-	}
-	if len(a.logins) >= panelPendingLimit {
-		return false
-	}
-	a.logins[panelDigest(state)] = panelLogin{verifier: verifier, expires: now.Add(panelLoginLifetime)}
-	return true
+const panelLoginLabel = "runquill panel sign-in v1"
+
+// sealLogin encrypts the state, PKCE verifier and expiry for the rq_oauth
+// cookie, so the browser can neither read the verifier nor alter the state.
+func (a *panelAccess) sealLogin(state, verifier string, expires time.Time) string {
+	plain := binary.BigEndian.AppendUint64(nil, uint64(expires.Unix()))
+	plain = append(append(plain, state...), verifier...)
+	nonce := make([]byte, a.login.NonceSize(), a.login.NonceSize()+len(plain)+a.login.Overhead())
+	rand.Read(nonce)
+	return base64.RawURLEncoding.EncodeToString(a.login.Seal(nonce, nonce, plain, []byte(panelLoginLabel)))
 }
 
-func (a *panelAccess) consumeLogin(state string, now time.Time) (string, bool) {
+func (a *panelAccess) openLogin(value string, now time.Time) (state, verifier string, ok bool) {
+	sealed, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil || len(sealed) < a.login.NonceSize() {
+		return "", "", false
+	}
+	n := a.login.NonceSize()
+	plain, err := a.login.Open(nil, sealed[:n], sealed[n:], []byte(panelLoginLabel))
+	if err != nil || len(plain) != 8+2*panelSecretLength ||
+		!time.Unix(int64(binary.BigEndian.Uint64(plain)), 0).After(now) {
+		return "", "", false
+	}
+	return string(plain[8 : 8+panelSecretLength]), string(plain[8+panelSecretLength:]), true
+}
+
+// spent reports whether a completed sign-in already used state. Only enrolled
+// accounts that finished a sign-in add entries, and they expire with the cookie.
+func (a *panelAccess) spent(state string, now time.Time) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	key := panelDigest(state)
-	login, ok := a.logins[key]
-	delete(a.logins, key)
-	return login.verifier, ok && login.expires.After(now)
+	for key, expires := range a.used {
+		if !expires.After(now) {
+			delete(a.used, key)
+		}
+	}
+	_, ok := a.used[panelDigest(state)]
+	return ok
+}
+
+func (a *panelAccess) spend(state string, now time.Time) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.used[panelDigest(state)] = now.Add(panelLoginLifetime)
 }
 
 func (a *panelAccess) githubLogin(w http.ResponseWriter, r *http.Request) {
 	state, verifier := panelSecret(), panelSecret()
-	if !a.registerLogin(state, verifier, time.Now()) {
-		http.Error(w, "Too many sign-in attempts. Try again later.", http.StatusTooManyRequests)
-		return
-	}
-	a.setCookie(w, "oauth", state, int(panelLoginLifetime.Seconds()))
+	a.setCookie(w, "oauth", a.sealLogin(state, verifier, time.Now().Add(panelLoginLifetime)), int(panelLoginLifetime.Seconds()))
 	challenge := panelDigest(verifier)
 	query := url.Values{"client_id": {a.cfg.clientID}, "redirect_uri": {a.cfg.callbackURL()},
 		"state": {state}, "code_challenge": {base64.RawURLEncoding.EncodeToString(challenge[:])},
@@ -285,15 +316,20 @@ func (a *panelAccess) githubLogin(w http.ResponseWriter, r *http.Request) {
 
 func (a *panelAccess) githubCallback(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	now := time.Now()
 	state, code := r.URL.Query().Get("state"), r.URL.Query().Get("code")
 	cookie, err := r.Cookie(a.cookieName("oauth"))
 	a.setCookie(w, "oauth", "", -1)
-	if err != nil || len(state) != 43 || subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(state)) != 1 {
+	if err != nil || len(state) != panelSecretLength {
 		http.Error(w, "Sign-in expired. Return to the panel and try again.", http.StatusBadRequest)
 		return
 	}
-	verifier, ok := a.consumeLogin(state, time.Now())
-	if !ok || code == "" || len(code) > 512 {
+	sealed, verifier, ok := a.openLogin(cookie.Value, now)
+	if !ok || subtle.ConstantTimeCompare([]byte(sealed), []byte(state)) != 1 {
+		http.Error(w, "Sign-in expired. Return to the panel and try again.", http.StatusBadRequest)
+		return
+	}
+	if a.spent(state, now) || code == "" || len(code) > 512 {
 		http.Error(w, "Sign-in expired or cancelled. Return to the panel and try again.", http.StatusBadRequest)
 		return
 	}
@@ -311,6 +347,7 @@ func (a *panelAccess) githubCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Could not start a panel session.", http.StatusServiceUnavailable)
 		return
 	}
+	a.spend(state, now)
 	a.setCookie(w, "session", key, int(panelSessionLifetime.Seconds()))
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }

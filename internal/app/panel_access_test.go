@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func panelAccessForTest(t *testing.T, q *queue) *panelAccess {
@@ -84,7 +85,8 @@ func TestGitHubPanelLoginRolesAndTokens(t *testing.T) {
 		t.Fatalf("invalid GitHub login redirect: %s", authorize)
 	}
 	stateCookie := redirect.Result().Cookies()[0]
-	if !stateCookie.HttpOnly || stateCookie.SameSite != http.SameSiteLaxMode || stateCookie.Value != state {
+	if stateCookie.Name != access.cookieName("oauth") || !stateCookie.HttpOnly || stateCookie.SameSite != http.SameSiteLaxMode ||
+		stateCookie.MaxAge != 600 || strings.Contains(stateCookie.Value, state) {
 		t.Fatalf("invalid state cookie: %v", stateCookie)
 	}
 	calls := 0
@@ -216,4 +218,84 @@ func TestGitHubPanelLoginRolesAndTokens(t *testing.T) {
 	assertStatus(request("PUT", "/api/team/102", `{"role":"viewer","disabled":true}`,
 		access.cfg.origin, "", adminCookie), 204)
 	assertStatus(request("GET", "/snapshot", "", "", "", viewerCookie), 401)
+}
+
+func TestPanelSignInSurvivesAnonymousFloodAndRejectsForeignCookies(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "queue.sqlite3")
+	t.Setenv("RUNQUILL_DB", path)
+	t.Setenv("RUNQUILL_OWNER", "owner")
+	t.Setenv("RUNQUILL_APP_ID", "1")
+	q, err := openQueue(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(q.close)
+	access := panelAccessForTest(t, q)
+	handler := panelHandler(newPanel(config{}), access)
+	calls := 0
+	access.oauth.Transport = panelTransport(func(r *http.Request) (*http.Response, error) {
+		calls++
+		body := `{"id":101,"login":"fleet-admin"}`
+		if r.URL.Path == "/login/oauth/access_token" {
+			body = `{"access_token":"ephemeral-github-token"}`
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+	})
+	request := func(path string, cookies ...*http.Cookie) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest("GET", access.cfg.origin+path, nil)
+		for _, cookie := range cookies {
+			req.AddCookie(cookie)
+		}
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec
+	}
+	start := func() (string, *http.Cookie) {
+		t.Helper()
+		rec := request("/auth/github")
+		if rec.Code != http.StatusFound {
+			t.Fatalf("sign-in start: HTTP %d: %s", rec.Code, rec.Body)
+		}
+		authorize, err := url.Parse(rec.Header().Get("Location"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return authorize.Query().Get("state"), rec.Result().Cookies()[0]
+	}
+	for range 300 {
+		start()
+	}
+	state, cookie := start()
+	otherState, otherCookie := start()
+	tampered := *cookie
+	tampered.Value = cookie.Value[:20] + string(cookie.Value[20]^1) + cookie.Value[21:]
+	expired := *cookie
+	_, verifier, ok := access.openLogin(cookie.Value, time.Now())
+	if !ok {
+		t.Fatal("could not open a fresh sign-in cookie")
+	}
+	expired.Value = access.sealLogin(state, verifier, time.Now().Add(-time.Second))
+	for name, rec := range map[string]*httptest.ResponseRecorder{
+		"no cookie":        request("/auth/github/callback?code=test&state=" + state),
+		"state mismatch":   request("/auth/github/callback?code=test&state="+otherState, cookie),
+		"tampered cookie":  request("/auth/github/callback?code=test&state="+state, &tampered),
+		"expired cookie":   request("/auth/github/callback?code=test&state="+state, &expired),
+		"other browser":    request("/auth/github/callback?code=test&state="+state, otherCookie),
+		"raw state cookie": request("/auth/github/callback?code=test&state="+state, &http.Cookie{Name: cookie.Name, Value: state}),
+	} {
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s: got HTTP %d", name, rec.Code)
+		}
+	}
+	if calls != 0 {
+		t.Fatal("a rejected callback reached GitHub")
+	}
+	result := request("/auth/github/callback?code=test&state="+state, cookie)
+	if result.Code != http.StatusSeeOther || calls != 2 {
+		t.Fatalf("sign-in after the flood: HTTP %d, %d GitHub calls: %s", result.Code, calls, result.Body)
+	}
+	if rec := request("/auth/github/callback?code=test&state="+state, cookie); rec.Code != http.StatusBadRequest || calls != 2 {
+		t.Fatalf("replayed callback: HTTP %d", rec.Code)
+	}
 }
