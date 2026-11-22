@@ -4,7 +4,7 @@
 
 ## Connect a repository
 
-- With **All repositories**, use the workflows below in other private repositories owned by the same account or organization. Runquill credentials and the webhook belong to the App installation, so each repository needs no extra Runquill secrets or webhook.
+- With **All repositories**, use the workflows below in other private repositories owned by the same account or organization. Public repositories need the [opt-in below](#run-jobs-from-public-repositories). Runquill credentials and the webhook belong to the App installation, so each repository needs no extra Runquill secrets or webhook.
 - With **Only select repositories**, select the target repository in the GitHub App installation settings.
 - For work owned by a different organization, set up a [separate installation for that organization](install.md#connect-a-github-organization).
 
@@ -70,3 +70,19 @@ The example pins both actions to exact commits, uses read-only repository permis
 Administrators can open a pull request that moves jobs from GitHub-hosted labels to Runquill labels from the panel's **Migrate** screen. It needs Contents, Pull requests and Workflows write access, which only `runquill setup --migrate` requests for a new App. Runquill previews the diff first, changes only `runs-on`, leaves jobs it cannot rewrite safely alone with a reason, and never merges. A GitHub-hosted Ubuntu version label such as `ubuntu-22.04` becomes an `os__` selector when the manager's catalogue has that OS. Migration has not yet been exercised against real GitHub. [Workflow migration](workflow-migration.md)
 
 `runquill workflow check` checks local workflow files for malformed Runquill labels, suffixes shared by several jobs in one file, unknown pools and runner OS names, risky triggers on self-hosted runners, missing permissions and timeouts, and unpinned actions. It exits with status 1 for a high-severity finding, or for any finding with `--strict`, and `--json` prints the findings. [Check codes](workflow-migration.md#check-workflows-offline)
+
+## Run jobs from public repositories
+
+Runquill ignores jobs from public repositories unless the deployment sets `RUNQUILL_ALLOW_PUBLIC_REPOSITORIES=true`. Set it in `.env` and pass it through a [Compose overlay](operations.md#add-manager-settings), or add it to the K3s `runquill-config` Secret. The panel's Settings screen cannot change it, and the panel overview, `runquill status --json` and `runquill doctor` show it when it is on. Internal organization repositories stay excluded.
+
+When it is on, Runquill takes jobs from public repositories owned by `RUNQUILL_OWNER` and keeps every other check: owner, repository ID, archived and disabled state, and App installation scope. Anyone can fork a public repository, change `runs-on` to a Runquill label in a pull request, and run code on your server. Before registering a runner for a public repository, Runquill reads the job's workflow run from GitHub and fails the job with a reason in the panel when the run's head repository is a fork or no longer exists. If GitHub cannot answer, the job waits and Runquill checks again. Private repositories skip this extra API call.
+
+A workflow run that GitHub starts in the base repository still runs, even when a fork triggered it. `pull_request_target`, `workflow_run` and `issue_comment` workflows run with base repository credentials, so never check out or build pull request code in a job that uses a Runquill label. The offline `fork-trigger` check flags risky triggers, but it cannot tell whether a repository is public.
+
+Also:
+
+- In the repository or organization **Settings → Actions → General**, require approval for fork pull request workflows from all external contributors.
+- Run public repository jobs on a dedicated host or [worker pool](workers.md#route-jobs-to-worker-pools) with `repositories` limited to them, and prefer unprivileged pools without Docker-in-Docker.
+- With an [organization runner group](install.md#connect-a-github-organization), allow public repositories in the group. GitHub does not assign a public repository's jobs to a group that disallows them, and Runquill reports a group that disallows public repositories but contains one.
+
+[GitHub security hardening for self-hosted runners](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#hardening-for-self-hosted-runners)

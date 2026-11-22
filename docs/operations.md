@@ -177,7 +177,7 @@ docker compose -f compose.yaml -f compose.panel.yaml exec -T manager runquill st
 
 ## Add manager settings
 
-Compose passes only the variables listed in `compose.yaml` to the manager. For optional settings such as `RUNQUILL_MAX_PER_REPOSITORY`, `RUNQUILL_SCHEDULER_WORKERS`, `RUNQUILL_LOG_FORMAT`, `RUNQUILL_LOG_LEVEL`, the [notification](#send-notifications) variables, `RUNQUILL_ELASTIC*`, `RUNQUILL_BACKUP_*`, `RUNQUILL_METRICS_*`, `RUNQUILL_IMAGE_PULL*`, `RUNQUILL_RUNNER_IMAGES` and `RUNQUILL_CLEANUP_*`, keep the values in `.env` and save an overlay such as `compose.settings.yaml` beside `compose.yaml`. `--upgrade` replaces `compose.yaml` but leaves this file in place.
+Compose passes only the variables listed in `compose.yaml` to the manager. For optional settings such as `RUNQUILL_MAX_PER_REPOSITORY`, `RUNQUILL_SCHEDULER_WORKERS`, `RUNQUILL_LOG_FORMAT`, `RUNQUILL_LOG_LEVEL`, the [notification](#send-notifications) variables, `RUNQUILL_ELASTIC*`, `RUNQUILL_BACKUP_*`, `RUNQUILL_METRICS_*`, `RUNQUILL_IMAGE_PULL*`, `RUNQUILL_RUNNER_IMAGES`, `RUNQUILL_CLEANUP_*` and [`RUNQUILL_ALLOW_PUBLIC_REPOSITORIES`](workflows.md#run-jobs-from-public-repositories), keep the values in `.env` and save an overlay such as `compose.settings.yaml` beside `compose.yaml`. `--upgrade` replaces `compose.yaml` but leaves this file in place.
 
 ```yaml
 services:
@@ -198,6 +198,7 @@ services:
       RUNQUILL_CLEANUP_IMAGES_AFTER: ${RUNQUILL_CLEANUP_IMAGES_AFTER:-}
       RUNQUILL_CLEANUP_CACHE_AFTER: ${RUNQUILL_CLEANUP_CACHE_AFTER:-}
       RUNQUILL_CLEANUP_INTERVAL: ${RUNQUILL_CLEANUP_INTERVAL:-}
+      RUNQUILL_ALLOW_PUBLIC_REPOSITORIES: ${RUNQUILL_ALLOW_PUBLIC_REPOSITORIES:-false}
 ```
 
 Apply it with `docker compose -f compose.yaml -f compose.settings.yaml up -d`, adding your other overlays and `--no-build` for published images. Scheduled backups also need a mounted directory and a passphrase file, so use the overlay in the [backup guide](backups.md#compose). The [elastic limits guide](elastic-limits.md#compose) lists its variables. Pulls from a private registry also need a Docker login mounted into the manager with `DOCKER_CONFIG`, as shown in [private registries](runner-images.md#private-registries). `RUNQUILL_CONTAINER_ENGINE=podman` cannot be used under Compose because the manager image contains only the Docker CLI. On K3s, the manager reads every variable in the `runquill-config` Secret, so add them to `.env`, recreate the Secret, and restart the Deployment.

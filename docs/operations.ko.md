@@ -177,7 +177,7 @@ docker compose -f compose.yaml -f compose.panel.yaml exec -T manager runquill st
 
 ## 매니저 설정 추가
 
-Compose는 `compose.yaml`에 적힌 변수만 매니저에 전달합니다. `RUNQUILL_MAX_PER_REPOSITORY`, `RUNQUILL_SCHEDULER_WORKERS`, `RUNQUILL_LOG_FORMAT`, `RUNQUILL_LOG_LEVEL`, [알림](#알림-보내기) 변수, `RUNQUILL_ELASTIC*`, `RUNQUILL_BACKUP_*`, `RUNQUILL_METRICS_*`, `RUNQUILL_IMAGE_PULL*`, `RUNQUILL_RUNNER_IMAGES`, `RUNQUILL_CLEANUP_*` 같은 선택 설정은 값을 `.env`에 두고 `compose.yaml` 옆에 `compose.settings.yaml` 같은 오버레이를 저장합니다. `--upgrade`는 `compose.yaml`을 교체하지만 이 파일은 그대로 둡니다.
+Compose는 `compose.yaml`에 적힌 변수만 매니저에 전달합니다. `RUNQUILL_MAX_PER_REPOSITORY`, `RUNQUILL_SCHEDULER_WORKERS`, `RUNQUILL_LOG_FORMAT`, `RUNQUILL_LOG_LEVEL`, [알림](#알림-보내기) 변수, `RUNQUILL_ELASTIC*`, `RUNQUILL_BACKUP_*`, `RUNQUILL_METRICS_*`, `RUNQUILL_IMAGE_PULL*`, `RUNQUILL_RUNNER_IMAGES`, `RUNQUILL_CLEANUP_*`, [`RUNQUILL_ALLOW_PUBLIC_REPOSITORIES`](workflows.ko.md#공개-저장소에서-작업-실행) 같은 선택 설정은 값을 `.env`에 두고 `compose.yaml` 옆에 `compose.settings.yaml` 같은 오버레이를 저장합니다. `--upgrade`는 `compose.yaml`을 교체하지만 이 파일은 그대로 둡니다.
 
 ```yaml
 services:
@@ -198,6 +198,7 @@ services:
       RUNQUILL_CLEANUP_IMAGES_AFTER: ${RUNQUILL_CLEANUP_IMAGES_AFTER:-}
       RUNQUILL_CLEANUP_CACHE_AFTER: ${RUNQUILL_CLEANUP_CACHE_AFTER:-}
       RUNQUILL_CLEANUP_INTERVAL: ${RUNQUILL_CLEANUP_INTERVAL:-}
+      RUNQUILL_ALLOW_PUBLIC_REPOSITORIES: ${RUNQUILL_ALLOW_PUBLIC_REPOSITORIES:-false}
 ```
 
 `docker compose -f compose.yaml -f compose.settings.yaml up -d`로 적용합니다. 다른 오버레이도 함께 전달하고, 릴리스 이미지를 쓴다면 `--no-build`를 추가합니다. 예약 백업에는 백업 디렉터리 마운트와 암호 파일도 필요하므로 [백업 가이드](backups.ko.md#compose)의 오버레이를 사용합니다. 탄력적 한도 변수는 [탄력적 한도 가이드](elastic-limits.ko.md#compose)에 있습니다. 비공개 레지스트리에서 받으려면 [비공개 레지스트리](runner-images.ko.md#비공개-레지스트리)처럼 Docker 로그인 정보를 매니저에 마운트하고 `DOCKER_CONFIG`를 설정합니다. 매니저 이미지에는 Docker CLI만 있으므로 Compose에서 `RUNQUILL_CONTAINER_ENGINE=podman`은 쓸 수 없습니다. k3s에서는 매니저가 `runquill-config` Secret의 모든 변수를 읽으므로 `.env`에 추가하고 Secret을 다시 만든 뒤 Deployment를 재시작합니다.
