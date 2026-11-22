@@ -45,6 +45,9 @@ func doctor(ctx context.Context, out io.Writer, repo string, asJSON bool) error 
 	}
 	cfg, err := loadConfig()
 	report("configuration", err)
+	if cfg.allowPublic {
+		report("public repositories allowed ("+allowPublicEnv+"); workflow runs from forks are refused", nil)
+	}
 	saved, settingsErr := doctorOperationSettings(ctx, cfg)
 	if settingsErr != nil {
 		report("saved operation settings", settingsErr)

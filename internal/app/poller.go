@@ -193,7 +193,7 @@ func (p *poller) pollOrder(ctx context.Context, repos []repository, now time.Tim
 	seen := make(map[int64]bool, len(repos))
 	for _, repo := range repos {
 		name, valid := ownedRepositoryPath(repo.FullName, p.github.owner)
-		if !valid || !repo.privateFor(p.github.owner) || repo.Archived || repo.Disabled || repo.ID <= 0 || seen[repo.ID] {
+		if !valid || !repo.acceptedFor(p.github.owner, p.github.allowPublic) || repo.Archived || repo.Disabled || repo.ID <= 0 || seen[repo.ID] {
 			continue
 		}
 		seen[repo.ID] = true
@@ -226,7 +226,7 @@ func (p *poller) scanRepository(ctx context.Context, target repositoryScan) (boo
 		if candidate.Status != "queued" {
 			return nil
 		}
-		job, eligible, err := candidate.queueJob(p.github.owner, target.repo, p.installationID, candidate.Status)
+		job, eligible, err := candidate.queueJob(p.github.owner, p.github.allowPublic, target.repo, p.installationID, candidate.Status)
 		if err != nil || !eligible {
 			return err
 		}

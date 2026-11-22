@@ -103,7 +103,7 @@ func webhook(q *queue, api *github, secret []byte, panel *panelState) http.Handl
 				w.WriteHeader(http.StatusBadRequest)
 				return
 			}
-			job, eligible, err := event.Job.queueJob(api.owner, event.Repository, event.Installation.ID, event.Action)
+			job, eligible, err := event.Job.queueJob(api.owner, api.allowPublic, event.Repository, event.Installation.ID, event.Action)
 			if err != nil {
 				w.WriteHeader(http.StatusBadRequest)
 				return
@@ -225,9 +225,19 @@ func (repo repository) privateFor(owner string) bool {
 	return repo.Private && (repo.Visibility == "" || repo.Visibility == "private") && strings.EqualFold(repo.Owner.Login, owner)
 }
 
-func (j workflowJob) queueJob(owner string, repo repository, installationID int64, status string) (job, bool, error) {
+func (repo repository) publicFor(owner string) bool {
+	return !repo.Private && (repo.Visibility == "" || repo.Visibility == "public") && strings.EqualFold(repo.Owner.Login, owner)
+}
+
+// acceptedFor reports whether Runquill takes jobs from repo: a private repository of owner, or
+// a public one when allowPublic is set. Internal repositories are never accepted.
+func (repo repository) acceptedFor(owner string, allowPublic bool) bool {
+	return repo.privateFor(owner) || allowPublic && repo.publicFor(owner)
+}
+
+func (j workflowJob) queueJob(owner string, allowPublic bool, repo repository, installationID int64, status string) (job, bool, error) {
 	p, known := phases[status]
-	if !known || !repo.privateFor(owner) {
+	if !known || !repo.acceptedFor(owner, allowPublic) {
 		return job{}, false, nil
 	}
 	if len(j.Labels) != 1 {

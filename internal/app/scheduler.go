@@ -639,6 +639,16 @@ func (s *scheduler) launch(ctx context.Context, j job, host, pool string, now ti
 		}
 		return false, fmt.Errorf("waiting for GitHub to queue job, status %q", observed.Status)
 	}
+	if !repo.Private {
+		// Only public repositories pay for this lookup; eligible already refused them unless allowed.
+		reason, err := s.github.forkRun(ctx, j, observed.RunID, token)
+		if err != nil {
+			return false, err
+		}
+		if reason != "" {
+			return false, s.fail(ctx, j, now, reason)
+		}
+	}
 	if s.github.runnerGroupID > 0 {
 		token, err = s.github.organizationJobToken(ctx, j, true)
 		if errors.Is(err, errRepositoryOutsideInstallation) {

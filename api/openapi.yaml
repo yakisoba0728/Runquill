@@ -324,6 +324,9 @@ components:
           type: string
         repository_scope:
           type: string
+        public_repositories:
+          type: boolean
+          description: True when RUNQUILL_ALLOW_PUBLIC_REPOSITORIES lets jobs from public repositories run. Workflow runs from forks are always refused.
         schema_version:
           type: integer
         slot_limit:

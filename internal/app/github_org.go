@@ -114,8 +114,12 @@ func (g *github) runnerGroupRepositories(ctx context.Context, token installation
 	if err := g.request(ctx, http.MethodGet, path, token.Token, nil, &group); err != nil {
 		return nil, fmt.Errorf("read organization runner group %d: %w", g.runnerGroupID, err)
 	}
+	allowsPublic := group.AllowsPublicRepositories != nil && *group.AllowsPublicRepositories
 	if group.ID != g.runnerGroupID || group.Visibility != "selected" || group.Inherited ||
-		group.AllowsPublicRepositories == nil || *group.AllowsPublicRepositories {
+		!g.allowPublic && (group.AllowsPublicRepositories == nil || allowsPublic) {
+		if g.allowPublic {
+			return nil, fmt.Errorf("runner group %d must belong to the organization and use selected repositories", g.runnerGroupID)
+		}
 		return nil, fmt.Errorf("runner group %d must belong to the organization, use selected repositories, and disallow public repositories", g.runnerGroupID)
 	}
 	if group.RestrictedToWorkflows {
@@ -132,8 +136,16 @@ func (g *github) runnerGroupRepositories(ctx context.Context, token installation
 	repositories := make(map[int64]string, len(members))
 	for _, member := range members {
 		name, valid := ownedRepositoryPath(member.FullName, g.owner)
-		if member.ID <= 0 || !valid || !member.privateFor(g.owner) || member.Visibility != "private" {
+		public := g.allowPublic && member.Visibility == "public" && member.publicFor(g.owner)
+		if member.ID <= 0 || !valid || !public && (!member.privateFor(g.owner) || member.Visibility != "private") {
+			if g.allowPublic {
+				return nil, fmt.Errorf("runner group %d must contain only private or public repositories owned by %s", g.runnerGroupID, g.owner)
+			}
 			return nil, fmt.Errorf("runner group %d must contain only private repositories owned by %s", g.runnerGroupID, g.owner)
+		}
+		if public && !allowsPublic {
+			// GitHub never assigns a public repository's job to a group that disallows public repositories.
+			return nil, fmt.Errorf("runner group %d disallows public repositories but contains the public repository %s; allow public repositories in the group or remove it", g.runnerGroupID, name)
 		}
 		repositories[member.ID] = name
 	}
@@ -145,7 +157,7 @@ func (g *github) runnerGroupRepositories(ctx context.Context, token installation
 		approved := make(map[int64]string, len(installed))
 		for _, item := range installed {
 			name, valid := ownedRepositoryPath(item.FullName, g.owner)
-			if valid && item.privateFor(g.owner) {
+			if valid && item.acceptedFor(g.owner, g.allowPublic) {
 				approved[item.ID] = name
 			}
 		}

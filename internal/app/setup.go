@@ -127,6 +127,10 @@ func setup(ctx context.Context, out io.Writer, dir string, client *http.Client, 
 	if opts.runnerGroupID > 0 && opts.runnerGroupID != group {
 		return fmt.Errorf("this directory uses a different runner group; review %s and your GitHub App permissions", runnerGroupEnv)
 	}
+	allowPublic, err := parseAllowPublic(values[allowPublicEnv])
+	if err != nil {
+		return err
+	}
 	keyPath := values["RUNQUILL_KEY_FILE"]
 	if !filepath.IsAbs(keyPath) {
 		keyPath = filepath.Join(dir, keyPath)
@@ -139,7 +143,7 @@ func setup(ctx context.Context, out io.Writer, dir string, client *http.Client, 
 	if err != nil {
 		return fmt.Errorf("parse setup key: %w", err)
 	}
-	api := &github{client: client, base: apiBase, appID: values["RUNQUILL_APP_ID"], owner: values["RUNQUILL_OWNER"], key: key, repositoryScope: scope, organization: organization, runnerGroupID: group}
+	api := &github{client: client, base: apiBase, appID: values["RUNQUILL_APP_ID"], owner: values["RUNQUILL_OWNER"], key: key, repositoryScope: scope, organization: organization, runnerGroupID: group, allowPublic: allowPublic}
 	fmt.Fprintf(out, "Configuration ready for %s in %s.\n", api.owner, filepath.Join(dir, setupEnvFile))
 	installation, err := waitForSetupInstallation(ctx, out, api)
 	if err != nil {

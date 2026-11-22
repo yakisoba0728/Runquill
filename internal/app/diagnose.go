@@ -79,8 +79,17 @@ func diagnoseRepository(ctx context.Context, out io.Writer, api *github, db *sql
 	if err := api.request(ctx, http.MethodGet, "/repos/"+name, token.Token, nil, &repo); err != nil {
 		return err
 	}
-	if !repo.privateFor(api.owner) || repo.Archived || repo.Disabled || repo.ID <= 0 {
+	if !repo.acceptedFor(api.owner, api.allowPublic) || repo.Archived || repo.Disabled || repo.ID <= 0 {
+		if api.allowPublic {
+			return errors.New("Runquill requires an active private or public repository owned by RUNQUILL_OWNER")
+		}
+		if repo.publicFor(api.owner) {
+			return fmt.Errorf("Runquill requires an active private repository owned by RUNQUILL_OWNER; set %s=true to run jobs from public repositories", allowPublicEnv)
+		}
 		return errors.New("Runquill requires an active private repository owned by RUNQUILL_OWNER")
+	}
+	if !repo.Private {
+		fmt.Fprintln(out, "Public repository: Runquill refuses workflow runs from forks")
 	}
 	if api.runnerGroupID > 0 {
 		if permissionErr != nil {
@@ -129,7 +138,7 @@ func diagnoseRepository(ctx context.Context, out io.Writer, api *github, db *sql
 			return nil
 		}
 		seen[candidate.ID] = true
-		routed, eligible, err := candidate.queueJob(api.owner, repo, inst.ID, candidate.Status)
+		routed, eligible, err := candidate.queueJob(api.owner, api.allowPublic, repo, inst.ID, candidate.Status)
 		if err != nil {
 			return err
 		}

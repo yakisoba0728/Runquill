@@ -51,6 +51,7 @@ type panelState struct {
 	snapshot         panelSnapshot
 	backend          string
 	repositoryScope  string
+	allowPublic      bool
 	operations       *operations
 	elastic          *elasticState
 	maxPerRepository int
@@ -59,6 +60,7 @@ type panelState struct {
 func newPanel(cfg config) *panelState {
 	return &panelState{
 		repositoryScope:  cfg.repositoryScope,
+		allowPublic:      cfg.allowPublic,
 		maxPerRepository: cfg.maxPerRepository,
 		snapshot:         panelSnapshot{Polling: cfg.pollInterval > 0, Webhook: cfg.secret != ""},
 	}
@@ -110,6 +112,7 @@ func (p *panelState) capture(ctx context.Context, q *queue, hosts []hostCapacity
 		placement.images, placement.runtime = runners.images, runners.runtime
 	}
 	report.configure(p.backend, p.repositoryScope, pools, jobs, hosts, placement)
+	report.PublicRepositories = p.allowPublic
 	inventory := panelRunnerInventory(hosts, report.Jobs)
 	if probeErr != nil {
 		report.DockerError = "Runner host discovery failed. Check the manager logs."
