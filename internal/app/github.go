@@ -581,23 +581,42 @@ func (g *github) guardPublicRepository(ctx context.Context, j job, token, adminT
 		return fmt.Errorf("public repository %s must require approval for all external contributors (%s) before fork pull request workflows run (Settings → Actions → General)",
 			j.repository, forkApprovalPolicy)
 	}
-	type headRun struct {
-		ID             int64 `json:"id"`
-		HeadRepository *struct {
-			ID       int64  `json:"id"`
-			FullName string `json:"full_name"`
-		} `json:"head_repository"`
+	run, found, err := g.unfinishedRunWithLabel(ctx, j, token, func(run workflowRun) bool {
+		return run.HeadRepository != nil && run.HeadRepository.ID == j.repositoryID
+	}, runquillLabel)
+	if err != nil || !found {
+		return err
 	}
+	fork := "a deleted fork"
+	if run.HeadRepository != nil {
+		fork = run.HeadRepository.FullName
+	}
+	return fmt.Errorf("a fork workflow run (#%d from %s) is waiting for a Runquill runner in %s; cancel that run", run.ID, fork, j.repository)
+}
+
+// cacheLabelContested reports whether a run that may not write the shared cache has an unfinished
+// job asking for j's label. GitHub gives j's runner to any queued job with that label, so such a
+// job could otherwise take a runner that mounts the shared cache.
+func (g *github) cacheLabelContested(ctx context.Context, j job, runID int64, defaultBranch, token string) (bool, error) {
+	_, found, err := g.unfinishedRunWithLabel(ctx, j, token, func(run workflowRun) bool {
+		return run.ID == runID || run.writesCache(j, defaultBranch)
+	}, func(label string) bool { return strings.EqualFold(label, j.route) })
+	return found, err
+}
+
+// unfinishedRunWithLabel finds an unfinished workflow run of j's repository, other than those skip
+// accepts, with an unfinished job of its latest attempt that has a label match accepts.
+func (g *github) unfinishedRunWithLabel(ctx context.Context, j job, token string, skip func(workflowRun) bool, match func(string) bool) (workflowRun, bool, error) {
 	pages := &poller{github: g, token: installationToken{Token: token}, cache: make(map[string]pollPage)}
 	base := "/repos/" + j.repository + "/actions/runs"
 	seen := make(map[int64]bool)
 	for _, status := range unfinishedRunStatuses {
-		runs, err := polledPages[headRun](ctx, pages, base+"?per_page=100&status="+status, "workflow_runs")
+		runs, err := polledPages[workflowRun](ctx, pages, base+"?per_page=100&status="+status, "workflow_runs")
 		if err != nil {
-			return err
+			return workflowRun{}, false, err
 		}
 		for _, run := range runs {
-			if run.ID <= 0 || seen[run.ID] || run.HeadRepository != nil && run.HeadRepository.ID == j.repositoryID {
+			if run.ID <= 0 || seen[run.ID] || skip(run) {
 				continue
 			}
 			seen[run.ID] = true
@@ -606,21 +625,16 @@ func (g *github) guardPublicRepository(ctx context.Context, j job, token, adminT
 				Labels []string `json:"labels"`
 			}](ctx, pages, fmt.Sprintf("%s/%d/jobs?per_page=100&filter=latest", base, run.ID), "jobs")
 			if err != nil {
-				return err
+				return workflowRun{}, false, err
 			}
 			for _, candidate := range jobs {
-				if candidate.Status == "completed" || !slices.ContainsFunc(candidate.Labels, runquillLabel) {
-					continue
+				if candidate.Status != "completed" && slices.ContainsFunc(candidate.Labels, match) {
+					return run, true, nil
 				}
-				fork := "a deleted fork"
-				if run.HeadRepository != nil {
-					fork = run.HeadRepository.FullName
-				}
-				return fmt.Errorf("a fork workflow run (#%d from %s) is waiting for a Runquill runner in %s; cancel that run", run.ID, fork, j.repository)
 			}
 		}
 	}
-	return nil
+	return workflowRun{}, false, nil
 }
 
 func runquillLabel(label string) bool {
