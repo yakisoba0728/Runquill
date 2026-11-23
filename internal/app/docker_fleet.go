@@ -129,7 +129,8 @@ func validMirrorHost(host string) bool {
 	if ip := net.ParseIP(host); ip != nil {
 		return !ip.IsLoopback() && !ip.IsUnspecified()
 	}
-	return sshName.MatchString(host) && !strings.EqualFold(host, "localhost")
+	// Digits and dots that are not a full IP, such as 127.1, may still resolve to loopback.
+	return sshName.MatchString(host) && !strings.EqualFold(host, "localhost") && strings.Trim(host, "0123456789.") != ""
 }
 
 func (f *dockerFleet) prepare(ctx context.Context) error {

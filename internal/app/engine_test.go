@@ -124,7 +124,7 @@ func TestRegistryMirror(t *testing.T) {
 	for _, raw := range []string{
 		"10.0.0.5:5000", "ftp://mirror", "unix:///run/docker.sock", "http://", "http://:5000", "http://mirror:",
 		"http://mirror/v2", "http://mirror?x=1", "http://mirror#x", "http://user:pass@mirror", "http://user@mirror",
-		"http://localhost:5000", "http://LOCALHOST", "http://127.0.0.1:5000", "http://[::1]:5000", "http://0.0.0.0:5000",
+		"http://localhost:5000", "http://LOCALHOST", "http://127.0.0.1:5000", "http://[::1]:5000", "http://0.0.0.0:5000", "http://127.1:5000", "http://2130706433",
 		"http://mirror :5000", "http://mirror\t", "http://mirror\n--debug", "http://mir%20ror", "http://-mirror", "http:mirror",
 		" http://mirror", "http://mirror/ --insecure-registry=x",
 	} {
