@@ -78,6 +78,8 @@ func TestWorkerPoolsValidatePolicyAndSetDockerResources(t *testing.T) {
 }
 
 func TestWorkerPoolsSetPrivilegeAndRepositoryCache(t *testing.T) {
+	// Pool copies of a host keep the manager's mirror, and only privileged runners receive it.
+	t.Setenv("RUNQUILL_REGISTRY_MIRROR", "http://10.0.0.5:5000/")
 	fleet, logPath := testDockerFleet(t)
 	raw := fmt.Sprintf(`{"build":{"hosts":[%q],"privileged":false,"cache":true},"default":{"privileged":true}}`, fleetTestWorker)
 	if _, err := fleet.configurePools(raw); err != nil {
@@ -141,7 +143,7 @@ func TestWorkerPoolsSetPrivilegeAndRepositoryCache(t *testing.T) {
 	}
 	var cached7, cached8, privileged, privilegedCached bool
 	for line := range strings.SplitSeq(string(data), "\n") {
-		unprivileged := !strings.Contains(line, "--privileged") &&
+		unprivileged := !strings.Contains(line, "--privileged") && !strings.Contains(line, "RUNQUILL_REGISTRY_MIRROR") &&
 			strings.Contains(line, "--user 1001:1001 --security-opt no-new-privileges --cap-drop ALL --env RUNQUILL_RUNNER_MODE=plain --env RUNQUILL_JIT_FILE=/run/runquill/jit")
 		mounted := func(repository int) bool {
 			return strings.Contains(line, fmt.Sprintf("--mount type=volume,src=runquill-cache-%d,dst=/home/runner/.cache,volume-label=io.runquill.cache=1", repository)) &&
@@ -155,10 +157,10 @@ func TestWorkerPoolsSetPrivilegeAndRepositoryCache(t *testing.T) {
 		case strings.Contains(line, "create --name cached-8"):
 			cached8 = unprivileged && mounted(8) && !strings.Contains(line, "runquill-cache-7")
 		case strings.Contains(line, "create --name default-runner"):
-			privileged = strings.Contains(line, "--privileged") && !strings.Contains(line, "--mount") && !strings.Contains(line, "--user") &&
+			privileged = strings.Contains(line, "--privileged --env RUNQUILL_REGISTRY_MIRROR=http://10.0.0.5:5000 runner:local") && !strings.Contains(line, "--mount") && !strings.Contains(line, "--user") &&
 				!strings.Contains(line, "RUNNER_TOOL_CACHE") && !strings.Contains(line, "GOMODCACHE")
 		case strings.Contains(line, "create --name privileged-cached"):
-			privilegedCached = strings.Contains(line, "--privileged") && mounted(7) && !strings.Contains(line, "--user")
+			privilegedCached = strings.Contains(line, "--privileged --env RUNQUILL_REGISTRY_MIRROR=http://10.0.0.5:5000 --env npm_config_cache=") && mounted(7) && !strings.Contains(line, "--user")
 		case strings.Contains(line, "create --name uncached"):
 			t.Errorf("created a runner without its cache scope: %s", line)
 		}

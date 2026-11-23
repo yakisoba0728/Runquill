@@ -44,9 +44,9 @@ type kubeRunners struct {
 }
 
 type kubeRunnerOptions struct {
-	namespace, image, mode, pullSecret string
-	nodeSelector                       map[string]string
-	resources                          core.ResourceRequirements
+	namespace, image, mode, pullSecret, mirror string
+	nodeSelector                               map[string]string
+	resources                                  core.ResourceRequirements
 }
 
 func readKubeRunnerOptions(image string) (kubeRunnerOptions, error) {
@@ -60,6 +60,10 @@ func readKubeRunnerOptions(image string) (kubeRunnerOptions, error) {
 	}
 	if opts.mode != "plain" && opts.mode != "dind" {
 		return opts, errors.New("RUNQUILL_K8S_RUNNER_MODE must be plain or dind")
+	}
+	var err error
+	if opts.mirror, err = registryMirror(); err != nil {
+		return opts, err
 	}
 	if opts.pullSecret != "" && len(validation.IsDNS1123Subdomain(opts.pullSecret)) != 0 {
 		return opts, errors.New("RUNQUILL_K8S_IMAGE_PULL_SECRET must be a Kubernetes Secret name")
@@ -229,6 +233,10 @@ func (k *kubeRunners) runnerPod(name string) *core.Pod {
 		root := int64(0)
 		runnerSecurity = &core.SecurityContext{RunAsUser: &root, Privileged: &yes}
 	}
+	runnerEnv := []core.EnvVar{{Name: "RUNQUILL_RUNNER_MODE", Value: k.options.mode}, {Name: "RUNQUILL_JIT_FILE", Value: "/runquill/config"}}
+	if k.options.mode == "dind" && k.options.mirror != "" {
+		runnerEnv = append(runnerEnv, core.EnvVar{Name: "RUNQUILL_REGISTRY_MIRROR", Value: k.options.mirror})
+	}
 	writable := core.VolumeMount{Name: "jit", MountPath: "/runquill"}
 	var pullSecrets []core.LocalObjectReference
 	if k.options.pullSecret != "" {
@@ -248,7 +256,7 @@ func (k *kubeRunners) runnerPod(name string) *core.Pod {
 			}},
 			Containers: []core.Container{{
 				Name: "runner", Image: k.options.image, SecurityContext: runnerSecurity, Resources: k.options.resources,
-				Env:          []core.EnvVar{{Name: "RUNQUILL_RUNNER_MODE", Value: k.options.mode}, {Name: "RUNQUILL_JIT_FILE", Value: "/runquill/config"}},
+				Env:          runnerEnv,
 				VolumeMounts: []core.VolumeMount{writable},
 			}},
 			Volumes: []core.Volume{

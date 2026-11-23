@@ -89,6 +89,8 @@ type docker struct {
 	requirePrivileged bool
 	engine            *containerEngine // nil uses RUNQUILL_CONTAINER_ENGINE
 	security          *engineSecurity
+	// mirror is the validated RUNQUILL_REGISTRY_MIRROR of whoever runs "create": the manager or the outbound worker.
+	mirror string
 }
 
 func (d docker) command(ctx context.Context, input []byte, args ...string) (string, error) {
@@ -183,6 +185,10 @@ func (d docker) createPlan(engine *containerEngine, name, cacheVolume, toolVolum
 		plan.dirs = append(plan.dirs, "run/runquill/")
 	} else {
 		args = append(args, "--privileged")
+		if d.mirror != "" {
+			// Only the DinD entrypoint starts a dockerd that reads it; older images ignore it.
+			args = append(args, "--env", "RUNQUILL_REGISTRY_MIRROR="+d.mirror)
+		}
 	}
 	if d.cpus != 0 {
 		args = append(args, "--cpus", strconv.FormatFloat(d.cpus, 'f', -1, 64))

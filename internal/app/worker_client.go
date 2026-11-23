@@ -60,7 +60,11 @@ func workerCommand(ctx context.Context, args []string) error {
 	if !validWorkerImage(image) {
 		return errors.New("set RUNQUILL_RUNNER_IMAGE to the preloaded worker runner image")
 	}
-	target := docker{image: image, worker: *name}
+	mirror, err := registryMirror()
+	if err != nil {
+		return err
+	}
+	target := docker{image: image, worker: *name, mirror: mirror}
 	var failures []error
 	checkDocker(ctx, target, nil, func(_ string, err error) {
 		if err != nil {

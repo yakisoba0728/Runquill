@@ -10,7 +10,12 @@ if [[ "${RUNQUILL_RUNNER_MODE:-dind}" == plain ]]; then
 fi
 
 # VFS works when the outer Docker host also uses an overlay filesystem.
-dockerd --host=unix:///var/run/docker.sock --storage-driver=vfs &
+dockerd_args=(--host=unix:///var/run/docker.sock --storage-driver=vfs)
+# The manager or worker validated the URL; Docker uses a mirror only for Docker Hub images.
+if [[ -n "${RUNQUILL_REGISTRY_MIRROR:-}" ]]; then
+    dockerd_args+=("--registry-mirror=$RUNQUILL_REGISTRY_MIRROR")
+fi
+dockerd "${dockerd_args[@]}" &
 dockerd_pid=$!
 
 for ((attempt = 0; attempt < 60; attempt++)); do
