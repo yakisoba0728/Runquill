@@ -65,6 +65,33 @@ Copy the [cached build example](../examples/runquill-build-cache.yml) into `.git
 
 The example pins both actions to exact commits, uses read-only repository permissions, and writes cache from the default branch. Pass build secrets through BuildKit secret mounts so they stay out of cached image layers. [Docker build secrets](https://docs.docker.com/build/building/secrets/)
 
+In a [worker pool](workers.md#route-jobs-to-worker-pools) with `cache: true` and the default `privileged: true`, BuildKit can also keep its cache in a directory under `/home/runner/.cache`. That directory lives in the repository's cache volume on the host, so the next job of the same repository on the same host reads it without a download. Jobs on other hosts start cold, and the manager removes a cache volume no runner has used for 30 days.
+
+```yaml
+concurrency:
+  group: buildx-cache-runquill-app
+
+jobs:
+  build:
+    runs-on: ${{ format('runquill-{0}-{1}-pool__build__docker-build', github.run_id, github.run_attempt) }}
+    timeout-minutes: 15
+    steps:
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          load: true
+          tags: runquill-app:ci
+          cache-from: type=local,src=/home/runner/.cache/buildx/runquill-app
+          cache-to: type=local,dest=/home/runner/.cache/buildx/runquill-app,mode=max,reset=true
+```
+
+- `reset=true` deletes blobs that no cache tag references any more. Without it, every export leaves the previous blobs behind and the directory grows until the volume fills the host's disk. It needs Buildx 0.35.0 or later. With an older Buildx, export to a new directory with `dest=` and replace the old directory with it in a later step.
+- The local cache backend needs a builder other than the default `docker` driver, unless that daemon uses the containerd image store. `docker/setup-buildx-action` creates a `docker-container` builder by default.
+- Jobs of one repository that run at the same time on one host write the same directory. Give each image its own directory and a workflow `concurrency` group, as above. GitHub then runs one build at a time and keeps only the newest waiting run, cancelling older pending ones.
+- Jobs from one repository share the volume, so any of them can change cached layers that later builds use. Do not use this for workflows that build untrusted code.
+
+[Docker local cache](https://docs.docker.com/build/cache/backends/local/) · [Local cache in GitHub Actions](https://docs.docker.com/build/ci/github-actions/cache/)
+
 ### Move existing workflows
 
 Administrators can open a pull request that moves jobs from GitHub-hosted labels to Runquill labels from the panel's **Migrate** screen. It needs Contents, Pull requests and Workflows write access, which only `runquill setup --migrate` requests for a new App. Runquill previews the diff first, changes only `runs-on`, leaves jobs it cannot rewrite safely alone with a reason, and never merges. A GitHub-hosted Ubuntu version label such as `ubuntu-22.04` becomes an `os__` selector when the manager's catalogue has that OS. Migration has not yet been exercised against real GitHub. [Workflow migration](workflow-migration.md)

@@ -65,6 +65,33 @@ runs-on: ${{ format('runquill-{0}-{1}-os__ubuntu2204__build', github.run_id, git
 
 예제는 두 액션을 커밋 SHA로 고정하고 읽기 권한만 사용합니다. 캐시는 기본 브랜치에서 갱신합니다. 빌드 시크릿은 BuildKit 시크릿 마운트로 전달하면 캐시 레이어에 남지 않습니다. [Docker 빌드 시크릿](https://docs.docker.com/build/building/secrets/)
 
+`cache: true`이고 `privileged`가 기본값 `true`인 [워커 풀](workers.ko.md#워커-풀로-작업-분리)에서는 BuildKit 캐시를 `/home/runner/.cache` 아래 디렉터리에 둘 수도 있습니다. 이 디렉터리는 호스트에 있는 저장소의 캐시 볼륨에 저장되므로, 같은 호스트에서 실행되는 같은 저장소의 다음 작업은 내려받지 않고 바로 읽습니다. 다른 호스트의 작업은 캐시 없이 시작하며, 매니저는 30일 동안 어떤 러너도 쓰지 않은 캐시 볼륨을 지웁니다.
+
+```yaml
+concurrency:
+  group: buildx-cache-runquill-app
+
+jobs:
+  build:
+    runs-on: ${{ format('runquill-{0}-{1}-pool__build__docker-build', github.run_id, github.run_attempt) }}
+    timeout-minutes: 15
+    steps:
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          load: true
+          tags: runquill-app:ci
+          cache-from: type=local,src=/home/runner/.cache/buildx/runquill-app
+          cache-to: type=local,dest=/home/runner/.cache/buildx/runquill-app,mode=max,reset=true
+```
+
+- `reset=true`는 어떤 캐시 태그도 가리키지 않는 blob을 지웁니다. 이 옵션이 없으면 내보낼 때마다 이전 blob이 남아, 디렉터리가 커지다가 볼륨이 호스트 디스크를 채웁니다. Buildx 0.35.0 이상이 필요합니다. 그보다 오래된 Buildx에서는 `dest=`로 새 디렉터리에 내보내고 다음 단계에서 이전 디렉터리를 새 디렉터리로 바꿉니다.
+- 로컬 캐시 백엔드는 기본 `docker` 드라이버가 아닌 빌더가 필요합니다. 그 데몬이 containerd 이미지 저장소를 쓰면 예외입니다. `docker/setup-buildx-action`은 기본으로 `docker-container` 빌더를 만듭니다.
+- 같은 호스트에서 동시에 실행되는 한 저장소의 작업은 같은 디렉터리에 씁니다. 위 예처럼 이미지마다 디렉터리를 따로 두고 워크플로 `concurrency` 그룹을 지정하세요. 그러면 GitHub는 빌드를 한 번에 하나씩 실행하고, 대기 중인 실행은 가장 최근 것만 남기고 취소합니다.
+- 한 저장소의 작업은 볼륨을 함께 쓰므로, 어느 작업이든 이후 빌드가 쓰는 캐시 레이어를 바꿀 수 있습니다. 신뢰할 수 없는 코드를 빌드하는 워크플로에는 쓰지 마세요.
+
+[Docker 로컬 캐시](https://docs.docker.com/build/cache/backends/local/) · [GitHub Actions의 로컬 캐시](https://docs.docker.com/build/ci/github-actions/cache/)
+
 ### 기존 워크플로 이전
 
 관리자는 패널의 **마이그레이션** 화면에서 GitHub 호스팅 라벨을 쓰는 작업을 Runquill 라벨로 바꾸는 풀 리퀘스트를 열 수 있습니다. Contents, Pull requests, Workflows 쓰기 권한이 필요하며, 새 App에서는 `runquill setup --migrate`만 이 권한을 요청합니다. Runquill은 먼저 diff를 미리 보여주고 `runs-on`만 바꿉니다. 안전하게 바꿀 수 없는 작업은 이유와 함께 그대로 두며, 병합은 하지 않습니다. `ubuntu-22.04` 같은 GitHub 호스팅 Ubuntu 버전 라벨은 매니저의 러너 이미지 목록에 그 OS가 있으면 `os__` 선택자로 바뀝니다. 실제 GitHub 저장소에서는 아직 검증하지 않았습니다. [워크플로 이전](workflow-migration.ko.md)
