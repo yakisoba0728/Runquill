@@ -425,27 +425,41 @@ func TestSchedulerLetsOnlyDefaultBranchRunsWriteSharedCache(t *testing.T) {
 		// runCalls is -1 when the launch must wait for the run lookup instead of starting a runner.
 		runCalls int32
 		scratch  bool
+		// runs and jobs are the repository's unfinished runs by status and their jobs by run ID.
+		runs, jobs map[string]string
 	}{
-		{"default pool", private, "", workerPool{Cache: true}, 0, false},
-		{"explicit all", private, "", workerPool{Cache: true, CacheWrites: cacheWritesAll}, 0, false},
-		{"no cache", private, "", workerPool{CacheWrites: cacheWritesDefaultBranch}, 0, false},
-		{"push to default branch", private, run("push", "main", 2), restricted, 1, false},
-		{"schedule", private, run("schedule", "main", 2), restricted, 1, false},
-		{"manual run on default branch", private, run("workflow_dispatch", "main", 2), restricted, 1, false},
-		{"push to another branch", private, run("push", "feature", 2), restricted, 1, true},
-		{"pull request from default branch name", private, run("pull_request", "main", 2), restricted, 1, true},
-		{"pull_request_target", private, run("pull_request_target", "main", 2), restricted, 1, true},
-		{"issue comment", private, run("issue_comment", "main", 2), restricted, 1, true},
-		{"workflow_run", private, run("workflow_run", "main", 2), restricted, 1, true},
-		{"other head repository", private, run("push", "main", 3), restricted, 1, true},
-		{"missing event", private, `{"id":17,"head_branch":"main","repository":{"id":2},"head_repository":{"id":2}}`, restricted, 1, true},
-		{"missing default branch", `{"id":2,"full_name":"owner/repo","private":true,"owner":{"login":"owner"}}`, run("push", "main", 2), restricted, 1, true},
-		{"run lookup fails", private, "", restricted, -1, false},
-		{"public default", public, run("push", "main", 2), workerPool{Cache: true}, 1, false},
-		{"public pull request", public, run("pull_request", "feature", 2), workerPool{Cache: true}, 1, true},
-		{"public explicit all", public, run("pull_request", "feature", 2), workerPool{Cache: true, CacheWrites: cacheWritesAll}, 1, false},
+		{"default pool", private, "", workerPool{Cache: true}, 0, false, nil, nil},
+		{"explicit all", private, "", workerPool{Cache: true, CacheWrites: cacheWritesAll}, 0, false, nil, nil},
+		{"no cache", private, "", workerPool{CacheWrites: cacheWritesDefaultBranch}, 0, false, nil, nil},
+		{"push to default branch", private, run("push", "main", 2), restricted, 1, false, nil, nil},
+		{"schedule", private, run("schedule", "main", 2), restricted, 1, false, nil, nil},
+		{"manual run on default branch", private, run("workflow_dispatch", "main", 2), restricted, 1, false, nil, nil},
+		{"push to another branch", private, run("push", "feature", 2), restricted, 1, true, nil, nil},
+		{"pull request from default branch name", private, run("pull_request", "main", 2), restricted, 1, true, nil, nil},
+		{"pull_request_target", private, run("pull_request_target", "main", 2), restricted, 1, true, nil, nil},
+		{"issue comment", private, run("issue_comment", "main", 2), restricted, 1, true, nil, nil},
+		{"workflow_run", private, run("workflow_run", "main", 2), restricted, 1, true, nil, nil},
+		{"other head repository", private, run("push", "main", 3), restricted, 1, true, nil, nil},
+		{"missing event", private, `{"id":17,"head_branch":"main","repository":{"id":2},"head_repository":{"id":2}}`, restricted, 1, true, nil, nil},
+		{"missing default branch", `{"id":2,"full_name":"owner/repo","private":true,"owner":{"login":"owner"}}`, run("push", "main", 2), restricted, 1, true, nil, nil},
+		{"run lookup fails", private, "", restricted, -1, false, nil, nil},
+		{"pull request asks for the label", private, run("push", "main", 2), restricted, 1, true,
+			map[string]string{"queued": `{"id":40,"event":"pull_request","head_branch":"feature","head_repository":{"id":2}}`},
+			map[string]string{"40": `{"status":"queued","labels":["RUNQUILL-17-1-ci"]}`}},
+		{"pull request asks for another label", private, run("push", "main", 2), restricted, 1, false,
+			map[string]string{"in_progress": `{"id":40,"event":"pull_request","head_branch":"feature","head_repository":{"id":2}}`},
+			map[string]string{"40": `{"status":"queued","labels":["runquill-40-1-ci"]}`}},
+		{"finished pull request job", private, run("push", "main", 2), restricted, 1, false,
+			map[string]string{"waiting": `{"id":40,"event":"pull_request","head_branch":"feature","head_repository":{"id":2}}`},
+			map[string]string{"40": `{"status":"completed","labels":["runquill-17-1-ci"]}`}},
+		{"default branch run asks for the label", private, run("push", "main", 2), restricted, 1, false,
+			map[string]string{"queued": `{"id":41,"event":"schedule","head_branch":"main","head_repository":{"id":2}}`},
+			map[string]string{"41": `{"status":"queued","labels":["runquill-17-1-ci"]}`}},
+		{"public default", public, run("push", "main", 2), workerPool{Cache: true}, 1, false, nil, nil},
+		{"public pull request", public, run("pull_request", "feature", 2), workerPool{Cache: true}, 1, true, nil, nil},
+		{"public explicit all", public, run("pull_request", "feature", 2), workerPool{Cache: true, CacheWrites: cacheWritesAll}, 1, false, nil, nil},
 	} {
-		f := &publicFixture{allow: true, repo: test.repo, run: test.run}
+		f := &publicFixture{allow: true, repo: test.repo, run: test.run, forkRuns: test.runs, forkJobs: test.jobs}
 		q := testQueue(t)
 		now := time.Now()
 		recordTestJob(t, q, 9, "runquill-17-1-ci", now)

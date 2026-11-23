@@ -680,6 +680,13 @@ func (s *scheduler) launch(ctx context.Context, j job, host, pool string, now ti
 			return false, err
 		}
 	}
+	scratch := restrictCache && !run.writesCache(j, repo.DefaultBranch)
+	if restrictCache && !scratch {
+		// shortcut: a job queued after this check can still take the runner; nothing closes that race yet.
+		if scratch, err = s.github.cacheLabelContested(ctx, j, run.ID, repo.DefaultBranch, token); err != nil {
+			return false, err
+		}
+	}
 	if s.github.runnerGroupID > 0 {
 		token, err = s.github.organizationJobToken(ctx, j, true)
 		if errors.Is(err, errRepositoryOutsideInstallation) {
@@ -727,7 +734,6 @@ func (s *scheduler) launch(ctx context.Context, j job, host, pool string, now ti
 	}
 	if current == queued {
 		start := withRunnerRepository(ctx, j.repositoryID)
-		scratch := restrictCache && !run.writesCache(j, repo.DefaultBranch)
 		if scratch {
 			start = withScratchCache(start)
 		}
