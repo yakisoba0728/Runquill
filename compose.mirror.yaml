@@ -1,0 +1,20 @@
+services:
+  manager:
+    environment:
+      RUNQUILL_REGISTRY_MIRROR: "${RUNQUILL_REGISTRY_MIRROR:?Set the mirror origin runners reach, such as http://10.0.0.5:5000}"
+  registry-mirror:
+    # Anonymous Docker Hub cache. Upstream credentials would serve the account's private images to every job.
+    image: registry:3.1.2@sha256:82f6ff4a7f982960c8aa51617fea3aabc485df6e55cce80d22deb1de36f1bc3c
+    restart: unless-stopped
+    environment:
+      REGISTRY_PROXY_REMOTEURL: https://registry-1.docker.io
+      REGISTRY_PROXY_TTL: "${RUNQUILL_REGISTRY_MIRROR_TTL:-168h}"
+      REGISTRY_LOG_LEVEL: info
+    ports:
+      # Runner containers cannot reach a loopback-only port. Bind a private address and firewall it.
+      - "${RUNQUILL_REGISTRY_MIRROR_BIND:?Set the private address and port to publish the mirror on, such as 10.0.0.5:5000}:5000"
+    volumes:
+      - registry-mirror:/var/lib/registry
+
+volumes:
+  registry-mirror:

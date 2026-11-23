@@ -63,6 +63,10 @@ func parseDockerFleet(image, hosts string) (*dockerFleet, error) {
 	if err != nil {
 		return nil, err
 	}
+	mirror, err := registryMirror()
+	if err != nil {
+		return nil, err
+	}
 	fleet := &dockerFleet{}
 	seen := make(map[string]bool)
 	for _, host := range strings.Split(hosts, ",") {
@@ -99,9 +103,33 @@ func parseDockerFleet(image, hosts string) (*dockerFleet, error) {
 		fleet.hosts = append(fleet.hosts, docker{image: image, host: host})
 	}
 	for i := range fleet.hosts {
-		fleet.hosts[i].engine, fleet.hosts[i].security = engine, &engineSecurity{}
+		fleet.hosts[i].engine, fleet.hosts[i].security, fleet.hosts[i].mirror = engine, &engineSecurity{}, mirror
 	}
 	return fleet, nil
+}
+
+// registryMirror reads the Docker Hub pull-through mirror that Docker-in-Docker runners pass to their own dockerd.
+// A value dockerd rejects would stop every DinD runner, so only a reachable http(s) origin is accepted.
+func registryMirror() (string, error) {
+	raw := os.Getenv("RUNQUILL_REGISTRY_MIRROR")
+	if raw == "" {
+		return "", nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.Opaque != "" ||
+		(u.Path != "" && u.Path != "/") || u.RawPath != "" || strings.ContainsAny(raw, "?# \t") ||
+		strings.HasSuffix(u.Host, ":") || !validMirrorHost(u.Hostname()) {
+		return "", errors.New("RUNQUILL_REGISTRY_MIRROR must be an http:// or https:// origin that runner containers can reach, such as http://10.0.0.5:5000")
+	}
+	return strings.TrimSuffix(raw, "/"), nil
+}
+
+// validMirrorHost refuses loopback names, which inside a runner container reach the runner itself.
+func validMirrorHost(host string) bool {
+	if ip := net.ParseIP(host); ip != nil {
+		return !ip.IsLoopback() && !ip.IsUnspecified()
+	}
+	return sshName.MatchString(host) && !strings.EqualFold(host, "localhost")
 }
 
 func (f *dockerFleet) prepare(ctx context.Context) error {

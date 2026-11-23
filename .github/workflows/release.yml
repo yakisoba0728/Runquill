@@ -80,7 +80,7 @@ jobs:
           image="ghcr.io/${GITHUB_REPOSITORY,,}"
           chmod +x release-assets/runquill-linux-amd64 release-assets/runquill-linux-arm64
           test "$(release-assets/runquill-linux-amd64 --version)" = "$GITHUB_REF_NAME"
-          cp compose.yaml compose.ssh.yaml compose.panel.yaml compose.worker.yaml install.sh LICENSE release-assets/
+          cp compose.yaml compose.ssh.yaml compose.panel.yaml compose.worker.yaml compose.mirror.yaml install.sh LICENSE release-assets/
           sed -e "s#ghcr.io/yakisoba0728/runquill:#$image:#" \
               -e "s#ghcr.io/yakisoba0728/runquill-runner:#$image-runner:#" \
               -e "s#:\(v[0-9][0-9.]*\)\$#:$GITHUB_REF_NAME#" \

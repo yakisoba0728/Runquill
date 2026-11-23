@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	core "k8s.io/api/core/v1"
 )
 
 // "info --format {{json .}}" output trimmed to the fields Runquill reads. The rootful Docker sample is
@@ -68,6 +70,13 @@ func TestContainerEngineCreateArgs(t *testing.T) {
 			common + dockerLogs + "--label io.runquill.worker=w1 " + plain +
 				" --cpus 1.5 --memory 512m --memory-swap 512m" + packageEnv + dockerMounts + toolEnv,
 			"run/runquill/jit", nil, []string{"run/runquill/", "home/runner/.cache/", "home/runner/.cache/tools/"}},
+		{"docker dind mirror", "docker", "", "", false, docker{image: "img", mirror: "http://10.0.0.5:5000"},
+			common + dockerLogs + "--privileged --env RUNQUILL_REGISTRY_MIRROR=http://10.0.0.5:5000 img", "run/runquill-jit", nil, nil},
+		{"docker dind cached mirror", "docker", "runquill-cache-7", "runquill-cache-7-tools-key", false, docker{image: "img", mirror: "https://mirror.internal"},
+			common + dockerLogs + "--privileged --env RUNQUILL_REGISTRY_MIRROR=https://mirror.internal" + packageEnv + dockerMounts + toolEnv,
+			"run/runquill-jit", nil, []string{"home/runner/.cache/", "home/runner/.cache/tools/"}},
+		{"docker plain ignores mirror", "docker", "", "", true, docker{image: "img", mirror: "http://10.0.0.5:5000"},
+			common + dockerLogs + plain + " img", "run/runquill/jit", nil, []string{"run/runquill/"}},
 		{"podman dind", "podman", "", "", false, docker{image: "img"},
 			common + podmanLogs + "--privileged img", "run/runquill-jit", nil, nil},
 		{"podman plain cached", "podman", "runquill-cache-7", "runquill-cache-7-tools-key", true, docker{image: "img"},
@@ -95,6 +104,70 @@ func TestContainerEngineCreateArgs(t *testing.T) {
 				t.Errorf("credential layout: %+v", plan)
 			}
 		})
+	}
+}
+
+func TestRegistryMirror(t *testing.T) {
+	for raw, want := range map[string]string{
+		"":                          "",
+		"http://10.0.0.5:5000":      "http://10.0.0.5:5000",
+		"http://10.0.0.5:5000/":     "http://10.0.0.5:5000",
+		"https://mirror.internal":   "https://mirror.internal",
+		"http://[fd00::5]:5000":     "http://[fd00::5]:5000",
+		"https://Mirror-1.lan:8443": "https://Mirror-1.lan:8443",
+	} {
+		t.Setenv("RUNQUILL_REGISTRY_MIRROR", raw)
+		if got, err := registryMirror(); err != nil || got != want {
+			t.Errorf("%q: got %q, %v; want %q", raw, got, err, want)
+		}
+	}
+	for _, raw := range []string{
+		"10.0.0.5:5000", "ftp://mirror", "unix:///run/docker.sock", "http://", "http://:5000", "http://mirror:",
+		"http://mirror/v2", "http://mirror?x=1", "http://mirror#x", "http://user:pass@mirror", "http://user@mirror",
+		"http://localhost:5000", "http://LOCALHOST", "http://127.0.0.1:5000", "http://[::1]:5000", "http://0.0.0.0:5000",
+		"http://mirror :5000", "http://mirror\t", "http://mirror\n--debug", "http://mir%20ror", "http://-mirror", "http:mirror",
+		" http://mirror", "http://mirror/ --insecure-registry=x",
+	} {
+		t.Setenv("RUNQUILL_REGISTRY_MIRROR", raw)
+		if got, err := registryMirror(); err == nil {
+			t.Errorf("accepted mirror %q as %q", raw, got)
+		}
+	}
+
+	// The manager refuses to start with an invalid value, and carries a valid one to every host.
+	t.Setenv("RUNQUILL_REGISTRY_MIRROR", "http://localhost:5000")
+	if _, err := parseDockerFleet("img", "local"); err == nil || !strings.Contains(err.Error(), "RUNQUILL_REGISTRY_MIRROR") {
+		t.Errorf("fleet accepted an invalid mirror: %v", err)
+	}
+	t.Setenv("RUNQUILL_K8S_RUNNER_NAMESPACE", "runquill-runners")
+	if _, err := readKubeRunnerOptions("img"); err == nil {
+		t.Error("Kubernetes accepted an invalid mirror")
+	}
+	t.Setenv("RUNQUILL_REGISTRY_MIRROR", "http://10.0.0.5:5000/")
+	fleet, err := parseDockerFleet("img", "local,ssh://ci@build1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, host := range fleet.hosts {
+		if host.mirror != "http://10.0.0.5:5000" {
+			t.Errorf("%s mirror = %q", host.label(), host.mirror)
+		}
+	}
+
+	// Only a DinD Pod receives the mirror.
+	for mode, want := range map[string]bool{"dind": true, "plain": false} {
+		t.Setenv("RUNQUILL_K8S_RUNNER_MODE", mode)
+		opts, err := readKubeRunnerOptions("img")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got bool
+		for _, env := range (&kubeRunners{options: opts}).runnerPod("r1").Spec.Containers[0].Env {
+			got = got || env == core.EnvVar{Name: "RUNQUILL_REGISTRY_MIRROR", Value: "http://10.0.0.5:5000"}
+		}
+		if got != want {
+			t.Errorf("%s Pod mirror env = %v, want %v", mode, got, want)
+		}
 	}
 }
 
