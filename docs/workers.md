@@ -67,7 +67,25 @@ RUNQUILL_WORKER_POOLS='{"lint":{"hosts":["local"],"privileged":false,"cache":tru
 
 [Outbound workers](outbound-workers.md) in a pool with `privileged: false` or `cache: true` must run the same Runquill release as the manager. Older agents reject runner tasks that carry these settings, so upgrade the workers along with the manager.
 
-The administrator panel's pool editor has checkboxes for Docker-in-Docker and the shared cache, and a field for the allowed runner OS names. It keeps each pool's `max_per_repository` when saving but cannot change it. Once settings have been saved in the panel, they take precedence over `RUNQUILL_WORKER_POOLS`.
+The administrator panel's pool editor has checkboxes for Docker-in-Docker and the shared cache, and a field for the allowed runner OS names. It keeps each pool's `max_per_repository`, `warm` and `warm_max_idle_minutes` when saving but cannot change them. Once settings have been saved in the panel, they take precedence over `RUNQUILL_WORKER_POOLS`.
+
+## Keep runners warm
+
+A cold runner waits for its container to start and, with Docker-in-Docker, for its own Docker daemon. Set `warm` on a pool to keep that many runners started on each `local` and `ssh://` host in the pool. They wait without a job or any credential. When a job is placed on the host, the manager renames one to the job's runner name and writes the job's single-use JIT config into it, so the job skips container and daemon startup.
+
+```dotenv
+RUNQUILL_WORKER_POOLS='{"default":{"warm":2,"warm_max_idle_minutes":30}}'
+```
+
+- `warm` is the number per host, from `0` (off, the default) to `100`. `warm_max_idle_minutes` replaces a warm runner that no job took, up to `1440`. The default is `30`.
+- Warm runners fill only free slots. While idle they do not count toward `RUNQUILL_MAX_RUNNERS`, host limits or repository caps. A job that takes one uses its slot like any other runner, and the manager removes warm runners when jobs or the global limit need their slots. A job that selects another image with `os__NAME__` starts cold and retires one warm runner, so a host can hold one container over its limit until the end of that scheduler pass.
+- The manager starts at most one warm runner per host in each scheduler pass. It skips hosts that are cordoned, unreachable or waiting for their runner image, and cordoning a host removes its idle warm runners. A warm runner that exits early, for example from an image without warm support, makes the manager back off on that host, doubling from 15 seconds to 10 minutes.
+- A job takes a warm runner only if it matches the pool's current image name, CPU and memory limits, Docker-in-Docker mode and idle time. The manager replaces the others. A tag that moves to a new image is picked up as warm runners reach their idle time.
+- After a restart the manager adopts the warm runners already running. If the manager is gone, a warm runner exits on its own 5 minutes after its idle time.
+- `warm` cannot be combined with `cache: true`, because the cache volume belongs to the job's repository, which is unknown before the job arrives. Outbound `agent://` workers reject `warm`, and K3s does not use worker pools.
+- Warm runners need the runner image from this release or later. A custom pool image must keep its entrypoint.
+- Each warm runner takes at most one job and is removed afterwards, like any runner. Idle warm runners still hold memory and, with Docker-in-Docker, a running daemon, so keep `warm` within the host's capacity.
+- Warm runners are named `runquill-warm-…`. They do not appear in `status`, the panel or `gc --dry-run`, and `gc --remove-orphans` leaves them alone. List them with `docker ps --filter name=runquill-warm-`. Podman has not been tested with warm runners.
 
 ## Share capacity across repositories
 
