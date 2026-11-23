@@ -52,7 +52,7 @@
 import { createApi, onUnauthorized, request } from "./api.js";
 import { pendingJob, summary } from "./fleet.js";
 import { language, localizeDocument, serverText, tr } from "./i18n.js";
-import { bindConfirmDialog, confirmAction, format, h, roleLabel, toast } from "./ui.js";
+import { bindConfirmDialog, confirmAction, fill, format, h, roleLabel, toast } from "./ui.js";
 
 const roles = { viewer: 1, operator: 2, admin: 3 };
 
@@ -131,6 +131,14 @@ $("menu-toggle").addEventListener("click", () => {
   const open = $("menu-toggle").getAttribute("aria-expanded") !== "true";
   $("menu-toggle").setAttribute("aria-expanded", String(open));
   $("nav").dataset.open = String(open);
+  if (open) $("nav").querySelector("a[aria-current]")?.focus();
+});
+// Esc closes the narrow-screen menu and returns focus to its button.
+$("nav").addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || $("nav").dataset.open !== "true") return;
+  $("menu-toggle").setAttribute("aria-expanded", "false");
+  $("nav").dataset.open = "false";
+  $("menu-toggle").focus();
 });
 
 function hashQuery() {
@@ -365,20 +373,24 @@ function renderChrome() {
   const text = current?.sampled_at ? tr("Updated {time}", { time: language === "ko" ? format.relative(current.sampled_at) : format.relative(current.sampled_at).toLowerCase() }) : "";
   if (age.textContent !== text) age.textContent = text;
 
+  // The lost-connection notice is not a live region: the top bar's status
+  // already announces it, and its countdown would be read every second.
   const notices = [];
-  const retry = source.retrySeconds();
-  if (connection.label === "Connection lost") {
-    notices.push(["failed", current ? tr("Connection lost. Retrying in {n}s. Showing the last available snapshot.", { n: retry })
-      : tr("Connection lost. Retrying in {n}s.", { n: retry })]);
-  }
+  const lost = connection.label === "Connection lost";
   if (current?.fleet?.docker_error) notices.push(["waiting", serverText(current.fleet.docker_error)]);
   if (current?.poll_failed) notices.push(["waiting", tr("The latest GitHub poll failed. Check the manager logs.")]);
   const box = $("notices");
-  const key = JSON.stringify(notices);
+  const key = JSON.stringify([lost, !!current, notices]);
   if (box.dataset.key !== key) {
     box.dataset.key = key;
-    box.replaceChildren(...notices.map(([tone, text]) => h("p", { class: "notice", dataset: { state: tone }, role: "status" }, text)));
+    const countdown = lost ? h("p", { class: "notice", dataset: { state: "failed" } }, ...fill(current
+      ? "Connection lost. Retrying in {n}s. Showing the last available snapshot." : "Connection lost. Retrying in {n}s.",
+    { n: h("span", { dataset: { countdown: "" } }) })) : null;
+    box.replaceChildren(countdown || "",
+      ...notices.map(([tone, text]) => h("p", { class: "notice", dataset: { state: tone }, role: "status" }, text)));
   }
+  const seconds = box.querySelector("[data-countdown]");
+  if (seconds && seconds.textContent !== String(source.retrySeconds())) seconds.textContent = String(source.retrySeconds());
 }
 
 function setCount(id, value, label, tone = "") {

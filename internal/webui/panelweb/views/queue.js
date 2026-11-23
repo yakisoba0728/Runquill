@@ -63,7 +63,9 @@ function render() {
   const jobs = all[parts.list].filter((job) => (!pool.value || (job.pool || "default") === pool.value) &&
     (!query || job.repository.toLowerCase().includes(query) || String(job.id).includes(query)));
   table.update(jobs, !snapshot?.fleet ? "Waiting for a fleet snapshot…" : query || pool.value ? "No jobs match these filters." : emptyText[parts.list]);
-  renderDetail(jobs.find((job) => job.id === parts.selected), detail);
+  // The selected job stays open when a filter hides it or it moves to another list, as a waiting job does once assigned.
+  renderDetail(jobs.find((job) => job.id === parts.selected)
+    ?? lists.flatMap(([id]) => all[id]).find((job) => job.id === parts.selected), detail);
   target.settle({
     ready: !!snapshot?.fleet, table, found: !!linked,
     gone: (id) => ctx.toast(tr("Job #{id} is no longer in the queue.", { id }), ""),
