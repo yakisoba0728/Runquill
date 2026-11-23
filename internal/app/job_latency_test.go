@@ -42,6 +42,9 @@ func TestQueueMigrationAddsCompletionTimeToOldQueue(t *testing.T) {
 
 func TestJobCompletionTimeIsRecordedOnce(t *testing.T) {
 	q := testQueue(t)
+	if err := migrateUsage(t.Context(), q.DB); err != nil { // readPanelJob joins job_resources
+		t.Fatal(err)
+	}
 	repo := repository{ID: 2, FullName: "owner/repo", Private: true}
 	repo.Owner.Login = "owner"
 	event := workflowJob{ID: 8, RunID: 1, Labels: []string{"runquill-1-1-ci"}, CreatedAt: "2027-01-15T08:00:00Z",
