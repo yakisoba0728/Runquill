@@ -28,6 +28,10 @@ type workerPool struct {
 	MaxPerRepository int `json:"max_per_repository,omitempty"`
 	// Images limits the runner image catalogue names jobs in this pool may select; nil allows all.
 	Images []string `json:"images,omitempty"`
+	// Warm keeps this many started runners per local or SSH host waiting for a job's JIT config.
+	Warm int `json:"warm,omitempty"`
+	// WarmMaxIdleMinutes replaces a warm runner no job took; 0 uses defaultWarmMaxIdle.
+	WarmMaxIdleMinutes int `json:"warm_max_idle_minutes,omitempty"`
 }
 
 type workerPools map[string]workerPool
@@ -66,6 +70,9 @@ func (f *dockerFleet) configurePools(raw string) (workerPools, error) {
 		if strings.HasPrefix(pool.Image, "-") || strings.ContainsAny(pool.Image, " \t\r\n") {
 			return nil, fmt.Errorf("worker pool %q: image must be a Docker image reference", name)
 		}
+		if err := checkWarmPool(pool); err != nil {
+			return nil, fmt.Errorf("worker pool %q: %w", name, err)
+		}
 		if err := checkPoolImageNames(pool.Images); err != nil {
 			return nil, fmt.Errorf("worker pool %q: %w", name, err)
 		}
@@ -102,6 +109,10 @@ func (f *dockerFleet) configurePools(raw string) (workerPools, error) {
 		if pool.Image != "" {
 			host.image = pool.Image
 		}
+		if pool.Warm > 0 && host.agentName() != "" {
+			return nil, fmt.Errorf("worker pool %q: warm runners are not supported on outbound worker %s", host.pool, host.label())
+		}
+		host.warm, host.warmMaxIdle = pool.Warm, warmMaxIdle(pool)
 	}
 	return pools, nil
 }

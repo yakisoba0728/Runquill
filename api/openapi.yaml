@@ -648,6 +648,12 @@ components:
           description: Runner image catalogue names jobs in this pool may select with os__NAME__; absent allows every name.
           items:
             type: string
+        warm:
+          type: integer
+          description: Started runners each local or SSH host in the pool keeps waiting for a job, 0 to 100; absent or 0 is off.
+        warm_max_idle_minutes:
+          type: integer
+          description: Minutes after which an unused warm runner is replaced, 0 to 1440; absent or 0 uses 30.
     ElasticReport:
       type: object
       description: State of the elastic runner limits loop. With RUNQUILL_ELASTIC unset or off, mode is off and the lists are empty.

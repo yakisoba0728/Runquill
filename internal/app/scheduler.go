@@ -182,6 +182,20 @@ func (s *scheduler) tickFleet(ctx context.Context, now time.Time, state *operati
 	if err := s.alerts.observe(ctx, s.queue, hosts, now, s.capped()); err != nil && ctx.Err() == nil {
 		slog.Warn("derive fleet notifications", "error", err)
 	}
+	if warm, ok := unwrapRuntime(s.runtime).(warmRuntime); ok {
+		// After launches, so warm runners take only the slots jobs left free, even when the tick ends early.
+		unassigned := occupied
+		defer func() {
+			if ctx.Err() != nil {
+				return
+			}
+			free := s.limit - unassigned
+			for _, host := range hosts {
+				free -= host.Occupied
+			}
+			warm.maintainWarm(ctx, hosts, free, now)
+		}()
+	}
 	for _, host := range hosts {
 		occupied += host.Occupied
 	}
