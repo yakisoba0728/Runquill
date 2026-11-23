@@ -26,6 +26,7 @@ func warmTestFleet(t *testing.T, local, remote string) (*dockerFleet, func() []s
 	t.Setenv("WARM_PS", ps)
 	t.Setenv("WARM_RENAME_FAIL", "")
 	t.Setenv("WARM_CREATE_FAIL", "")
+	t.Setenv("WARM_EXEC_FAIL", "")
 	for path, content := range map[string]string{ps: local, ps + ".remote": remote} {
 		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 			t.Fatal(err)
@@ -38,7 +39,7 @@ if [ "$1" = --host ]; then list=$WARM_PS.remote; printf '%s ' "$2" >> "$WARM_LOG
 printf '%s\n' "$*" >> "$WARM_LOG"
 case "$1" in
   ps) cat "$list" ;;
-  exec) cat > "$WARM_LOG.jit" ;;
+  exec) if [ -n "$WARM_EXEC_FAIL" ]; then exit 1; fi; cat > "$WARM_LOG.jit" ;;
   cp) cat > /dev/null ;;
   rename) if [ "$2" = "$WARM_RENAME_FAIL" ]; then exit 1; fi ;;
   create) if [ -n "$WARM_CREATE_FAIL" ]; then exit 1; fi ;;
@@ -190,6 +191,17 @@ func TestWarmHandoff(t *testing.T) {
 	}
 	if strings.Contains(strings.Join(log, "\n"), jit) || len(calls(log, "create")) != 0 {
 		t.Fatalf("JIT config in argv or a cold start: %q", log)
+	}
+
+	// A claimed runner that cannot receive its config is removed, never left waiting or started cold.
+	fleet, read = warmTestFleet(t, list, "")
+	t.Setenv("WARM_EXEC_FAIL", "1")
+	if err := fleet.startOn(t.Context(), "local", runner, jit); err == nil {
+		t.Fatal("failed JIT delivery reported success")
+	}
+	t.Setenv("WARM_EXEC_FAIL", "")
+	if log = read(); !slices.Contains(log, "rm -f -v "+runner) || len(calls(log, "create")) != 0 || len(calls(log, "rename")) != 1 {
+		t.Fatalf("failed delivery: %q", log)
 	}
 
 	// A claim lost to another start moves on to the next warm runner.
