@@ -51,6 +51,10 @@ func TestHostResourcesExplainWhatTheManagerCannotRead(t *testing.T) {
 	if ssh.Error == "" || ssh.CPUs != 0 || ssh.Unavailable != "" || *ssh.Reserved != (hostReservation{}) {
 		t.Fatalf("an unreachable engine must report an error, not zero capacity: %+v", ssh)
 	}
+	if panel.disk.probeDue("ssh://ci@build", time.Now()) || !panel.disk.probeDue("local", time.Now()) ||
+		!panel.disk.probeDue("ssh://ci@build", time.Now().Add(hostProbeRetry)) {
+		t.Fatal("a failed probe must wait hostProbeRetry before the next one")
+	}
 	if agent.Unavailable != "agent" || agent.CPUs != 0 || agent.Reserved.Runners != 1 || agent.Reserved.CPUs != 4 {
 		t.Fatalf("agent %+v %+v", agent, agent.Reserved)
 	}
@@ -138,5 +142,16 @@ func TestHostDiskCacheRunsOneMeasurement(t *testing.T) {
 	<-cache.refresh(now.Add(hostDiskTTL+time.Minute), measure)
 	if runs.Load() != 2 {
 		t.Fatalf("runs = %d after the TTL", runs.Load())
+	}
+	// The last measurement failed on a host, so it is retried after hostDiskRetry, well within the TTL.
+	<-cache.refresh(time.Now().Add(hostDiskRetry+time.Second), measure)
+	if runs.Load() != 3 {
+		t.Fatalf("runs = %d after a failed host", runs.Load())
+	}
+
+	var crashing hostDiskCache
+	<-crashing.refresh(now, func(context.Context) map[string]hostDisk { panic("boom") })
+	if hosts, at, measuring := crashing.read(); hosts == nil || at == nil || measuring {
+		t.Fatalf("a panicking measurement must still finish: %v %v %t", hosts, at, measuring)
 	}
 }

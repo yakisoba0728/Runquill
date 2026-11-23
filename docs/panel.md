@@ -50,7 +50,7 @@ A token has exactly one scope and reaches only the routes of that scope. A `host
 
 ## Server resources
 
-The **Server resources** table on **Hosts & pools** comes from `GET /api/hosts/resources`, which any role and a `fleet:read` token can read. Each number comes from data the manager already has. Opening the screen runs no command on a host, except one engine `info` call while the manager has not yet read that host since it started or since settings changed:
+The **Server resources** table on **Hosts & pools** comes from `GET /api/hosts/resources`, which any role and a `fleet:read` token can read. Each number comes from data the manager already has. Opening the screen runs no command on a host, except one engine `info` call while the manager has not yet read that host since it started or since settings changed. A host whose engine did not answer is asked again at most every 30 seconds:
 
 | Column | Source |
 | --- | --- |
@@ -60,7 +60,7 @@ The **Server resources** table on **Hosts & pools** comes from `GET /api/hosts/r
 | Runner usage | The elastic limits loop's last sample. It is shown only for the `local` host with `RUNQUILL_ELASTIC` set and a pool that sets `cpus` or `memory_mib`, and otherwise reads **Not sampled**. |
 | Disk | Runquill-pulled runner images still on the host and the runner cache volumes, from `docker system df -v` and `image inspect`. |
 
-Disk use is measured only when someone selects **Measure disk use** (`GET /api/hosts/resources?disk=1`), because `docker system df -v` walks every volume. One measurement runs at a time for all users and its result is kept for 10 minutes. A measurement that takes longer than 7 seconds finishes in the background, and the panel asks again for its result. Podman cannot size volumes cheaply, so the cache size reads **size unknown** there.
+Disk use is measured only when someone selects **Measure disk use** (`GET /api/hosts/resources?disk=1`), because `docker system df -v` walks every volume. One measurement runs at a time for all users and its result is kept for 10 minutes, or for 1 minute when a host could not be measured. A measurement that takes longer than 3 seconds finishes in the background, and the panel asks again for its result. Podman cannot size volumes cheaply, so the cache size reads **size unknown** there.
 
 The manager cannot read outbound `agent://` workers or Kubernetes nodes. Their capacity, usage and disk read **Not available** instead of zero. An `agent://` worker still shows its reservations, which come from the pool settings. A `local` or `ssh://` host whose engine does not answer shows the error instead of its capacity.
 

@@ -466,7 +466,7 @@ kbd {
 
 /* Touch screens: controls at least 32px high. */
 @media (pointer: coarse) {
-  .button, .button.small, input, select, .palette-open { min-height: 32px; }
+  .button, .button.small, input:not([type="checkbox"], [type="radio"]), select, .palette-open { min-height: 32px; }
   .toast button { min-width: 32px; min-height: 32px; }
 }
 

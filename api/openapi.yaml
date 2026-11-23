@@ -2344,7 +2344,7 @@ paths:
         - name: disk
           in: query
           required: false
-          description: 1 measures disk use unless a measurement younger than 10 minutes exists. One measurement runs at a time for every caller; the request waits up to 7 seconds and otherwise returns with disk_measuring true.
+          description: 1 measures disk use unless a measurement younger than 10 minutes exists, or 1 minute when a host could not be measured. One measurement runs at a time for every caller; the request waits up to 3 seconds and otherwise returns with disk_measuring true.
           schema:
             type: string
             enum: ['1']

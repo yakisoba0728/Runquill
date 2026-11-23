@@ -14,10 +14,15 @@ import (
 // usage from the elastic loop, and disk use only when ?disk=1 asks for it, at most once per hostDiskTTL.
 
 const (
-	hostDiskTTL     = 10 * time.Minute
+	hostDiskTTL = 10 * time.Minute
+	// hostDiskRetry replaces the TTL after a host failed, so a fixed host can be measured again soon.
+	hostDiskRetry   = time.Minute
 	hostDiskTimeout = 2 * time.Minute
-	// hostDiskWait keeps the handler below the panel's 10s WriteTimeout; a longer measurement finishes in the background.
-	hostDiskWait = 7 * time.Second
+	// hostDiskWait plus dockerHostProbeTimeout stays below the panel's 10s WriteTimeout; a longer
+	// measurement finishes in the background and the next request returns it.
+	hostDiskWait = 3 * time.Second
+	// hostProbeRetry spaces engine probes of a host that did not answer, so panel polls do not queue on it.
+	hostProbeRetry = 30 * time.Second
 )
 
 type hostResourcesReport struct {
@@ -67,6 +72,8 @@ type hostDiskCache struct {
 	at      time.Time
 	hosts   map[string]hostDisk
 	running chan struct{}
+	// probeFailed records when a host's engine probe last failed.
+	probeFailed map[string]time.Time
 }
 
 // refresh starts a measurement unless one is running or the last is younger than hostDiskTTL; the channel closes when it ends.
@@ -76,7 +83,13 @@ func (c *hostDiskCache) refresh(now time.Time, measure func(context.Context) map
 	if c.running != nil {
 		return c.running
 	}
-	if c.hosts != nil && now.Sub(c.at) < hostDiskTTL {
+	ttl := hostDiskTTL
+	for _, disk := range c.hosts {
+		if disk.err != "" {
+			ttl = hostDiskRetry
+		}
+	}
+	if c.hosts != nil && now.Sub(c.at) < ttl {
 		done := make(chan struct{})
 		close(done)
 		return done
@@ -84,15 +97,41 @@ func (c *hostDiskCache) refresh(now time.Time, measure func(context.Context) map
 	done := make(chan struct{})
 	c.running = done
 	go func() {
+		hosts := map[string]hostDisk{}
+		defer func() {
+			if err := recover(); err != nil {
+				slog.Error("measure runner disk use failed", "panic", err)
+			}
+			c.mu.Lock()
+			c.hosts, c.at, c.running = hosts, time.Now(), nil
+			c.mu.Unlock()
+			close(done)
+		}()
 		ctx, cancel := context.WithTimeout(context.Background(), hostDiskTimeout)
-		hosts := measure(ctx)
-		cancel()
-		c.mu.Lock()
-		c.hosts, c.at, c.running = hosts, time.Now(), nil
-		c.mu.Unlock()
-		close(done)
+		defer cancel()
+		hosts = measure(ctx)
 	}()
 	return done
+}
+
+// probeDue reports whether host may be probed now: not within hostProbeRetry of a failed probe.
+func (c *hostDiskCache) probeDue(host string, now time.Time) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return now.Sub(c.probeFailed[host]) >= hostProbeRetry
+}
+
+func (c *hostDiskCache) probed(host string, at time.Time, ok bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if ok {
+		delete(c.probeFailed, host)
+		return
+	}
+	if c.probeFailed == nil {
+		c.probeFailed = make(map[string]time.Time)
+	}
+	c.probeFailed[host] = at
 }
 
 func (c *hostDiskCache) read() (map[string]hostDisk, *time.Time, bool) {
@@ -206,12 +245,18 @@ func (p *panelState) resources(ctx context.Context) hostResourcesReport {
 			entry.Disk, entry.DiskError = disk.use, disk.err
 		}
 		report.Hosts[i] = entry
+		const unanswered = "The engine on this host did not answer. Check the manager logs."
+		if !p.disk.probeDue(name, time.Now()) {
+			report.Hosts[i].Error = unanswered
+			continue
+		}
 		wg.Go(func() {
 			probeCtx, cancel := context.WithTimeout(ctx, dockerHostProbeTimeout)
 			defer cancel()
 			info, err := host.probe(probeCtx)
+			p.disk.probed(name, time.Now(), err == nil)
 			if err != nil {
-				report.Hosts[i].Error = "The engine on this host did not answer. Check the manager logs."
+				report.Hosts[i].Error = unanswered
 				return
 			}
 			report.Hosts[i].CPUs, report.Hosts[i].MemoryBytes = info.CPUs, info.MemoryBytes
