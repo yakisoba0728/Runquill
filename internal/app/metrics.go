@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -10,8 +11,10 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -24,6 +27,110 @@ type fleetMetrics struct {
 	tickErrors   atomic.Uint64
 	notify       *notifier
 	elastic      *elasticState
+	backend      string
+
+	stagesMu sync.Mutex
+	stages   map[jobStageSeries]*jobStageHistogram
+}
+
+// Upper bounds in seconds; startup stages are short, execution can take hours.
+var (
+	jobStartupBuckets   = []float64{0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300, 600, 1800, 3600}
+	jobExecutionBuckets = []float64{30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 14400, 21600}
+)
+
+// jobStages are the job latency histograms, in the order a job passes through them.
+var jobStages = []struct {
+	name, help string
+	buckets    []float64
+}{
+	{"job_scheduler_wait_seconds", "Seconds from Runquill discovering a job to claiming a runner lease for it.", jobStartupBuckets},
+	{"job_jit_registration_seconds", "Seconds GitHub took to create the just-in-time runner configuration.", jobStartupBuckets},
+	{"job_runtime_launch_seconds", "Seconds from runner registration until the runtime started its container or created its pod.", jobStartupBuckets},
+	{"job_github_assign_seconds", "Seconds from runner start until GitHub reported the job in progress.", jobStartupBuckets},
+	{"job_execution_seconds", "Seconds between GitHub reporting the job started and completed.", jobExecutionBuckets},
+}
+
+type jobStageSeries struct {
+	stage int
+	pool  string
+}
+
+type jobStageHistogram struct {
+	counts []uint64 // per bucket, not cumulative; the last is +Inf
+	sum    float64
+}
+
+// observeJob records the stage durations of a finished job once, when its runner lease is released.
+// A stage whose timestamps are missing or out of order is skipped.
+func (m *fleetMetrics) observeJob(pool string, t *statusJobTiming) {
+	if t == nil {
+		return
+	}
+	seconds := func(value *int64, unit float64) float64 {
+		if value == nil {
+			return -1
+		}
+		return float64(*value) / unit
+	}
+	values := []float64{seconds(t.SchedulerMillis, 1000), seconds(t.JITMillis, 1000), seconds(t.RuntimeMillis, 1000),
+		seconds(t.GitHubAssignSeconds, 1), seconds(t.ExecutionSeconds, 1)}
+	m.stagesMu.Lock()
+	defer m.stagesMu.Unlock()
+	if m.stages == nil {
+		m.stages = make(map[jobStageSeries]*jobStageHistogram)
+	}
+	for stage, value := range values {
+		if value < 0 {
+			continue
+		}
+		series := jobStageSeries{stage, pool}
+		h := m.stages[series]
+		if h == nil {
+			h = &jobStageHistogram{counts: make([]uint64, len(jobStages[stage].buckets)+1)}
+			m.stages[series] = h
+		}
+		index, _ := slices.BinarySearch(jobStages[stage].buckets, value)
+		h.counts[index]++
+		h.sum += value
+	}
+}
+
+// writeJobStages renders into a buffer so a slow scraper cannot hold up lease releases.
+func (m *fleetMetrics) writeJobStages(out io.Writer) {
+	var w bytes.Buffer
+	defer func() { out.Write(w.Bytes()) }()
+	m.stagesMu.Lock()
+	defer m.stagesMu.Unlock()
+	series := make([]jobStageSeries, 0, len(m.stages))
+	for key := range m.stages {
+		series = append(series, key)
+	}
+	slices.SortFunc(series, func(a, b jobStageSeries) int {
+		if a.stage != b.stage {
+			return a.stage - b.stage
+		}
+		return strings.Compare(a.pool, b.pool)
+	})
+	for i, key := range series {
+		stage := jobStages[key.stage]
+		name := "runquill_" + stage.name
+		if i == 0 || series[i-1].stage != key.stage {
+			fmt.Fprintf(&w, "# HELP %s %s\n# TYPE %s histogram\n", name, stage.help, name)
+		}
+		labels := fmt.Sprintf("pool=%s,backend=%s", strconv.Quote(key.pool), strconv.Quote(m.backend))
+		h := m.stages[key]
+		var total uint64
+		for b, count := range h.counts {
+			total += count
+			bound := "+Inf"
+			if b < len(stage.buckets) {
+				bound = strconv.FormatFloat(stage.buckets[b], 'g', -1, 64)
+			}
+			fmt.Fprintf(&w, "%s_bucket{%s,le=\"%s\"} %d\n", name, labels, bound, total)
+		}
+		fmt.Fprintf(&w, "%s_sum{%s} %s\n%s_count{%s} %d\n", name, labels, strconv.FormatFloat(h.sum, 'g', -1, 64), name, labels, total)
+	}
 }
 
 type fleetMetricSample struct {
@@ -78,6 +185,7 @@ func (m *fleetMetrics) writePrometheus(w io.Writer) {
 		counter("notifications_dropped_total", "Notifications discarded because the queue was full or closed.", m.notify.Dropped())
 	}
 	m.elastic.writePrometheus(w)
+	m.writeJobStages(w)
 
 	s := m.sample.Load()
 	if s == nil {

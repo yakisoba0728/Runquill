@@ -202,7 +202,7 @@ func readPanelHistory(ctx context.Context, db *sql.DB, filter panelHistoryFilter
         coalesce(runner_name, ''), coalesce(runner_host, runner_cleaned_host, ''), retry_at, retry_reason,
         coalesce(failure, ''), coalesce(github_created_at, 0), coalesce(discovered_at, 0),
         coalesce(provisioned_at, 0), coalesce(github_started_at, 0), coalesce(runner_cleaned_at, 0),
-        coalesce(discovery_source, ''), `+jobLaunchTimingColumns+`
+        coalesce(discovery_source, ''), `+jobLaunchTimingColumns+`, coalesce(github_completed_at, 0)
         FROM jobs WHERE `+strings.Join(conditions, " AND ")+` ORDER BY sequence DESC LIMIT ?`, args...)
 	if err != nil {
 		return panelHistoryPageResponse{}, err
@@ -216,7 +216,7 @@ func readPanelHistory(ctx context.Context, db *sql.DB, filter panelHistoryFilter
 		if err := rows.Scan(&sequence, &j.id, &j.repository, &j.route, &j.phase, &j.changedAt, &j.runnerName,
 			&j.runnerHost, &j.retryAt, &j.retryReason, &j.failure, &j.githubCreatedAt, &j.discoveredAt,
 			&j.provisionedAt, &j.githubStartedAt, &cleanedAt, &j.discoverySource,
-			&j.jitRequestedMS, &j.jitRegisteredMS, &j.runnerLaunchMS); err != nil {
+			&j.jitRequestedMS, &j.jitRegisteredMS, &j.runnerLaunchMS, &j.githubCompletedAt); err != nil {
 			return panelHistoryPageResponse{}, err
 		}
 		if len(page.Jobs) == filter.limit {
@@ -238,11 +238,11 @@ func readPanelJob(ctx context.Context, db *sql.DB, id int64, pools workerPools, 
         coalesce(runner_name, ''), coalesce(runner_host, runner_cleaned_host, ''), retry_at, retry_reason,
         coalesce(failure, ''), coalesce(github_created_at, 0), coalesce(discovered_at, 0),
         coalesce(provisioned_at, 0), coalesce(github_started_at, 0), coalesce(runner_cleaned_at, 0),
-        coalesce(discovery_source, ''), `+jobLaunchTimingColumns+`
+        coalesce(discovery_source, ''), `+jobLaunchTimingColumns+`, coalesce(github_completed_at, 0)
         FROM jobs WHERE job_id = ?`, id).Scan(&j.id, &j.repository, &j.route, &j.phase, &j.changedAt, &j.runnerName,
 		&j.runnerHost, &j.retryAt, &j.retryReason, &j.failure, &j.githubCreatedAt, &j.discoveredAt,
 		&j.provisionedAt, &j.githubStartedAt, &cleanedAt, &j.discoverySource,
-		&j.jitRequestedMS, &j.jitRegisteredMS, &j.runnerLaunchMS)
+		&j.jitRequestedMS, &j.jitRegisteredMS, &j.runnerLaunchMS, &j.githubCompletedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return panelHistoryJob{}, errPanelJobMissing
 	}

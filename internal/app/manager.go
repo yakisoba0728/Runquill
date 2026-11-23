@@ -119,6 +119,7 @@ func run(ctx context.Context) error {
 		s.metrics = &metrics.fleetMetrics
 		s.metrics.notify = notify
 		s.metrics.elastic = elastic
+		s.metrics.backend = runners.kind
 	}
 	server := &http.Server{
 		Addr:              net.JoinHostPort(env("RUNQUILL_BIND", "127.0.0.1"), env("RUNQUILL_PORT", "8080")),

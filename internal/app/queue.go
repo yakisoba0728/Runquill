@@ -35,6 +35,7 @@ type job struct {
 	launchFailures                   int
 	githubCreatedAt, discoveredAt    int64
 	provisionedAt, githubStartedAt   int64
+	githubCompletedAt                int64
 	jitRequestedMS, jitRegisteredMS  int64
 	runnerLaunchMS                   int64
 	discoverySource                  string
@@ -139,6 +140,7 @@ func (q *queue) migrate() error {
 		{"jit_registered_ms", "INTEGER"},
 		{"runner_launch_ms", "INTEGER"},
 		{"launch_failures", "INTEGER NOT NULL DEFAULT 0"},
+		{"github_completed_at", "INTEGER"},
 	} {
 		present, err := hasJobColumn(context.Background(), q.DB, column.name)
 		if err != nil {
@@ -211,19 +213,20 @@ func (q *queue) record(ctx context.Context, j job, now time.Time) (bool, error) 
 	// moves to it until a runner is leased; nothing else changes, so its age is kept.
 	result, err := q.ExecContext(ctx, `
         INSERT INTO jobs (job_id, repository, repository_id, installation_id, route, phase, changed_at,
-                          github_created_at, discovered_at, discovery_source, github_started_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, nullif(?, 0), nullif(?, 0), nullif(?, ''), nullif(?, 0))
+                          github_created_at, discovered_at, discovery_source, github_started_at, github_completed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, nullif(?, 0), nullif(?, 0), nullif(?, ''), nullif(?, 0), nullif(?, 0))
         ON CONFLICT (job_id) DO UPDATE SET
             installation_id = CASE WHEN excluded.phase = jobs.phase THEN excluded.installation_id ELSE jobs.installation_id END,
             phase = excluded.phase,
             changed_at = CASE WHEN excluded.phase > jobs.phase THEN excluded.changed_at ELSE jobs.changed_at END,
             repository = CASE WHEN excluded.phase > jobs.phase THEN excluded.repository ELSE jobs.repository END,
             github_created_at = coalesce(jobs.github_created_at, excluded.github_created_at),
-            github_started_at = coalesce(jobs.github_started_at, excluded.github_started_at)
+            github_started_at = coalesce(jobs.github_started_at, excluded.github_started_at),
+            github_completed_at = coalesce(jobs.github_completed_at, excluded.github_completed_at)
         WHERE excluded.phase > jobs.phase OR excluded.phase = ? AND jobs.phase = ? AND jobs.runner_name IS NULL
             AND excluded.installation_id <> jobs.installation_id AND excluded.repository_id = jobs.repository_id`,
 		j.id, j.repository, j.repositoryID, j.installationID, j.route, j.phase, now.Unix(),
-		j.githubCreatedAt, discoveredAt, source, j.githubStartedAt, queued, queued)
+		j.githubCreatedAt, discoveredAt, source, j.githubStartedAt, j.githubCompletedAt, queued, queued)
 	if err != nil {
 		return false, err
 	}
@@ -276,9 +279,10 @@ func (q *queue) advanceGitHubJob(ctx context.Context, id int64, p phase, now tim
 	_, err := q.ExecContext(ctx, `UPDATE jobs SET phase = max(phase, ?),
         changed_at = CASE WHEN phase < ? THEN ? ELSE changed_at END,
         github_created_at = coalesce(github_created_at, nullif(?, 0)),
-        github_started_at = coalesce(github_started_at, nullif(?, 0))
+        github_started_at = coalesce(github_started_at, nullif(?, 0)),
+        github_completed_at = coalesce(github_completed_at, nullif(?, 0))
         WHERE job_id = ?`, p, p, now.Unix(), githubTimestamp(observed.CreatedAt),
-		githubTimestamp(observed.StartedAt), id)
+		githubTimestamp(observed.StartedAt), githubTimestamp(observed.CompletedAt), id)
 	return err
 }
 
