@@ -71,6 +71,8 @@ RUNQUILL_RUNNER_IMAGE=runquill-runner:local \
 
 `--name`, `--manager` and `--token-file` default to `RUNQUILL_WORKER_NAME`, `RUNQUILL_WORKER_URL` and `RUNQUILL_WORKER_TOKEN_FILE`. The worker validates the server certificate. Literal loopback HTTP is available for local testing. Keep the worker process running with your service manager. It locks a file beside its token file to prevent two processes from using the same credentials concurrently. Use a unique token and name per worker.
 
+To use a [Docker Hub mirror](runner-images.md#docker-hub-mirror) for this worker's privileged runners, set `RUNQUILL_REGISTRY_MIRROR` in the worker's environment, for example `http://10.0.0.5:5000`. The manager's value does not reach workers. The worker refuses to start with an invalid value, and an older worker ignores the variable.
+
 Run the same Runquill release on the worker as on the manager. A worker in a pool with `privileged: false` or `cache: true` must be upgraded with the manager, because older workers reject runner tasks that carry those settings. If either the manager or the worker runs an older release, keep their clocks within a few seconds of each other, or the worker rejects tasks as expired. The cache volume lives on the worker's own engine.
 
 Use `runquill status` or the panel to view the worker. Existing reserve, slot, pool, and cordon behavior applies. After a disconnect, Runquill waits for fresh inventory before acting on that worker's previous runner leases. A restarted worker can take over its previous session after up to 45 seconds. After a clean job, the manager removes the worker-owned container by its verified Docker ID.
