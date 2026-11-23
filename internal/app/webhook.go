@@ -43,6 +43,8 @@ type workflowJob struct {
 	Status    string   `json:"status"`
 	CreatedAt string   `json:"created_at"`
 	StartedAt string   `json:"started_at"`
+	// CompletedAt is set once GitHub reports the job completed.
+	CompletedAt string `json:"completed_at"`
 }
 
 type workflowEvent struct {
@@ -257,6 +259,9 @@ func (j workflowJob) queueJob(owner string, allowPublic bool, repo repository, i
 		repository: name, route: route, phase: p, githubCreatedAt: githubTimestamp(j.CreatedAt)}
 	if p != queued {
 		observed.githubStartedAt = githubTimestamp(j.StartedAt)
+	}
+	if p == completed {
+		observed.githubCompletedAt = githubTimestamp(j.CompletedAt)
 	}
 	return observed, true, nil
 }

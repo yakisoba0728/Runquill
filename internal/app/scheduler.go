@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -816,20 +817,29 @@ func (s *scheduler) reconcile(ctx context.Context, j job, state string, detail j
 		previousRunner = "Previous runner · " + detail.Message
 	}
 	// A runner released while its job is still queued never picked it up, so the next launch waits longer.
-	_, err = s.queue.ExecContext(ctx, `UPDATE jobs SET runner_name = NULL, runner_host = NULL, runner_id = NULL,
+	// RETURNING reads the finished job's stage timestamps in the same statement, so each job is observed once.
+	released := j
+	err = s.queue.QueryRowContext(ctx, `UPDATE jobs SET runner_name = NULL, runner_host = NULL, runner_id = NULL,
         launched_at = NULL, retry_at = ?,
         runner_cleaned_at = CASE WHEN phase = ? THEN max(changed_at, ?) END,
         runner_cleaned_host = CASE WHEN phase = ? THEN runner_host END,
         retry_reason = CASE WHEN phase = ? THEN coalesce(nullif(?, ''), nullif(retry_reason, ''),
             'runner became unavailable while the job was queued') ELSE '' END,
         launch_failures = CASE WHEN phase = ? THEN launch_failures + 1 ELSE 0 END
-        WHERE job_id = ? AND runner_name = ?`, now.Add(launchDelay(j.launchFailures)).Unix(), completed, time.Now().Unix(), completed, queued, previousRunner,
-		queued, j.id, j.runnerName)
-	if err != nil {
+        WHERE job_id = ? AND runner_name = ?
+        RETURNING phase, coalesce(discovered_at, 0), coalesce(github_started_at, 0), coalesce(github_completed_at, 0),
+            `+jobLaunchTimingColumns, now.Add(launchDelay(j.launchFailures)).Unix(), completed, time.Now().Unix(), completed, queued, previousRunner,
+		queued, j.id, j.runnerName).Scan(&released.phase, &released.discoveredAt, &released.githubStartedAt, &released.githubCompletedAt,
+		&released.jitRequestedMS, &released.jitRegisteredMS, &released.runnerLaunchMS)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return removed, err
 	}
 	if s.metrics != nil {
 		s.metrics.releases.Add(1)
+		if err == nil && released.phase == completed {
+			pool, _ := s.pools.forJob(j)
+			s.metrics.observeJob(pool, jobTiming(released, now))
+		}
 	}
 	slog.Info("runner removed", "runner", j.runnerName, "repository", j.repository, "job", j.id)
 	return removed, nil

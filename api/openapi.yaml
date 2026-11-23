@@ -477,6 +477,14 @@ components:
         launch_to_github_start_seconds:
           type: integer
           format: int64
+        github_completed_at:
+          type: string
+          format: date-time
+          description: When GitHub reported the job completed.
+        execution_seconds:
+          type: integer
+          format: int64
+          description: GitHub's job start to its completion.
     JobDiagnostic:
       type: object
       required: [code, message]

@@ -206,10 +206,13 @@ type statusJobTiming struct {
 	JITMillis           *int64     `json:"jit_registration_millis,omitempty"`
 	RuntimeMillis       *int64     `json:"runtime_launch_millis,omitempty"`
 	GitHubAssignSeconds *int64     `json:"launch_to_github_start_seconds,omitempty"`
+	GitHubCompletedAt   *time.Time `json:"github_completed_at,omitempty"`
+	ExecutionSeconds    *int64     `json:"execution_seconds,omitempty"`
 }
 
 func jobTiming(j job, now time.Time) *statusJobTiming {
-	if j.githubCreatedAt == 0 && j.discoveredAt == 0 && j.provisionedAt == 0 && j.githubStartedAt == 0 && j.jitRequestedMS == 0 {
+	if j.githubCreatedAt == 0 && j.discoveredAt == 0 && j.provisionedAt == 0 && j.githubStartedAt == 0 && j.jitRequestedMS == 0 &&
+		j.githubCompletedAt == 0 {
 		return nil
 	}
 	queueEnd := j.provisionedAt
@@ -232,6 +235,8 @@ func jobTiming(j job, now time.Time) *statusJobTiming {
 		JITMillis:           elapsed(j.jitRequestedMS, j.jitRegisteredMS),
 		RuntimeMillis:       elapsed(j.jitRegisteredMS, j.runnerLaunchMS),
 		GitHubAssignSeconds: elapsed(j.runnerLaunchMS/1000, j.githubStartedAt),
+		GitHubCompletedAt:   statusTime(j.githubCompletedAt),
+		ExecutionSeconds:    elapsed(j.githubStartedAt, j.githubCompletedAt),
 	}
 }
 
@@ -277,6 +282,7 @@ func (t statusJobTiming) text() string {
 		timings = append(timings, duration{"scheduler wait", "ms", t.SchedulerMillis}, duration{"JIT registration", "ms", t.JITMillis},
 			duration{"runtime launch", "ms", t.RuntimeMillis}, duration{"GitHub assignment", "s", t.GitHubAssignSeconds})
 	}
+	timings = append(timings, duration{"execution", "s", t.ExecutionSeconds})
 	for _, stage := range timings {
 		if stage.value != nil {
 			stages = append(stages, fmt.Sprintf("%s %d%s", stage.label, *stage.value, stage.unit))
