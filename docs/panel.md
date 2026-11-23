@@ -20,7 +20,7 @@ The sidebar shows counts of queued jobs, running runners and offline hosts.
 - **Queue** lists waiting, assigned and recently cleaned jobs with a repository, job ID and pool filter. The pool column notes the runner OS a job selects with `os__NAME__`. Select a job to see its runner label, runner OS and image, timings and the current queue or startup explanation, including a wait for a runner image. Administrators can run a repository check (`POST /api/diagnose`) from **Missing a job?**.
 - **Jobs** is the seven-day job history with repository, outcome and time filters. The pool column notes the runner OS a job selected.
 - **Runners** lists the runner containers or Pods in the latest snapshot, with the runner image and OS of the job each one holds.
-- **Hosts & pools** shows host health, slots and pool capacity, and lets operators pause or resume assignments. While the manager [pulls runner images](runner-images.md#automatic-pulls), each `local` and `ssh://` host also shows whether its image is ready, missing, being pulled or failed to pull, with the pull error. With [elastic limits](elastic-limits.md) enabled, it also shows the mode, per-host surplus and recent resize decisions from `GET /api/elastic`.
+- **Hosts & pools** shows host health, slots and pool capacity, and lets operators pause or resume assignments. While the manager [pulls runner images](runner-images.md#automatic-pulls), each `local` and `ssh://` host also shows whether its image is ready, missing, being pulled or failed to pull, with the pull error. With [elastic limits](elastic-limits.md) enabled, it also shows the mode, per-host surplus and recent resize decisions from `GET /api/elastic`. **Server resources** is described [below](#server-resources).
 - **Usage** charts [usage statistics](#usage-statistics) by day, repository, pool or host.
 - **Logs** streams [runner logs](#runner-logs) for operators and administrators.
 - **Migrate** walks an administrator through [workflow migration](workflow-migration.md).
@@ -44,9 +44,25 @@ A token has exactly one scope and reaches only the routes of that scope. A `host
 
 | Scope | Routes |
 | --- | --- |
-| `fleet:read` | `GET /snapshot`, `GET /api/events`, `GET /api/jobs`, `GET /api/jobs/{id}`, `GET /api/elastic`, `GET /api/usage`, `GET /api/usage/rightsizing`, `POST /mcp` |
+| `fleet:read` | `GET /snapshot`, `GET /api/events`, `GET /api/jobs`, `GET /api/jobs/{id}`, `GET /api/elastic`, `GET /api/hosts/resources`, `GET /api/usage`, `GET /api/usage/rightsizing`, `POST /mcp` |
 | `hosts:write` | `POST /api/hosts/cordon` |
 | `jobs:write` | `POST /api/jobs/{id}/cancel`, `POST /api/jobs/{id}/retry` |
+
+## Server resources
+
+The **Server resources** table on **Hosts & pools** comes from `GET /api/hosts/resources`, which any role and a `fleet:read` token can read. Each number comes from data the manager already has. Opening the screen runs no command on a host, except one engine `info` call while the manager has not yet read that host since it started or since settings changed:
+
+| Column | Source |
+| --- | --- |
+| CPUs, Memory | The engine's `info` report, which the manager reads once per host to place runners and then keeps. |
+| Slots used | The fleet snapshot: occupied and reserved slots out of the host's slot limit. |
+| Reserved CPU, Reserved memory | What runners holding a slot were promised: the pool's `cpus` and `memory_mib` times the occupied slots. When [elastic limits](elastic-limits.md) sample the host, the runners' current limits instead. A pool without a limit shows **Unlimited**. |
+| Runner usage | The elastic limits loop's last sample. It is shown only for the `local` host with `RUNQUILL_ELASTIC` set and a pool that sets `cpus` or `memory_mib`, and otherwise reads **Not sampled**. |
+| Disk | Runquill-pulled runner images still on the host and the runner cache volumes, from `docker system df -v` and `image inspect`. |
+
+Disk use is measured only when someone selects **Measure disk use** (`GET /api/hosts/resources?disk=1`), because `docker system df -v` walks every volume. One measurement runs at a time for all users and its result is kept for 10 minutes. A measurement that takes longer than 7 seconds finishes in the background, and the panel asks again for its result. Podman cannot size volumes cheaply, so the cache size reads **size unknown** there.
+
+The manager cannot read outbound `agent://` workers or Kubernetes nodes. Their capacity, usage and disk read **Not available** instead of zero. An `agent://` worker still shows its reservations, which come from the pool settings. A `local` or `ssh://` host whose engine does not answer shows the error instead of its capacity.
 
 ## Command palette and themes
 

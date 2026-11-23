@@ -85,7 +85,7 @@ RUNQUILL_MANAGER_IMAGE=runquill-manager:local docker compose -f compose.yaml -f 
 
 | 범위 | 경로 |
 | --- | --- |
-| `fleet:read` | `GET /snapshot`, `GET /api/events`, `GET /api/jobs`, `GET /api/jobs/{id}`, `GET /api/elastic`, `GET /api/usage`, `GET /api/usage/rightsizing`, `POST /mcp` |
+| `fleet:read` | `GET /snapshot`, `GET /api/events`, `GET /api/jobs`, `GET /api/jobs/{id}`, `GET /api/elastic`, `GET /api/hosts/resources`, `GET /api/usage`, `GET /api/usage/rightsizing`, `POST /mcp` |
 | `hosts:write` | `POST /api/hosts/cordon`에 `{"host":"local","cordoned":true}`를 보냅니다. 배정을 멈춰도 실행 중인 러너는 계속 처리됩니다. |
 | `jobs:write` | `POST /api/jobs/{id}/cancel`, `POST /api/jobs/{id}/retry` |
 

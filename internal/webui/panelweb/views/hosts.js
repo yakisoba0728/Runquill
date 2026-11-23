@@ -146,10 +146,11 @@ export default {
     });
     const hostBlock = block("Hosts", {}, enrollment?.element, hosts.element);
     const elastic = elasticSection(ctx);
-    root.append(pageHead("Hosts & pools"), hostBlock,
+    const resources = resourceSection(ctx);
+    root.append(pageHead("Hosts & pools"), hostBlock, resources.element,
       block("Worker pools", { note: "Host capacity before the fleet slot limit applies." }, poolTable.element),
       elastic.element);
-    parts = { ctx, target, hosts, poolTable, hostHeading: hostBlock.querySelector("h2"), elastic, enrollment };
+    parts = { ctx, target, hosts, poolTable, hostHeading: hostBlock.querySelector("h2"), elastic, resources, enrollment };
   },
 
   params(search) {
@@ -166,6 +167,7 @@ export default {
     const empty = !fleet ? "Waiting for a fleet snapshot…" : "No host observations yet.";
     parts.hosts.update(list, empty);
     parts.poolTable.update(pools(list), empty);
+    parts.resources.render(list);
     parts.target.settle({
       ready: !!fleet, table: parts.hosts,
       found: list.some((host) => host.name === parts.target.key()),
@@ -188,6 +190,7 @@ export default {
 
   unmount() {
     parts?.elastic.stop();
+    parts?.resources.stop();
     parts?.enrollment?.clear();
     parts = null;
   },
@@ -280,4 +283,118 @@ function elasticSection(ctx) {
   }
   void load();
   return { element, stop() { stopped = true; clearTimeout(timer); } };
+}
+
+// Server resources: GET /api/hosts/resources (panel_resources.go). Capacity
+// and reservations are cheap and refresh with the view; disk use is measured
+// only when asked (?disk=1) and the manager caches it for 10 minutes.
+
+const unavailableText = {
+  agent: "Outbound worker: the manager cannot read this host.",
+  kubernetes: "Kubernetes: the manager sees Pods, not the nodes they run on.",
+};
+
+function notAvailable(note) {
+  return [h("span", { class: "muted" }, tr("Not available")), note ? h("span", { class: "sub" }, tr(note)) : null];
+}
+
+// share renders "used / total" with a meter below; total may be unknown.
+function share(used, total, text, number = text) {
+  if (!Number.isFinite(total) || total <= 0) return text(used);
+  return [tr("{used} / {total}", { used: number(used), total: text(total) }),
+    h("progress", { class: "meter", max: total, value: Math.min(total, used), "aria-hidden": "true" })];
+}
+
+function reservedCell(entry, kind) {
+  const reserved = entry.reserved;
+  if (!reserved) return notAvailable();
+  const perRunner = kind === "cpu" ? reserved.runner_cpus : reserved.runner_memory_bytes;
+  if (!perRunner) return [tr("Unlimited"), h("span", { class: "sub" }, tr("No per-runner limit"))];
+  const text = kind === "cpu" ? cpus : format.bytes;
+  const total = kind === "cpu" ? entry.cpus : entry.memory_bytes;
+  const used = kind === "cpu" ? reserved.cpus : reserved.memory_bytes;
+  return [share(used, total, text, kind === "cpu" ? (n) => format.number(Math.round(n * 100) / 100) : text),
+    perRunner ? h("span", { class: "sub" }, tr("{amount} per runner", { amount: text(perRunner) })) : null].flat();
+}
+
+function diskCell(entry, measured) {
+  if (entry.unavailable) return notAvailable();
+  if (entry.disk_error) return [state("FAILED", "Not measured"), h("span", { class: "sub" }, serverText(entry.disk_error))];
+  const disk = entry.disk;
+  if (!disk) return h("span", { class: "muted" }, tr(measured ? "Not measured" : "Not measured yet"));
+  const cache = disk.cache_bytes == null ? tr("size unknown") : format.bytes(disk.cache_bytes);
+  return [tr("Images {images}", { images: format.bytes(disk.image_bytes) }),
+    h("span", { class: "sub" }, tr("{n} pulled images", { n: format.number(disk.images) })),
+    h("span", { class: "sub" }, tr("Cache {size} in {n} volumes", { size: cache, n: format.number(disk.cache_volumes) }))];
+}
+
+function resourceSection(ctx) {
+  const output = statusLine();
+  let report = null;
+  let slots = new Map();
+  const table = createTable({
+    label: "Server resources per host",
+    key: (entry) => entry.host,
+    columns: [
+      { label: "Host", className: "id", cell: (entry) => [entry.host,
+        entry.unavailable ? h("span", { class: "sub" }, tr(unavailableText[entry.unavailable] || "Not available")) : null,
+        entry.error ? h("span", { class: "sub" }, serverText(entry.error)) : null] },
+      { label: "Capacity", num: true, cell: (entry) => entry.cpus
+        ? [cpus(entry.cpus), h("span", { class: "sub" }, format.bytes(entry.memory_bytes))] : notAvailable() },
+      { label: "Slots used", num: true, cell: (entry) => {
+        const host = slots.get(entry.host);
+        if (!host) return "—";
+        return share(host.occupied_slots + host.reserved_slots, host.slot_limit, format.number);
+      } },
+      { label: "Reserved CPU", num: true, cell: (entry) => reservedCell(entry, "cpu") },
+      { label: "Reserved memory", num: true, cell: (entry) => reservedCell(entry, "memory") },
+      { label: "Runner usage", num: true, cell: (entry) => entry.usage
+        ? [cpus(entry.usage.cpus), h("span", { class: "sub" }, format.bytes(entry.usage.memory_bytes))]
+        : entry.unavailable ? notAvailable() : h("span", { class: "muted" }, tr("Not sampled")) },
+      { label: "Disk", num: true, cell: (entry) => diskCell(entry, !!report?.disk_measured_at) },
+    ],
+  });
+  const measuredNote = h("p", { class: "muted" });
+  const measure = button("Measure disk use", () => void load(true), { small: true });
+  const element = block("Server resources", {
+    actions: [measure],
+    note: "Reserved is what runners holding a slot were promised. Usage comes from the elastic limits loop.",
+  }, table.element, measuredNote, output);
+
+  function render(hosts) {
+    slots = new Map((hosts || []).map((host) => [host.name, host]));
+    if (!report) return;
+    table.update(report.hosts || [], "No hosts configured.");
+    measuredNote.textContent = report.disk_measuring ? tr("Measuring disk use…")
+      : report.disk_measured_at ? tr("Disk use measured at {time}. Measurements are kept for 10 minutes.", { time: format.time(report.disk_measured_at) })
+        : tr("Disk use is measured only when you ask, because it walks every volume on each host.");
+  }
+
+  let timer = 0;
+  let stopped = false;
+  async function load(disk = false) {
+    clearTimeout(timer);
+    if (disk) {
+      measure.disabled = true;
+      message(output, tr("Measuring disk use…"));
+    }
+    let next = 30000;
+    try {
+      report = await ctx.api.get("./api/hosts/resources" + (disk ? "?disk=1" : ""));
+      if (stopped) return;
+      message(output, "");
+      render([...slots.values()]);
+    } catch (error) {
+      if (stopped || error.status === 401) return;
+      message(output, errorText(error), "failed");
+      next = 60000;
+    }
+    // A measurement longer than the request keeps running on the manager; ask again for its result.
+    const pending = !!report?.disk_measuring;
+    measure.disabled = pending;
+    if (pending) next = 5000;
+    if (!stopped && !ctx.demo) timer = setTimeout(() => void load(pending), next);
+  }
+  void load();
+  return { element, render, stop() { stopped = true; clearTimeout(timer); } };
 }

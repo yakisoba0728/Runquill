@@ -14,9 +14,9 @@ import (
 // captured from Docker 29 (version and architecture edited); the rootless and Podman samples are
 // hand-written from the engines' documented info fields and have not been checked against a live engine.
 const (
-	dockerRootfulInfo  = `{"ID":"57d3b200-8a04-4a38-93a7-7d896362765a","ServerVersion":"29.0.0","OSType":"linux","Architecture":"x86_64","CgroupVersion":"2","SecurityOptions":["name=seccomp,profile=builtin","name=cgroupns"]}`
+	dockerRootfulInfo  = `{"ID":"57d3b200-8a04-4a38-93a7-7d896362765a","ServerVersion":"29.0.0","OSType":"linux","Architecture":"x86_64","CgroupVersion":"2","SecurityOptions":["name=seccomp,profile=builtin","name=cgroupns"],"NCPU":8,"MemTotal":16663138304}`
 	dockerRootlessInfo = `{"ID":"9a1f","ServerVersion":"28.5.1","OSType":"linux","Architecture":"aarch64","CgroupVersion":"2","SecurityOptions":["name=seccomp,profile=builtin","name=rootless","name=cgroupns"]}`
-	podmanRootlessInfo = `{"host":{"arch":"amd64","cgroupManager":"systemd","cgroupVersion":"v2","hostname":"build1","os":"linux","security":{"apparmorEnabled":false,"rootless":true,"seccompEnabled":true}},"store":{"graphRoot":"/home/ci/.local/share/containers/storage"},"version":{"APIVersion":"5.4.2","Version":"5.4.2","GoVersion":"go1.23.7"}}`
+	podmanRootlessInfo = `{"host":{"arch":"amd64","cgroupManager":"systemd","cgroupVersion":"v2","cpus":4,"memTotal":8227803136,"hostname":"build1","os":"linux","security":{"apparmorEnabled":false,"rootless":true,"seccompEnabled":true}},"store":{"graphRoot":"/home/ci/.local/share/containers/storage"},"version":{"APIVersion":"5.4.2","Version":"5.4.2","GoVersion":"go1.23.7"}}`
 	podmanRootfulInfo  = `{"host":{"arch":"arm64","cgroupVersion":"v1","hostname":"build2","os":"linux","security":{"rootless":false}},"version":{"Version":"4.9.3"}}`
 )
 
@@ -25,10 +25,10 @@ func TestParseEngineInfo(t *testing.T) {
 		engine, raw string
 		want        engineInfo
 	}{
-		{"docker", dockerRootfulInfo, engineInfo{"docker", "29.0.0", "linux", "amd64", "2", false}},
-		{"docker", dockerRootlessInfo, engineInfo{"docker", "28.5.1", "linux", "arm64", "2", true}},
-		{"podman", podmanRootlessInfo, engineInfo{"podman", "5.4.2", "linux", "amd64", "2", true}},
-		{"podman", podmanRootfulInfo, engineInfo{"podman", "4.9.3", "linux", "arm64", "1", false}},
+		{"docker", dockerRootfulInfo, engineInfo{"docker", "29.0.0", "linux", "amd64", "2", false, 8, 16663138304}},
+		{"docker", dockerRootlessInfo, engineInfo{"docker", "28.5.1", "linux", "arm64", "2", true, 0, 0}},
+		{"podman", podmanRootlessInfo, engineInfo{"podman", "5.4.2", "linux", "amd64", "2", true, 4, 8227803136}},
+		{"podman", podmanRootfulInfo, engineInfo{"podman", "4.9.3", "linux", "arm64", "1", false, 0, 0}},
 	} {
 		got, err := parseEngineInfo(test.engine, test.raw)
 		if err != nil || got != test.want {

@@ -55,6 +55,8 @@ type panelState struct {
 	operations       *operations
 	elastic          *elasticState
 	maxPerRepository int
+	disk             hostDiskCache
+	engineRun        imageCommand // nil runs the engine CLI; tests replace it
 }
 
 func newPanel(cfg config) *panelState {
