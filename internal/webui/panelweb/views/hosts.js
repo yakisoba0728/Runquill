@@ -4,7 +4,7 @@
 import { availableSlots, poolName, workerState } from "../fleet.js";
 import { serverText, tr } from "../i18n.js";
 import {
-  block, button, createKv, createTable, errorText, fill, format, h, linkTarget, message, pageHead, state, statusLine, time,
+  block, button, createKv, createTable, errorText, fill, format, h, linkTarget, message, pageHead, state, statusLine, time, whenVisible,
 } from "../ui.js";
 
 let parts = null;
@@ -245,7 +245,7 @@ function elasticSection(ctx) {
       { label: "Reason", className: "wrap", cell: (decision) => [reasonText(decision.reason),
         decision.forced ? h("span", { class: "sub" }, tr("Reclaimed at once to keep host guarantees.")) : null] },
       { label: "Applied", cell: (decision) => decision.error
-        ? [state("FAILED"), h("span", { class: "sub" }, decision.error)]
+        ? [state("FAILED"), h("span", { class: "sub" }, serverText(decision.error))]
         : decision.applied ? state("DONE", "Applied") : state("", "Observed only", "") },
     ],
   });
@@ -259,6 +259,7 @@ function elasticSection(ctx) {
   let stopped = false;
   async function load() {
     clearTimeout(timer);
+    if (stopped) return;
     let next = 15000;
     try {
       const report = await ctx.api.get("./api/elastic");
@@ -279,7 +280,7 @@ function elasticSection(ctx) {
       message(output, errorText(error), "failed");
       next = 60000;
     }
-    if (!stopped && !ctx.demo) timer = setTimeout(() => void load(), next);
+    if (!stopped && !ctx.demo) timer = setTimeout(() => whenVisible(() => void load()), next);
   }
   void load();
   return { element, stop() { stopped = true; clearTimeout(timer); } };
@@ -336,7 +337,7 @@ function resourceSection(ctx) {
     label: "Server resources per host",
     key: (entry) => entry.host,
     columns: [
-      { label: "Host", className: "id", cell: (entry) => [entry.host,
+      { label: "Host", className: "id long", cell: (entry) => [entry.host,
         entry.unavailable ? h("span", { class: "sub" }, tr(unavailableText[entry.unavailable] || "Not available")) : null,
         entry.error ? h("span", { class: "sub" }, serverText(entry.error)) : null] },
       { label: "Capacity", num: true, cell: (entry) => entry.cpus
@@ -374,6 +375,7 @@ function resourceSection(ctx) {
   let stopped = false;
   async function load(disk = false) {
     clearTimeout(timer);
+    if (stopped) return;
     if (disk) {
       measure.disabled = true;
       message(output, tr("Measuring disk use…"));
@@ -393,7 +395,7 @@ function resourceSection(ctx) {
     const pending = !!report?.disk_measuring;
     measure.disabled = pending;
     if (pending) next = 5000;
-    if (!stopped && !ctx.demo) timer = setTimeout(() => void load(pending), next);
+    if (!stopped && !ctx.demo) timer = setTimeout(() => whenVisible(() => void load(pending)), next);
   }
   void load();
   return { element, render, stop() { stopped = true; clearTimeout(timer); } };

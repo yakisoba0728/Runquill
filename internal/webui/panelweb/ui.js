@@ -206,7 +206,8 @@ export function placeholder(title, text = "This screen is not available yet.") {
 }
 
 // createTable builds a real table with a header row and returns update(rows),
-// which re-renders the body and keeps keyboard focus on the same control.
+// which re-renders only rows whose content changed, so text selection, hover,
+// in-flight button states and keyboard focus survive each snapshot.
 // columns: [{ label, num, className, cell(row) }]; key(row) identifies a row.
 // One column's cells are row headers (the first, or the column marked
 // rowHeader), so screen readers announce each value with its row. highlighted() names the key of a row a deep link
@@ -220,6 +221,8 @@ export function createTable({ label, columns, key, empty = "No entries.", rowCla
     h("table", {}, caption, head, body));
   const controls = "button, a, input, select";
   const headerColumn = Math.max(0, columns.findIndex((column) => column.rowHeader));
+  // The markup a row was built with, by key; a row built the same way again keeps its live node.
+  let built = new Map();
   function update(rows, emptyText = empty) {
     const active = document.activeElement;
     let restore = null;
@@ -228,7 +231,9 @@ export function createTable({ label, columns, key, empty = "No entries.", rowCla
       restore = { key: row?.dataset.key, index: active === row ? -1 : [...row.querySelectorAll(controls)].indexOf(active) };
     }
     const target = highlighted?.();
-    body.replaceChildren(...rows.map((row) => {
+    const previous = built;
+    built = new Map();
+    const nodes = rows.map((row) => {
       const id = String(key(row));
       const mark = target != null && String(target) === id;
       const tr_ = h("tr", {
@@ -243,10 +248,24 @@ export function createTable({ label, columns, key, empty = "No entries.", rowCla
           class: [column.num ? "num" : "", column.className || ""].filter(Boolean).join(" ") || null,
         }, ...(Array.isArray(value) ? value : [value ?? "—"])));
       });
-      return tr_;
-    }));
-    if (!rows.length) body.append(h("tr", { class: "empty-row" }, h("td", { colSpan: columns.length }, tr(emptyText))));
-    if (restore?.key) {
+      // Control values set as properties (a select's value) are not in the markup.
+      const markup = tr_.outerHTML + [...tr_.querySelectorAll("input, select")].map((control) => "\u0000" + control.value + control.checked).join("");
+      const kept = previous.get(id);
+      const node = kept?.markup === markup && !built.has(id) ? kept.node : tr_;
+      built.set(id, { markup, node });
+      return node;
+    });
+    if (!rows.length) {
+      const text = tr(emptyText);
+      const kept = previous.get("\u0000empty");
+      const node = kept?.markup === text ? kept.node : h("tr", { class: "empty-row" }, h("td", { colSpan: columns.length }, text));
+      built.set("\u0000empty", { markup: text, node });
+      nodes.push(node);
+    }
+    // Only rows that changed are replaced; unchanged rows stay where they are.
+    for (const node of [...body.children]) if (!nodes.includes(node)) node.remove();
+    nodes.forEach((node, index) => { if (body.children[index] !== node) body.insertBefore(node, body.children[index] || null); });
+    if (restore?.key && !body.contains(document.activeElement)) {
       const row = [...body.rows].find((candidate) => candidate.dataset.key === restore.key);
       const next = restore.index < 0 ? row : row?.querySelectorAll(controls)[restore.index];
       if (next?.matches("[tabindex], " + controls)) next.focus({ preventScroll: true });
@@ -372,14 +391,33 @@ export function bindConfirmDialog() {
 }
 
 // toast shows a short message. state is "ok", "failed" or "" (neutral).
+// A failure stays until dismissed, since it is often the only report of a
+// failed action; other toasts wait while the pointer or focus is on them.
 export function toast(message, tone = "ok") {
-  const region = document.getElementById("toasts");
-  const item = h("div", { class: "toast", dataset: { state: tone }, role: tone === "failed" ? "alert" : null },
-    h("p", {}, message));
+  const region = document.getElementById(tone === "failed" ? "alerts" : "toasts") || document.getElementById("toasts");
+  const item = h("div", { class: "toast", dataset: { state: tone } }, h("p", {}, message));
   const close = () => item.remove();
   item.append(h("button", { type: "button", "aria-label": tr("Dismiss"), on: { click: close } }, "×"));
   region.append(item);
-  setTimeout(close, tone === "failed" ? 12000 : 6000);
+  if (tone === "failed") return;
+  let timer = 0;
+  const wait = () => { clearTimeout(timer); timer = setTimeout(close, 6000); };
+  const hold = () => clearTimeout(timer);
+  for (const event of ["pointerenter", "focusin"]) item.addEventListener(event, hold);
+  item.addEventListener("pointerleave", wait);
+  item.addEventListener("focusout", (event) => { if (!item.contains(event.relatedTarget)) wait(); });
+  wait();
+}
+
+// whenVisible runs fn now, or once the tab is shown again, so views that poll
+// on their own timers pause in hidden tabs as the live snapshot does.
+export function whenVisible(fn) {
+  if (!document.hidden) return fn();
+  document.addEventListener("visibilitychange", function resume() {
+    if (document.hidden) return;
+    document.removeEventListener("visibilitychange", resume);
+    fn();
+  });
 }
 
 // message shows (or clears) an inline status line next to a form.
