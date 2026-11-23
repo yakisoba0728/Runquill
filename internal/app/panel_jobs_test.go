@@ -27,6 +27,9 @@ func newPanelFixture(t *testing.T) *panelFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(q.close)
+	if err := migrateUsage(t.Context(), q.DB); err != nil {
+		t.Fatal(err)
+	}
 	access := panelAccessForTest(t, q)
 	if _, err := q.Exec(`INSERT INTO panel_users(github_id, role) VALUES (102, 'viewer'), (103, 'operator')`); err != nil {
 		t.Fatal(err)

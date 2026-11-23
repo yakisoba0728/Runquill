@@ -51,6 +51,7 @@ const remoteUsage = `Usage:
   runquill hosts uncordon HOST [--json]
   runquill audit tail [--limit N] [--json]
   runquill usage [--group day|repository|pool|host] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--repo OWNER/NAME] [--json]
+  runquill usage --rightsizing [--group pool|job] [--days 1-7] [--json]
   runquill elastic [--json]
 Each command reads the panel origin from --url or RUNQUILL_URL and the API token
 from --token-file or RUNQUILL_TOKEN.`
@@ -72,6 +73,8 @@ type remoteOptions struct {
 	jobID                int64
 	group, from, to      string
 	usageQuery           url.Values
+	rightsizing          bool
+	days                 int
 	stderr               io.Writer
 }
 
@@ -118,6 +121,8 @@ var remoteCommands = map[string]remoteCommandSpec{
 		f.StringVar(&o.from, "from", "", "first UTC day as YYYY-MM-DD (defaults to 29 days before --to)")
 		f.StringVar(&o.to, "to", "", "last UTC day as YYYY-MM-DD (defaults to today)")
 		f.StringVar(&o.repo, "repo", "", "only jobs of this OWNER/NAME repository")
+		f.BoolVar(&o.rightsizing, "rightsizing", false, "compare recent jobs' CPU and memory peaks with their limits, grouped by pool or job")
+		f.IntVar(&o.days, "days", rightsizingDefaultAge, "with --rightsizing, jobs that finished in this many days (1-7)")
 	}, validate: validateUsage, run: runUsageReport},
 	"elastic": {permission: "fleet:read", run: runElasticReport},
 }
@@ -388,11 +393,44 @@ func runJobsShow(ctx context.Context, c *apiClient, o *remoteOptions, _ []string
 		{"RETRY_AT", remoteTime(row.RetryAt)},
 		{"DIAGNOSTIC", cell(diagnostic)},
 		{"TIMING", cell(timing)},
+		{"CPU", jobResourceCPU(row.Resources)},
+		{"MEMORY", jobResourceMemory(row.Resources)},
 		{"URL", cell(row.URL)},
 	} {
 		fmt.Fprintf(table, "%s\t%s\n", field[0], field[1])
 	}
 	return table.Flush()
+}
+
+// jobResourceCPU and jobResourceMemory print sampled usage against the limit;
+// "-" means the runner's host does not record it.
+func jobResourceCPU(r *jobResources) string {
+	if r == nil || r.CPUPeak == nil {
+		return "-"
+	}
+	text := "peak " + remoteNumber(*r.CPUPeak) + ", average " + remoteNumber(*r.CPUAverage) + " of "
+	if *r.CPULimit > 0 {
+		text += remoteNumber(*r.CPULimit) + " CPUs"
+	} else {
+		text += "unlimited CPUs"
+	}
+	return text + fmt.Sprintf(" (%d samples)", r.Samples)
+}
+
+func jobResourceMemory(r *jobResources) string {
+	text := "-"
+	if r != nil && r.MemoryPeakMiB != nil {
+		text = fmt.Sprintf("peak %d MiB of ", *r.MemoryPeakMiB)
+		if *r.MemoryLimitMiB > 0 {
+			text += fmt.Sprintf("%d MiB", *r.MemoryLimitMiB)
+		} else {
+			text += "unlimited"
+		}
+	}
+	if r != nil && r.OOMKilled != nil && *r.OOMKilled {
+		text = strings.TrimPrefix(text+", ", "-, ") + "killed for memory"
+	}
+	return text
 }
 
 func runJobChange(ctx context.Context, c *apiClient, o *remoteOptions, out io.Writer, action, done string) error {
@@ -636,6 +674,9 @@ func runAuditTail(ctx context.Context, c *apiClient, o *remoteOptions, _ []strin
 // validateUsage names the flag that is wrong, then checks the range with the
 // panel's own parser, so a bad query is refused before a request is sent.
 func validateUsage(o *remoteOptions, _ []string) error {
+	if o.rightsizing {
+		return validateRightsizing(o)
+	}
 	o.repo = strings.ToLower(strings.TrimSpace(o.repo))
 	switch cmp.Or(o.group, "day") {
 	case "day", "repository", "pool", "host":
@@ -667,7 +708,27 @@ func validateUsage(o *remoteOptions, _ []string) error {
 	return nil
 }
 
+// validateRightsizing reads --group as pool (the default) or job; the date and
+// repository flags belong to the usage totals only.
+func validateRightsizing(o *remoteOptions) error {
+	if o.from != "" || o.to != "" || o.repo != "" {
+		return errors.New("--rightsizing takes --group and --days, not --from, --to or --repo")
+	}
+	if o.group == "day" {
+		o.group = "pool"
+	}
+	query := url.Values{"group": {o.group}, "days": {strconv.Itoa(o.days)}}
+	if _, _, ok := parseRightsizingQuery(query); !ok {
+		return errors.New("--rightsizing needs --group pool or job and --days from 1 to 7")
+	}
+	o.usageQuery = query
+	return nil
+}
+
 func runUsageReport(ctx context.Context, c *apiClient, o *remoteOptions, _ []string, out io.Writer) error {
+	if o.rightsizing {
+		return runRightsizingReport(ctx, c, o, out)
+	}
 	report, raw, err := c.usage(ctx, o.usageQuery)
 	if err != nil {
 		return err
@@ -699,6 +760,52 @@ func runUsageReport(ctx context.Context, c *apiClient, o *remoteOptions, _ []str
 		fmt.Fprintf(o.stderr, "Showing the %d busiest groups; the total covers all of them.\n", len(report.Series))
 	}
 	return nil
+}
+
+func runRightsizingReport(ctx context.Context, c *apiClient, o *remoteOptions, out io.Writer) error {
+	report, raw, err := c.rightsizing(ctx, o.usageQuery)
+	if err != nil {
+		return err
+	}
+	if o.json {
+		return writeRawJSON(out, raw)
+	}
+	if len(report.Groups) == 0 {
+		_, err := fmt.Fprintf(out, "No finished jobs with recorded resources in the last %d days.\n", report.Days)
+		return err
+	}
+	table := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+	fmt.Fprintf(table, "%s\tJOBS\tSAMPLED\tOOM\tCPU_PEAK\tCPU_LIMIT\tCPU\tMEMORY_PEAK_MIB\tMEMORY_LIMIT_MIB\tMEMORY\n", strings.ToUpper(cell(report.Group)))
+	for _, g := range report.Groups {
+		key := cell(g.Key)
+		if report.Group == "pool" {
+			key = poolLabel(g.Key)
+		}
+		fmt.Fprintf(table, "%s\t%d\t%d\t%d\t%s\t%s\n", key, g.Jobs, g.SampledJobs, g.OOMKills, rightsizingCells(g.CPU), rightsizingCells(g.Memory))
+	}
+	if err := table.Flush(); err != nil {
+		return err
+	}
+	if report.Truncated {
+		fmt.Fprintf(o.stderr, "Showing the %d groups with the most jobs.\n", len(report.Groups))
+	}
+	return nil
+}
+
+// rightsizingCells is the peak, limit and verdict columns; a 0 limit is unlimited.
+func rightsizingCells(r *rightsizingResource) string {
+	if r == nil {
+		return "-\t-\t-"
+	}
+	limit := "unlimited"
+	if r.Limit > 0 {
+		limit = remoteNumber(r.Limit)
+	}
+	verdict := cell(r.Verdict)
+	if r.PeakRatio != nil {
+		verdict += fmt.Sprintf(" (%.0f%%)", *r.PeakRatio*100)
+	}
+	return remoteNumber(r.PeakMax) + "\t" + limit + "\t" + verdict
 }
 
 func usageRunnerTime(seconds int64) string {

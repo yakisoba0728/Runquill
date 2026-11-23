@@ -204,6 +204,10 @@ func (c *apiClient) usage(ctx context.Context, query url.Values) (usageResponse,
 	return getAPIJSON[usageResponse](ctx, c, "/api/usage", query)
 }
 
+func (c *apiClient) rightsizing(ctx context.Context, query url.Values) (rightsizingResponse, []byte, error) {
+	return getAPIJSON[rightsizingResponse](ctx, c, "/api/usage/rightsizing", query)
+}
+
 func (c *apiClient) elastic(ctx context.Context) (elasticReport, []byte, error) {
 	return getAPIJSON[elasticReport](ctx, c, "/api/elastic", nil)
 }

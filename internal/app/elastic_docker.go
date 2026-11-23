@@ -31,6 +31,12 @@ type elasticDeps struct {
 	Docker elasticCommand
 	Label  string // runner label filter; defaults to runnerLabel
 	Now    func() time.Time
+	// Record receives every sampling pass, before any change; nil records nothing.
+	Record func(context.Context, []elasticRunner)
+}
+
+func (deps elasticDeps) resizing() bool {
+	return deps.Config.Mode != elasticOff && deps.Config.Mode != ""
 }
 
 // elasticHostsFrom reads the live topology the scheduler uses, without holding its lock across Docker calls.
@@ -56,9 +62,10 @@ func elasticHostsFrom(ops *operations) func() []elasticHostConfig {
 	}
 }
 
-// runElastic adjusts runner limits on local Docker hosts on its own ticker until ctx ends.
+// runElastic samples runners on local Docker hosts on its own ticker until ctx ends, recording
+// job usage and, unless elastic limits are off, adjusting runner limits.
 func runElastic(ctx context.Context, deps elasticDeps) {
-	if deps.Config.Mode == elasticOff || deps.Config.Mode == "" {
+	if !deps.resizing() && deps.Record == nil {
 		return
 	}
 	if deps.Docker == nil {
@@ -77,9 +84,10 @@ func runElastic(ctx context.Context, deps elasticDeps) {
 		}
 	}
 	if len(skipped) > 0 {
-		slog.Info("elastic runner limits are applied only on the local Docker host; not applied here", "hosts", skipped)
+		slog.Info("runner resources are sampled only on the local Docker host; not sampled here", "hosts", skipped)
 	}
-	slog.Info("elastic runner limits enabled", "mode", deps.Config.Mode, "interval", deps.Config.Interval)
+	slog.Info("runner resource sampling enabled", "elastic", deps.Config.Mode, "job_resources", deps.Record != nil,
+		"interval", deps.Config.Interval)
 	ticker := time.NewTicker(deps.Config.Interval)
 	defer ticker.Stop()
 	for {
@@ -102,15 +110,25 @@ func (deps elasticDeps) tick(ctx context.Context) {
 		if !host.Local {
 			continue
 		}
-		if host.CPUs == 0 && host.MemoryMiB == 0 {
+		// Elastic limits manage only pools with a guarantee; job usage is recorded everywhere.
+		resize := deps.resizing() && (host.CPUs != 0 || host.MemoryMiB != 0)
+		if !resize {
 			deps.State.forgetHost(host.Name)
-			continue
+			if deps.Record == nil {
+				continue
+			}
 		}
-		sample, err := deps.sample(ctx, host)
+		sample, err := deps.sample(ctx, host, resize)
 		if err != nil {
 			if ctx.Err() == nil {
 				slog.Warn("sample runner resources", "host", host.Name, "error", err)
 			}
+			continue
+		}
+		if deps.Record != nil {
+			deps.Record(ctx, sample.Runners)
+		}
+		if !resize {
 			continue
 		}
 		plan := planElastic(sample, deps.Config.Policy, deps.Now())
@@ -150,14 +168,17 @@ func (deps elasticDeps) label() (key, value string) {
 	return key, value
 }
 
-func (deps elasticDeps) sample(ctx context.Context, cfg elasticHostConfig) (elasticHost, error) {
+// sample reads the runners and their usage; capacity also reads the host's size, which only planning needs.
+func (deps elasticDeps) sample(ctx context.Context, cfg elasticHostConfig, capacity bool) (elasticHost, error) {
 	host := elasticHost{Name: cfg.Name, SlotCPUs: cfg.CPUs, SlotMemoryMiB: cfg.MemoryMiB}
-	info, err := deps.Docker(ctx, "info", "--format", "{{.NCPU}} {{.MemTotal}}")
-	if err != nil {
-		return host, err
-	}
-	if host.CPUs, host.MemoryMiB, err = parseDockerCapacity(info); err != nil {
-		return host, err
+	if capacity {
+		info, err := deps.Docker(ctx, "info", "--format", "{{.NCPU}} {{.MemTotal}}")
+		if err != nil {
+			return host, err
+		}
+		if host.CPUs, host.MemoryMiB, err = parseDockerCapacity(info); err != nil {
+			return host, err
+		}
 	}
 	key, value := deps.label()
 	listed, err := deps.Docker(ctx, "ps", "-a", "--no-trunc", "--filter", "label="+key+"="+value, "--format", "{{.ID}}")

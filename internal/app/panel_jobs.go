@@ -38,6 +38,8 @@ type panelHistoryJob struct {
 	URL         string           `json:"url,omitempty"`
 	Diagnostic  *jobDiagnostic   `json:"diagnostic,omitempty"`
 	Timing      *statusJobTiming `json:"timing,omitempty"`
+	// Resources is set only by the single-job reads.
+	Resources *jobResources `json:"resources,omitempty"`
 }
 
 type panelHistoryPageResponse struct {
@@ -249,7 +251,9 @@ func readPanelJob(ctx context.Context, db *sql.DB, id int64, pools workerPools, 
 	if err != nil {
 		return panelHistoryJob{}, err
 	}
-	return panelHistoryRow(j, cleanedAt, pools, now), nil
+	row := panelHistoryRow(j, cleanedAt, pools, now)
+	row.Resources, err = readJobResources(ctx, db, id)
+	return row, err
 }
 
 func panelHistoryRow(j job, cleanedAt int64, pools workerPools, now time.Time) panelHistoryJob {

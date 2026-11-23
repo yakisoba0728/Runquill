@@ -151,6 +151,7 @@ func (k *kubeRunners) snapshot(ctx context.Context) ([]dockerHostSnapshot, error
 	}
 	host.Containers = make(map[string]string, len(list.Items))
 	host.RunnerDiagnostics = make(map[string]jobDiagnostic)
+	host.OOMKilled = make(map[string]bool)
 	mountCandidates := make(map[string]string)
 	if ctx.Value(reapStuckKey{}) != nil {
 		k.forceDeleteStuck(ctx, list.Items, time.Now())
@@ -160,6 +161,9 @@ func (k *kubeRunners) snapshot(ctx context.Context) ([]dockerHostSnapshot, error
 		detail := kubePodDiagnostic(pod)
 		if detail.Code != "" {
 			host.RunnerDiagnostics[pod.Name] = detail
+		}
+		if host.Containers[pod.Name] == "exited" {
+			host.OOMKilled[pod.Name] = detail.Code == "pod_memory_limit"
 		}
 		if detail.Code == "pod_preparing" && pod.UID != "" {
 			mountCandidates[string(pod.UID)] = pod.Name

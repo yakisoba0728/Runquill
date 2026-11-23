@@ -169,7 +169,7 @@ components:
     TokenScope:
       type: string
       enum: ['fleet:read', 'hosts:write', 'jobs:write']
-      description: 'fleet:read can call GET /snapshot, GET /api/events, GET /api/jobs, GET /api/jobs/{id}, GET /api/elastic, GET /api/usage and POST /mcp; hosts:write can call POST /api/hosts/cordon; jobs:write can call POST /api/jobs/{id}/cancel and POST /api/jobs/{id}/retry. A token reaches only its own scope, so a hosts:write or jobs:write token cannot read the fleet. hosts:write and jobs:write need an operator or admin owner.'
+      description: 'fleet:read can call GET /snapshot, GET /api/events, GET /api/jobs, GET /api/jobs/{id}, GET /api/elastic, GET /api/usage, GET /api/usage/rightsizing and POST /mcp; hosts:write can call POST /api/hosts/cordon; jobs:write can call POST /api/jobs/{id}/cancel and POST /api/jobs/{id}/retry. A token reaches only its own scope, so a hosts:write or jobs:write token cannot read the fleet. hosts:write and jobs:write need an operator or admin owner.'
     TokenCreate:
       type: object
       additionalProperties: false
@@ -267,6 +267,91 @@ components:
           $ref: '#/components/schemas/JobDiagnostic'
         timing:
           $ref: '#/components/schemas/JobTiming'
+        resources:
+          $ref: '#/components/schemas/JobResources'
+    JobResources:
+      type: object
+      description: Only GET /api/jobs/{id} and the MCP get_job tool include it, when anything was recorded. Fields that were not measured are absent; usage is sampled only on the local Docker host.
+      required: [samples]
+      properties:
+        samples:
+          type: integer
+          format: int64
+          description: docker stats samples taken while the runner ran.
+        cpu_limit:
+          type: number
+          description: The runner's guaranteed CPUs as first sampled; 0 is unlimited.
+        memory_limit_mib:
+          type: integer
+          format: int64
+          description: The runner's guaranteed memory as first sampled; 0 is unlimited.
+        cpu_peak:
+          type: number
+          description: Highest sampled CPU use in cores.
+        cpu_average:
+          type: number
+          description: Mean of the CPU samples in cores.
+        memory_peak_mib:
+          type: integer
+          format: int64
+          description: Highest sampled memory use, a snapshot rather than a cgroup high-water mark.
+        oom_killed:
+          type: boolean
+          description: Whether the container engine or Kubernetes killed the runner for memory. Absent when the exit was not checked, as on outbound agents.
+    RightsizingResource:
+      type: object
+      required: [limit, peak_max, verdict]
+      properties:
+        limit:
+          type: number
+          description: The newest sampled job's limit, in cores or MiB; 0 is unlimited.
+        peak_max:
+          type: number
+          description: The largest peak of the group, in cores or MiB.
+        peak_ratio:
+          type: number
+          description: The largest peak divided by its own job's limit, over jobs with a limit.
+        verdict:
+          type: string
+          enum: [oversized, tight, ok, too_few_jobs, unlimited]
+          description: oversized when at least 3 jobs were sampled and peak_ratio is below 0.25; tight when peak_ratio is above 0.8 or, for memory, a runner was killed for memory.
+    RightsizingGroup:
+      type: object
+      required: [key, jobs, sampled_jobs, oom_kills]
+      properties:
+        key:
+          type: string
+          description: The worker pool (empty for the default pool), or the lowercase owner/name and runner label separated by a space.
+        jobs:
+          type: integer
+          format: int64
+          description: Finished jobs with anything recorded.
+        sampled_jobs:
+          type: integer
+          format: int64
+        oom_kills:
+          type: integer
+          format: int64
+        cpu:
+          $ref: '#/components/schemas/RightsizingResource'
+        memory:
+          $ref: '#/components/schemas/RightsizingResource'
+    RightsizingReport:
+      type: object
+      required: [group, days, groups]
+      properties:
+        group:
+          type: string
+          enum: [pool, job]
+        days:
+          type: integer
+        groups:
+          type: array
+          description: Most jobs first, at most 500 groups.
+          items:
+            $ref: '#/components/schemas/RightsizingGroup'
+        truncated:
+          type: boolean
     JobHistoryPage:
       type: object
       required: [jobs]
@@ -2217,6 +2302,53 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '503':
           description: 'Body "Could not read usage statistics." or "Could not check panel access."'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/usage/rightsizing:
+    get:
+      operationId: getRightsizing
+      tags: [usage]
+      summary: CPU and memory peaks of recently finished jobs against their limits, per pool or per workflow job.
+      description: Reads the jobs table, so it covers at most the last seven days. Only jobs with recorded resources count.
+      x-runquill-permission: fleet:read
+      security:
+        - sessionCookie: []
+        - bearerToken: []
+      parameters:
+        - name: group
+          in: query
+          schema:
+            type: string
+            enum: [pool, job]
+            default: pool
+        - name: days
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 7
+            default: 7
+      responses:
+        '200':
+          description: One row per group.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RightsizingReport'
+        '400':
+          description: 'Body "Use group pool or job and days from 1 to 7."'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          description: 'Body "Could not read job resources." or "Could not check panel access."'
           content:
             text/plain:
               schema:

@@ -81,7 +81,8 @@ CREATE TABLE IF NOT EXISTS usage_meta (
     floor_job INTEGER NOT NULL,
     swept_day TEXT NOT NULL
 );
-INSERT OR IGNORE INTO usage_meta (id, floor, floor_job, swept_day) VALUES (1, 0, 0, '');`)
+INSERT OR IGNORE INTO usage_meta (id, floor, floor_job, swept_day) VALUES (1, 0, 0, '');
+`+jobResourcesSchema)
 	return err
 }
 
@@ -307,6 +308,10 @@ func rollupUsage(ctx context.Context, q *queue, pools workerPools, now time.Time
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM usage_rolled
             WHERE NOT EXISTS (SELECT 1 FROM jobs WHERE jobs.job_id = usage_rolled.job_id)`); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM job_resources
+            WHERE NOT EXISTS (SELECT 1 FROM jobs WHERE jobs.job_id = job_resources.job_id)`); err != nil {
 			return err
 		}
 		// A full batch leaves the rescan unfinished; sweep again next call.
@@ -537,4 +542,5 @@ func registerUsageRoutes(mux *http.ServeMux, a *panelAccess, pools func() worker
 		}
 		panelJSON(w, http.StatusOK, response)
 	}))
+	registerRightsizingRoute(mux, a, pools)
 }

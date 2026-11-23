@@ -29,10 +29,12 @@ type dockerFleet struct {
 }
 
 type dockerHostSnapshot struct {
-	Name                string
-	Pool                string
-	Containers          map[string]string
-	RunnerDiagnostics   map[string]jobDiagnostic
+	Name              string
+	Pool              string
+	Containers        map[string]string
+	RunnerDiagnostics map[string]jobDiagnostic
+	// OOMKilled holds the exited runners checked for an out-of-memory kill; absent runners are unknown.
+	OOMKilled           map[string]bool
 	Err                 error
 	WorkerEngineID      string
 	UnregisteredWorker  bool
@@ -224,6 +226,9 @@ func (f *dockerFleet) snapshot(ctx context.Context) ([]dockerHostSnapshot, error
 				}
 			}
 			result.Containers, result.Err = host.containers(ctx)
+			if result.Err == nil {
+				result.OOMKilled, result.RunnerDiagnostics = host.exitedOOM(ctx, result.Containers)
+			}
 			if result.Err == nil && host.image != "" {
 				result.Err = host.checkRunnerImage(ctx)
 				if f.images.enabled() && (result.Err == nil || imageMissing(result.Err)) {

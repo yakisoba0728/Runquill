@@ -63,7 +63,11 @@ func run(ctx context.Context) error {
 		return err
 	}
 	elastic := newElasticState(elasticConfig)
-	go runElastic(ctx, elasticDeps{Config: elasticConfig, State: elastic, Hosts: elasticHostsFrom(ops)})
+	elasticLoop := elasticDeps{Config: elasticConfig, State: elastic, Hosts: elasticHostsFrom(ops)}
+	if elasticConfig.JobResources {
+		elasticLoop.Record = jobSampleRecorder(q.DB)
+	}
+	go runElastic(ctx, elasticLoop)
 	if fleet, ok := runners.runtime.(*dockerFleet); ok {
 		go runImagePuller(ctx, imagePullerDeps{Images: fleet.images, Pairs: imagePairsFrom(ops)})
 	}
