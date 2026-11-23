@@ -41,7 +41,8 @@ export function sample(name) {
   // builder-east is still pulling its pool's runner image (RUNQUILL_IMAGE_PULL=missing).
   let hosts = [host("local", 2, 1), host("builder-west", 2, 1),
     host("builder-east", 2, 0, 0, { status: "UNAVAILABLE", image_status: "pulling",
-      error: "pulling runner image ghcr.io/garden-lab/runner-build:2026.11" })];
+      error: "pulling runner image ghcr.io/garden-lab/runner-build:2026.11" }),
+    host("agent://edge-1", 1, 0, 0, { image_status: undefined })];
   let jobs = [
     job(4826, "papertrail", "RUNNING", "local", { runner_image: runnerImage, timing: timing("webhook", 120, 119, 114, 110) }),
     job(4824, "pattern-kit", "RUNNING", "builder-west", { runner_label: "runquill-18061-1-os__ubuntu2204__lint",

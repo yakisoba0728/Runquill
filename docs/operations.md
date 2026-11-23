@@ -85,7 +85,7 @@ Team users sign in with their enrolled GitHub account. Administrators add a team
 
 | Scope | Routes |
 | --- | --- |
-| `fleet:read` | `GET /snapshot`, `GET /api/events`, `GET /api/jobs`, `GET /api/jobs/{id}`, `GET /api/elastic`, `GET /api/usage`, `GET /api/usage/rightsizing`, `POST /mcp` |
+| `fleet:read` | `GET /snapshot`, `GET /api/events`, `GET /api/jobs`, `GET /api/jobs/{id}`, `GET /api/elastic`, `GET /api/hosts/resources`, `GET /api/usage`, `GET /api/usage/rightsizing`, `POST /mcp` |
 | `hosts:write` | `POST /api/hosts/cordon` with `{"host":"local","cordoned":true}`. Pausing a host does not interrupt its active runners. |
 | `jobs:write` | `POST /api/jobs/{id}/cancel`, `POST /api/jobs/{id}/retry` |
 

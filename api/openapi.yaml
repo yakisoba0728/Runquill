@@ -169,7 +169,7 @@ components:
     TokenScope:
       type: string
       enum: ['fleet:read', 'hosts:write', 'jobs:write']
-      description: 'fleet:read can call GET /snapshot, GET /api/events, GET /api/jobs, GET /api/jobs/{id}, GET /api/elastic, GET /api/usage, GET /api/usage/rightsizing and POST /mcp; hosts:write can call POST /api/hosts/cordon; jobs:write can call POST /api/jobs/{id}/cancel and POST /api/jobs/{id}/retry. A token reaches only its own scope, so a hosts:write or jobs:write token cannot read the fleet. hosts:write and jobs:write need an operator or admin owner.'
+      description: 'fleet:read can call GET /snapshot, GET /api/events, GET /api/jobs, GET /api/jobs/{id}, GET /api/elastic, GET /api/hosts/resources, GET /api/usage, GET /api/usage/rightsizing and POST /mcp; hosts:write can call POST /api/hosts/cordon; jobs:write can call POST /api/jobs/{id}/cancel and POST /api/jobs/{id}/retry. A token reaches only its own scope, so a hosts:write or jobs:write token cannot read the fleet. hosts:write and jobs:write need an operator or admin owner.'
     TokenCreate:
       type: object
       additionalProperties: false
@@ -746,6 +746,97 @@ components:
         warm_max_idle_minutes:
           type: integer
           description: Minutes after which an unused warm runner is replaced, 0 to 1440; absent or 0 uses 30.
+    HostResourcesReport:
+      type: object
+      description: Host capacity, runner reservations, usage and disk use. A plain read runs no engine command beyond the cached engine probe; disk use appears only after a request with disk=1.
+      required: [hosts, disk_measuring]
+      properties:
+        hosts:
+          type: array
+          description: One entry per configured Docker host in configuration order, or per Kubernetes target.
+          items:
+            $ref: '#/components/schemas/HostResources'
+        disk_measured_at:
+          type: string
+          format: date-time
+          description: When the cached disk measurement finished; absent before the first one.
+        disk_measuring:
+          type: boolean
+          description: A disk measurement is still running; ask again with disk=1 to wait for it.
+    HostResources:
+      type: object
+      required: [host]
+      properties:
+        host:
+          type: string
+        unavailable:
+          type: string
+          enum: [agent, kubernetes]
+          description: The manager cannot read this host. agent is an outbound agent:// worker, kubernetes a K3s target. Capacity, usage and disk are absent, never zero.
+        error:
+          type: string
+          description: The engine probe failed; capacity is absent.
+        cpus:
+          type: integer
+          description: CPUs the engine reports. Absent when unavailable or the probe failed.
+        memory_bytes:
+          type: integer
+          format: int64
+          description: Memory the engine reports.
+        reserved:
+          $ref: '#/components/schemas/HostReservation'
+        usage:
+          $ref: '#/components/schemas/HostUsage'
+        disk:
+          $ref: '#/components/schemas/RunnerDiskUse'
+        disk_error:
+          type: string
+          description: The last disk measurement failed on this host.
+    HostReservation:
+      type: object
+      description: CPU and memory promised to runners holding a slot. When the elastic loop sampled the host, runners and the sums are the runners' current limits; otherwise the pool limit times occupied slots. Absent for Kubernetes.
+      required: [runners, runner_cpus, runner_memory_bytes, cpus, memory_bytes]
+      properties:
+        runners:
+          type: integer
+        runner_cpus:
+          type: number
+          description: The pool's per-runner CPU limit; 0 leaves runners unlimited.
+        runner_memory_bytes:
+          type: integer
+          format: int64
+          description: The pool's per-runner memory limit; 0 leaves runners unlimited.
+        cpus:
+          type: number
+        memory_bytes:
+          type: integer
+          format: int64
+    HostUsage:
+      type: object
+      description: What runners used in the elastic loop's last sample. Present only for local hosts the loop samples, that is with RUNQUILL_ELASTIC set and a pool that sets cpus or memory_mib.
+      required: [cpus, memory_bytes]
+      properties:
+        cpus:
+          type: number
+        memory_bytes:
+          type: integer
+          format: int64
+    RunnerDiskUse:
+      type: object
+      required: [cache_volumes, images, image_bytes]
+      properties:
+        cache_volumes:
+          type: integer
+        cache_bytes:
+          type: integer
+          format: int64
+          description: Absent when the engine cannot size volumes (Podman) or docker system df failed.
+        images:
+          type: integer
+          description: Images Runquill pulled that are still on the host.
+        image_bytes:
+          type: integer
+          format: int64
     ElasticReport:
       type: object
       description: State of the elastic runner limits loop. With RUNQUILL_ELASTIC unset or off, mode is off and the lists are empty.
@@ -2240,6 +2331,36 @@ paths:
             text/plain:
               schema:
                 $ref: '#/components/schemas/Error'
+  /api/hosts/resources:
+    get:
+      operationId: getHostResources
+      tags: [hosts]
+      summary: CPU and memory per host, runner reservations, sampled usage and, on request, disk use of runner images and cache volumes.
+      x-runquill-permission: fleet:read
+      security:
+        - sessionCookie: []
+        - bearerToken: []
+      parameters:
+        - name: disk
+          in: query
+          required: false
+          description: 1 measures disk use unless a measurement younger than 10 minutes exists. One measurement runs at a time for every caller; the request waits up to 7 seconds and otherwise returns with disk_measuring true.
+          schema:
+            type: string
+            enum: ['1']
+      responses:
+        '200':
+          description: The current report.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostResourcesReport'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/AccessUnavailable'
   /api/elastic:
     get:
       operationId: getElastic

@@ -352,6 +352,7 @@ progress::-webkit-progress-bar { background: var(--border); }
 progress::-webkit-progress-value { background: var(--text); }
 progress::-moz-progress-bar { background: var(--text); }
 .meter { display: inline-block; width: 80px; vertical-align: middle; }
+.num .meter { display: block; margin: 4px 0 2px auto; }
 
 /* Job detail panel */
 

@@ -66,6 +66,9 @@ func (e *containerEngine) validSSHPath(path string) bool {
 type engineInfo struct {
 	Engine, Version, OS, Arch, Cgroup string
 	Rootless                          bool
+	// CPUs and MemoryBytes are the engine host's totals; 0 when the engine did not report them.
+	CPUs        int
+	MemoryBytes int64
 }
 
 // parseEngineInfo reads "info --format {{json .}}" output, whose shape differs per engine.
@@ -76,11 +79,14 @@ func parseEngineInfo(engine, raw string) (engineInfo, error) {
 		var host struct {
 			ServerVersion, OSType, Architecture, CgroupVersion string
 			SecurityOptions                                    []string
+			NCPU                                               int
+			MemTotal                                           int64
 		}
 		if err := json.Unmarshal([]byte(raw), &host); err != nil {
 			return info, fmt.Errorf("read docker info: %w", err)
 		}
 		info.Version, info.OS, info.Arch, info.Cgroup = host.ServerVersion, host.OSType, host.Architecture, host.CgroupVersion
+		info.CPUs, info.MemoryBytes = host.NCPU, host.MemTotal
 		info.Rootless = slices.ContainsFunc(host.SecurityOptions, func(option string) bool {
 			name, _, _ := strings.Cut(option, ",")
 			return name == "name=rootless"
@@ -91,6 +97,8 @@ func parseEngineInfo(engine, raw string) (engineInfo, error) {
 				Arch, OS      string
 				CgroupVersion string `json:"cgroupVersion"`
 				Security      struct{ Rootless bool }
+				CPUs          int   `json:"cpus"`
+				MemTotal      int64 `json:"memTotal"`
 			}
 			Version struct{ Version string }
 		}
@@ -99,6 +107,7 @@ func parseEngineInfo(engine, raw string) (engineInfo, error) {
 		}
 		info.Version, info.OS, info.Arch, info.Cgroup = host.Version.Version, host.Host.OS, host.Host.Arch, host.Host.CgroupVersion
 		info.Rootless = host.Host.Security.Rootless
+		info.CPUs, info.MemoryBytes = host.Host.CPUs, host.Host.MemTotal
 	default:
 		return info, fmt.Errorf("unknown container engine %q", engine)
 	}

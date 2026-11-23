@@ -91,6 +91,9 @@ func (a *panelAccess) register(mux *http.ServeMux, panel *panelState) {
 	mux.HandleFunc("POST /api/hosts/cordon", a.require("hosts:write", func(w http.ResponseWriter, r *http.Request, user panelIdentity) {
 		a.cordon(w, r, user, panel)
 	}))
+	mux.HandleFunc("GET /api/hosts/resources", a.require("fleet:read", func(w http.ResponseWriter, r *http.Request, _ panelIdentity) {
+		panel.hostResources(w, r, a.db)
+	}))
 	mux.HandleFunc("GET /snapshot", a.require("fleet:read", func(w http.ResponseWriter, r *http.Request, user panelIdentity) {
 		panel.mu.RLock()
 		snapshot := panel.snapshot

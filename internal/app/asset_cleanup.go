@@ -983,35 +983,59 @@ func reportRunnerAssetsWith(ctx context.Context, run imageCommand, path string, 
 	cleaner := assetCleaner{run: run}
 	for _, target := range topology.hosts {
 		name := target.label() + " runner images and cache volumes"
-		volumes, err := cleaner.cacheVolumes(ctx, target)
+		use, err := measureRunnerDisk(ctx, cleaner, db, target)
 		if err != nil {
-			report(name, fmt.Errorf("list cache volumes: %w", err))
+			report(name, err)
 			continue
 		}
-		volumeText := fmt.Sprintf("%d cache volumes", len(volumes))
-		if size, ok := volumeSizes(ctx, cleaner, target, volumes); ok && len(volumes) > 0 {
-			volumeText += " (" + formatBytes(size) + ")"
+		volumeText := fmt.Sprintf("%d cache volumes", use.CacheVolumes)
+		if use.CacheBytes != nil && use.CacheVolumes > 0 {
+			volumeText += " (" + formatBytes(*use.CacheBytes) + ")"
 		}
-		var images int
-		var imageBytes int64
-		if db != nil {
-			rows, err := readAssetRows(ctx, db, target.label())
-			if err != nil {
-				report(name, err)
-				continue
-			}
-			for key, row := range rows {
-				if key.kind != assetKindImage || !row.pulled {
-					continue
-				}
-				if details, err := cleaner.inspectImage(ctx, target, key.name); err == nil && details.id == row.imageID {
-					images++
-					imageBytes += details.size
-				}
-			}
-		}
-		report(fmt.Sprintf("%s: %s, %d Runquill-pulled images (%s)", name, volumeText, images, formatBytes(imageBytes)), nil)
+		report(fmt.Sprintf("%s: %s, %d Runquill-pulled images (%s)", name, volumeText, use.Images, formatBytes(use.ImageBytes)), nil)
 	}
+}
+
+// runnerDiskUse is what runner cache volumes and Runquill-pulled images take on one host.
+type runnerDiskUse struct {
+	CacheVolumes int `json:"cache_volumes"`
+	// CacheBytes is absent when the engine cannot size volumes cheaply (Podman) or docker system df failed.
+	CacheBytes *int64 `json:"cache_bytes,omitempty"`
+	Images     int    `json:"images"`
+	ImageBytes int64  `json:"image_bytes"`
+}
+
+// measureRunnerDisk runs docker system df -v and one image inspect per pulled image: call it on demand, not in a loop.
+// A nil db counts no images.
+func measureRunnerDisk(ctx context.Context, cleaner assetCleaner, db *sql.DB, target docker) (runnerDiskUse, error) {
+	var use runnerDiskUse
+	volumes, err := cleaner.cacheVolumes(ctx, target)
+	if err != nil {
+		return use, fmt.Errorf("list cache volumes: %w", err)
+	}
+	use.CacheVolumes = len(volumes)
+	if size, ok := volumeSizes(ctx, cleaner, target, volumes); ok {
+		use.CacheBytes = &size
+	} else if len(volumes) == 0 {
+		use.CacheBytes = new(int64)
+	}
+	if db == nil {
+		return use, nil
+	}
+	rows, err := readAssetRows(ctx, db, target.label())
+	if err != nil {
+		return use, err
+	}
+	for key, row := range rows {
+		if key.kind != assetKindImage || !row.pulled {
+			continue
+		}
+		if details, err := cleaner.inspectImage(ctx, target, key.name); err == nil && details.id == row.imageID {
+			use.Images++
+			use.ImageBytes += details.size
+		}
+	}
+	return use, nil
 }
 
 // volumeSizes is best effort: docker system df -v walks every volume, which suits doctor but not the loop.
