@@ -20,6 +20,15 @@ const (
 	runnerUID       = 1001
 )
 
+// packageCacheEnv moves download caches that do not default to ~/.cache into the repository volume.
+// Each variable moves only a cache, never a tool home that holds credentials, config or binaries.
+var packageCacheEnv = []string{
+	"npm_config_cache=" + runnerCachePath + "/npm",
+	"GOMODCACHE=" + runnerCachePath + "/go-mod",
+	"NUGET_PACKAGES=" + runnerCachePath + "/nuget-packages",
+	"BUN_INSTALL_CACHE_DIR=" + runnerCachePath + "/bun",
+}
+
 type runnerRepositoryKey struct{}
 
 // withRunnerRepository scopes a runner start to a repository so cache-enabled pools can mount its volume.
@@ -183,6 +192,9 @@ func (d docker) createPlan(engine *containerEngine, name, cacheVolume, toolVolum
 		args = append(args, "--memory", memory, "--memory-swap", memory)
 	}
 	if cacheVolume != "" {
+		for _, env := range packageCacheEnv {
+			args = append(args, "--env", env)
+		}
 		// Named volumes survive "rm -v", so the cache outlives each ephemeral runner.
 		for _, cache := range []struct {
 			name, path string

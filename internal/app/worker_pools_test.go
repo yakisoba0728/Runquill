@@ -146,6 +146,7 @@ func TestWorkerPoolsSetPrivilegeAndRepositoryCache(t *testing.T) {
 		mounted := func(repository int) bool {
 			return strings.Contains(line, fmt.Sprintf("--mount type=volume,src=runquill-cache-%d,dst=/home/runner/.cache,volume-label=io.runquill.cache=1", repository)) &&
 				strings.Contains(line, fmt.Sprintf("--mount type=volume,src=runquill-cache-%d-tools-", repository)) &&
+				strings.Contains(line, "--env GOMODCACHE=/home/runner/.cache/go-mod ") &&
 				strings.Contains(line, ",dst=/home/runner/.cache/tools,volume-label=io.runquill.cache=1,volume-nocopy --env RUNNER_TOOL_CACHE=/home/runner/.cache/tools "+cacheFixtureImageID)
 		}
 		switch {
@@ -155,7 +156,7 @@ func TestWorkerPoolsSetPrivilegeAndRepositoryCache(t *testing.T) {
 			cached8 = unprivileged && mounted(8) && !strings.Contains(line, "runquill-cache-7")
 		case strings.Contains(line, "create --name default-runner"):
 			privileged = strings.Contains(line, "--privileged") && !strings.Contains(line, "--mount") && !strings.Contains(line, "--user") &&
-				!strings.Contains(line, "RUNNER_TOOL_CACHE")
+				!strings.Contains(line, "RUNNER_TOOL_CACHE") && !strings.Contains(line, "GOMODCACHE")
 		case strings.Contains(line, "create --name privileged-cached"):
 			privilegedCached = strings.Contains(line, "--privileged") && mounted(7) && !strings.Contains(line, "--user")
 		case strings.Contains(line, "create --name uncached"):
