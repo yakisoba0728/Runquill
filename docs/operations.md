@@ -177,7 +177,7 @@ docker compose -f compose.yaml -f compose.panel.yaml exec -T manager runquill st
 
 ## Add manager settings
 
-Compose passes only the variables listed in `compose.yaml` to the manager. For optional settings such as `RUNQUILL_MAX_PER_REPOSITORY`, `RUNQUILL_SCHEDULER_WORKERS`, `RUNQUILL_LOG_FORMAT`, `RUNQUILL_LOG_LEVEL`, the [notification](#send-notifications) variables, `RUNQUILL_ELASTIC*`, `RUNQUILL_BACKUP_*`, `RUNQUILL_METRICS_*`, `RUNQUILL_IMAGE_PULL*`, `RUNQUILL_RUNNER_IMAGES`, `RUNQUILL_CLEANUP_*` and [`RUNQUILL_ALLOW_PUBLIC_REPOSITORIES`](workflows.md#run-jobs-from-public-repositories), keep the values in `.env` and save an overlay such as `compose.settings.yaml` beside `compose.yaml`. `--upgrade` replaces `compose.yaml` but leaves this file in place.
+Compose passes only the variables listed in `compose.yaml` to the manager. For optional settings such as `RUNQUILL_MAX_PER_REPOSITORY`, `RUNQUILL_SCHEDULER_WORKERS`, `RUNQUILL_LOG_FORMAT`, `RUNQUILL_LOG_LEVEL`, the [notification](#send-notifications) variables, `RUNQUILL_ELASTIC*`, `RUNQUILL_BACKUP_*`, `RUNQUILL_METRICS_*`, `RUNQUILL_IMAGE_PULL*`, `RUNQUILL_RUNNER_IMAGES`, `RUNQUILL_CLEANUP_*`, a [`RUNQUILL_REGISTRY_MIRROR`](runner-images.md#docker-hub-mirror) you run without `compose.mirror.yaml` and [`RUNQUILL_ALLOW_PUBLIC_REPOSITORIES`](workflows.md#run-jobs-from-public-repositories), keep the values in `.env` and save an overlay such as `compose.settings.yaml` beside `compose.yaml`. `--upgrade` replaces `compose.yaml` but leaves this file in place.
 
 ```yaml
 services:

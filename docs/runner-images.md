@@ -182,6 +182,8 @@ RUNQUILL_REGISTRY_MIRROR_TTL=168h
 docker compose -f compose.yaml -f compose.mirror.yaml up -d
 ```
 
+To use a mirror you already run instead, leave out `compose.mirror.yaml` and add `RUNQUILL_REGISTRY_MIRROR` to your [settings overlay](operations.md#add-manager-settings). Compose passes only the variables it lists, so a value only in `.env` does nothing.
+
 The overlay deliberately configures no Docker Hub login. With upstream credentials, the mirror would serve that account's private images to every job of every repository on these hosts, and to anyone else who reaches it. Plain `http://` keeps registry traffic unencrypted on your network; use `https://` behind a TLS proxy if that network is not trusted.
 
 ### Limits
@@ -190,8 +192,8 @@ The overlay deliberately configures no Docker Hub login. With upstream credentia
 - **Docker Hub only.** Docker applies mirrors to `docker.io` images. Images from `ghcr.io`, `quay.io` or other registries still download directly.
 - **It needs the runner image of this release.** The runner entrypoint adds `--registry-mirror`. Older runner images ignore the variable and pull from Docker Hub.
 - **BuildKit containers are not covered.** `docker pull`, `docker run` and `docker build` with the default builder use the mirror. A `docker-container` builder, such as the one `docker/setup-buildx-action` creates by default, runs its own BuildKit with its own registry configuration and needs the mirror in its [`buildkitd.toml`](https://docs.docker.com/build/buildkit/toml-configuration/).
-- **The cache is bounded only by the TTL and the disk.** The registry removes content that nobody pulled within the TTL. It has no size limit, so watch the `registry-mirror` volume.
-- **A failing mirror is silent.** If the mirror cannot be reached or fails, `dockerd` pulls from Docker Hub directly. Check the registry log or `curl http://ADDRESS/v2/_catalog` to confirm that runners use it.
+- **The cache is bounded only by the TTL and the disk.** The registry deletes cached content once it is older than the TTL and fetches it again on the next pull. It has no size limit, so watch the `registry-mirror` volume.
+- **A failing mirror is silent.** If the mirror refuses the connection or fails, `dockerd` logs a warning and pulls from Docker Hub directly. An address whose packets are dropped can add a connect timeout to every pull. Check the registry log or `curl http://ADDRESS/v2/_catalog` to confirm that runners use it.
 
 ## Cleanup of unused images and cache volumes
 
