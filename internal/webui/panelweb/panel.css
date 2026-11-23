@@ -14,13 +14,14 @@
   --text: #1c2026;
   --muted: #5c6570;
   --border: #e1e4e8;
-  --border-strong: #8b939c;
+  --border-strong: #7d858e;
   --accent: #2552b0;
   --ok: #17753a;
   --waiting: #8a5a00;
   --failed: #c0262d;
   --offline: #5f6873;
   --backdrop: rgb(20 22 26 / 45%);
+  --scroll-shadow: rgb(20 22 26 / 22%);
 
   --font: system-ui, -apple-system, "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
@@ -48,6 +49,7 @@
     --failed: #f2726b;
     --offline: #a0a8b2;
     --backdrop: rgb(0 0 0 / 60%);
+    --scroll-shadow: rgb(0 0 0 / 70%);
   }
 }
 
@@ -69,6 +71,7 @@
   --failed: #f2726b;
   --offline: #a0a8b2;
   --backdrop: rgb(0 0 0 / 60%);
+  --scroll-shadow: rgb(0 0 0 / 70%);
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -125,7 +128,7 @@ code { background: var(--bg-code); padding: 1px 4px; border-radius: 2px; }
 .button:disabled { cursor: default; opacity: .55; }
 .button.primary { background: var(--text); border-color: var(--text); color: var(--bg); }
 .button.primary:hover { opacity: .88; }
-.button.small { height: 22px; padding: 0 8px; font-size: 12px; }
+.button.small { height: 24px; padding: 0 8px; font-size: 12px; }
 
 input, select, textarea {
   font: inherit; color: var(--text); background: var(--bg-input);
@@ -254,7 +257,17 @@ input[readonly] { background: var(--bg-code); }
 
 /* Tables */
 
-.table-wrap { position: relative; overflow-x: auto; border: 1px solid var(--border); border-radius: 2px; }
+/* A shadow appears at an edge while more columns are scrolled out of view
+   there: the covers scroll with the content, the shadows stay put. */
+.table-wrap {
+  position: relative; overflow-x: auto; border: 1px solid var(--border); border-radius: 2px;
+  background:
+    linear-gradient(to right, var(--bg) 40%, transparent) left / 20px 100% no-repeat local,
+    linear-gradient(to left, var(--bg) 40%, transparent) right / 20px 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%, var(--scroll-shadow), transparent) left / 10px 100% no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%, var(--scroll-shadow), transparent) right / 10px 100% no-repeat scroll;
+  background-color: var(--bg);
+}
 table { width: 100%; border-collapse: collapse; }
 caption { text-align: left; }
 th, td { height: var(--row); padding: 0 10px; text-align: left; vertical-align: middle; border-bottom: 1px solid var(--border); white-space: nowrap; }
@@ -270,6 +283,8 @@ tbody :is(td, th):has(.sub) { padding-top: 6px; }
 :is(td, th).wrap { white-space: normal; min-width: 220px; overflow-wrap: anywhere; }
 tbody :is(td, th).id { font-family: var(--mono); font-size: 12px; }
 :is(td, th).id .sub { white-space: nowrap; }
+/* A long note under a host name (an image pull error) wraps instead of widening the column. */
+:is(td, th).id.long .sub { white-space: normal; overflow-wrap: anywhere; }
 td .row-actions { display: flex; gap: 6px; justify-content: flex-end; }
 /* Long values (100-character repository names, Korean sentences) wrap
    instead of widening the table past its scroll container. */
@@ -347,8 +362,9 @@ pre.report {
   font: 12px/18px var(--mono); white-space: pre-wrap;
 }
 
-progress { width: 100%; height: 6px; appearance: none; border: 0; background: var(--border); accent-color: var(--accent); }
-progress::-webkit-progress-bar { background: var(--border); }
+/* The track uses the strong border so a meter's full length stays visible (3:1). */
+progress { width: 100%; height: 6px; appearance: none; border: 0; background: var(--border-strong); accent-color: var(--accent); }
+progress::-webkit-progress-bar { background: var(--border-strong); }
 progress::-webkit-progress-value { background: var(--text); }
 progress::-moz-progress-bar { background: var(--text); }
 .meter { display: inline-block; width: 80px; vertical-align: middle; }
@@ -376,6 +392,8 @@ progress::-moz-progress-bar { background: var(--text); }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 
 .toasts { position: fixed; right: 16px; bottom: 16px; z-index: 30; display: grid; gap: 8px; width: min(380px, calc(100vw - 32px)); }
+.toasts > div { display: grid; gap: 8px; }
+.toasts > div:empty { display: none; }
 .toast {
   display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px;
   background: var(--bg); border: 1px solid var(--border-strong); border-left: 3px solid var(--ok); border-radius: 3px;
@@ -383,7 +401,7 @@ progress::-moz-progress-bar { background: var(--text); }
 .toast[data-state="failed"] { border-left-color: var(--failed); }
 .toast[data-state=""] { border-left-color: var(--border-strong); }
 .toast p { flex: 1; overflow-wrap: anywhere; }
-.toast button { flex: none; padding: 0 2px; border: 0; background: none; color: var(--muted); font: inherit; cursor: pointer; }
+.toast button { flex: none; min-width: 24px; min-height: 24px; padding: 0 2px; border: 0; background: none; color: var(--muted); font: inherit; cursor: pointer; }
 
 /* Command palette */
 
@@ -432,7 +450,8 @@ kbd {
    scroll inside their own container. */
 @media (max-width: 900px) {
   .shell { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto 1fr; grid-template-areas: "top" "demo" "nav" "main"; }
-  .topbar { flex-wrap: wrap; height: auto; min-height: var(--topbar); padding: 6px 16px; gap: 6px 12px; }
+  /* Wrapped to three lines, a sticky top bar would cover a third of a phone screen. */
+  .topbar { position: static; flex-wrap: wrap; height: auto; min-height: var(--topbar); padding: 6px 16px; gap: 6px 12px; }
   .topbar .brand { width: auto; }
   .menu-toggle { display: inline-flex; order: 2; margin-left: auto; }
   .connection { order: 3; flex-basis: 100%; }
@@ -443,6 +462,12 @@ kbd {
   .split { padding: 0 16px; }
   .form-grid { grid-template-columns: minmax(0, 1fr); }
   .form-grid .hint { grid-column: 1; }
+}
+
+/* Touch screens: controls at least 32px high. */
+@media (pointer: coarse) {
+  .button, .button.small, input, select, .palette-open { min-height: 32px; }
+  .toast button { min-width: 32px; min-height: 32px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

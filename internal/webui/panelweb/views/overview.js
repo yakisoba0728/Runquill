@@ -50,6 +50,7 @@ export default {
       ],
     });
     const queueLink = h("a", { href: "#/queue" }, tr("Open queue"));
+    const more = h("p", { class: "table-foot", hidden: true });
     root.append(
       pageHead("Overview"),
       h("div", { class: "split" },
@@ -60,9 +61,9 @@ export default {
         block("First job setup", {
           actions: [externalLink(tr("Setup guide"), "https://github.com/yakisoba0728/Runquill#verify-your-first-job")],
         }, h("ol", { class: "checklist" }, ...steps.map((step) => step.item)), h("p", { class: "table-foot" }, firstLink))),
-      block("Waiting jobs", { actions: [queueLink] }, waiting.element),
+      block("Waiting jobs", { actions: [queueLink] }, waiting.element, more),
     );
-    parts = { capacity, hosts, github, steps, firstLink, waiting, demo: ctx.demo };
+    parts = { capacity, hosts, github, steps, firstLink, waiting, more, demo: ctx.demo };
   },
 
   update(snapshot) {
@@ -117,9 +118,14 @@ export default {
     parts.firstLink.hidden = !isGitHubJobURL(url);
     if (isGitHubJobURL(url)) parts.firstLink.href = url;
 
-    const queued = (snapshot?.fleet?.jobs || []).filter(pendingJob)
-      .sort((a, b) => (a.queue_position || Infinity) - (b.queue_position || Infinity)).slice(0, 8);
+    const pending = (snapshot?.fleet?.jobs || []).filter(pendingJob)
+      .sort((a, b) => (a.queue_position || Infinity) - (b.queue_position || Infinity));
+    const queued = pending.slice(0, 8);
     parts.waiting.update(queued, snapshot?.fleet ? "The queue is empty." : "Waiting for a fleet snapshot…");
+    const moreText = pending.length > queued.length
+      ? tr("Showing {shown} of {total} waiting jobs. Open the queue for the rest.", { shown: queued.length, total: pending.length }) : "";
+    parts.more.hidden = !moreText;
+    if (parts.more.textContent !== moreText) parts.more.textContent = moreText;
   },
 
   unmount() {

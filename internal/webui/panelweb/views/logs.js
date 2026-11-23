@@ -7,8 +7,8 @@
 import { poolName, runnerRows, runnerState } from "../fleet.js";
 import { tr } from "../i18n.js";
 import {
-  button, createTable, errorText, externalLink, format, h, intro, isGitHubJobURL, loadStyle, message, pageHead, saveFile, select,
-  statusLine,
+  button, createTable, errorText, externalLink, format, h, intro, isGitHubJobURL, linkTarget, loadStyle, message, pageHead, saveFile,
+  select, statusLine,
 } from "../ui.js";
 
 const maxLines = 5000; // lines kept on screen and in the pause buffer
@@ -294,7 +294,7 @@ export default {
     if (!allowed) {
       lead.after(h("div", { class: "block" }, h("p", { class: "inline-message" },
         tr("Operators and admins can view runner logs. Ask an admin if you need access."))));
-      parts = { ctx, table, rows: [], allowed };
+      parts = { ctx, table, rows: [], allowed, target: linkTarget("logs", "runner") };
       return;
     }
 
@@ -353,7 +353,7 @@ export default {
     }, { passive: true });
 
     parts = {
-      ctx, table, rows: [], allowed, selected: null, stream: null,
+      ctx, table, rows: [], allowed, selected: null, stream: null, target: linkTarget("logs", "runner"),
       tail, follow, output, jump, pause, reconnect, download, stopButton, status, count, pauseNote, dropped, paneBlock, paneTitle, paneJob,
       pane: { frame: 0, timer: 0, pending: [], shown: [], dropped: 0, paused: false },
     };
@@ -365,6 +365,14 @@ export default {
     const empty = !snapshot?.fleet ? "Waiting for a fleet snapshot…"
       : snapshot.fleet.docker_error ? "Runner observations are unavailable." : "No runner is running a job right now.";
     parts.table.update(parts.rows, empty);
+    // #/logs?runner=NAME, from the Runners screen, opens that runner's log once.
+    const wanted = parts.target.key();
+    if (wanted && snapshot?.fleet) {
+      const runner = parts.rows.find((candidate) => candidate.name === wanted);
+      parts.target.forget();
+      if (!runner) parts.ctx.toast(tr("The runner {name} is no longer listed.", { name: wanted }), "");
+      else if (parts.allowed && !unsupported(runner.host) && parts.selected?.name !== runner.name) choose(runner);
+    }
     const selected = parts.selected;
     if (!selected || !parts.allowed) return;
     const still = parts.rows.find((runner) => runner.name === selected.name);
@@ -381,6 +389,12 @@ export default {
       parts.reconnect.hidden = true;
     }
     if (still && parts.finished === selected.name) parts.finished = null;
+  },
+
+  params(search) {
+    if (!parts) return;
+    parts.target.open(search);
+    this.update(parts.ctx.snapshot());
   },
 
   commands(ctx) {
