@@ -2,7 +2,7 @@
 
 [Runquill README](../README.ko.md) · [English](runner-images.md)
 
-모든 Runquill 러너는 러너 이미지로 시작합니다. 이 가이드는 게시된 OS 변형, 작업이 `runs-on`에서 변형을 고르는 방법, 매니저가 호스트에 이미지를 받는 방식, 캐시를 쓰는 풀의 도구 캐시, 더 이상 아무도 쓰지 않는 이미지와 캐시 볼륨의 정리를 설명합니다.
+모든 Runquill 러너는 러너 이미지로 시작합니다. 이 가이드는 게시된 OS 변형, 작업이 `runs-on`에서 변형을 고르는 방법, 매니저가 호스트에 이미지를 받는 방식, 캐시를 쓰는 풀의 도구 캐시, Docker-in-Docker 러너용 Docker Hub 미러, 더 이상 아무도 쓰지 않는 이미지와 캐시 볼륨의 정리를 설명합니다.
 
 ## OS 변형
 
@@ -150,6 +150,49 @@ pip, uv, Poetry, Yarn 1, Go 빌드 캐시처럼 이미 `~/.cache` 아래에 다�
 
 Docker 통합 테스트는 도구 체인 표식 파일로 캐시 재사용과 격리를 확인합니다. 실제 `actions/setup-*` 작업은 아직 별도로 검증해야 합니다.
 
+## Docker Hub 미러
+
+권한 있는(Docker-in-Docker) 러너는 빈 저장소로 자기 `dockerd`를 시작하므로, 작업의 `docker pull`, `docker run`, `docker build` 기반 이미지를 매번 Docker Hub에서 다시 받습니다. `RUNQUILL_REGISTRY_MIRROR`를 설정하면 이 내부 `dockerd`가 `--registry-mirror`로 호스트 가까이 있는 Docker Hub pull-through 캐시를 씁니다. 기본값은 꺼짐입니다.
+
+값은 경로, 쿼리, 인증 정보가 없는 `http://` 또는 `https://` origin이어야 합니다. 예: `http://10.0.0.5:5000`. 그 밖의 값이면 Runquill은 시작하지 않습니다. `localhost`와 루프백 주소도 거부하는데, 러너 안에서는 러너 컨테이너 자신을 가리키기 때문입니다. 이 값은 `docker create`를 실행하는 쪽이 읽습니다.
+
+| 호스트 | 설정 위치 | 사용할 주소 |
+| --- | --- | --- |
+| `local` | 매니저 | 미러를 게시한 호스트의 사설 주소. 러너 컨테이너는 그 주소에 게시된 포트에 Docker 포트 포워딩으로 접근합니다. `127.0.0.1`에 게시한 포트에는 접근할 수 없습니다. Docker Desktop에서는 `http://host.docker.internal:PORT`도 동작합니다. |
+| `ssh://` | 매니저 | 값 하나가 `local`과 모든 SSH 호스트에 적용되므로, 미러 호스트의 사설 LAN 주소처럼 모든 호스트가 라우팅할 수 있는 주소를 씁니다. |
+| `agent://` | 워커 프로세스 | 매니저의 값은 아웃바운드 워커에 전달되지 않습니다. 워커 자신의 환경에 설정하며, 그 워커 가까이 있는 미러를 가리켜도 됩니다. [아웃바운드 워커](outbound-workers.ko.md#연결)를 참고하세요. |
+| K3s | `runquill-config` | `RUNQUILL_K8S_RUNNER_MODE=dind`일 때만 적용됩니다. 노드의 사설 주소나 Service 이름처럼 Pod 네트워크에서 닿는 주소를 씁니다. 아래 Compose 오버레이는 해당하지 않습니다. |
+
+이 변수는 권한 있는 러너에만 전달됩니다. `privileged: false` 풀의 러너에는 내부 `dockerd`가 없으므로 달라지는 것이 없습니다.
+
+### Compose
+
+`compose.mirror.yaml`은 CNCF Distribution `registry` 이미지를 Docker Hub 프록시로 실행해 `registry-mirror` 볼륨에 캐시를 두고, 매니저에 `RUNQUILL_REGISTRY_MIRROR`를 전달합니다. `.env`에 추가합니다.
+
+```sh
+RUNQUILL_REGISTRY_MIRROR=http://10.0.0.5:5000
+RUNQUILL_REGISTRY_MIRROR_BIND=10.0.0.5:5000
+# 선택: 캐시한 내용의 보존 기간, 기본값 168h
+RUNQUILL_REGISTRY_MIRROR_TTL=168h
+```
+
+`RUNQUILL_REGISTRY_MIRROR_BIND`는 미러를 게시할 호스트 주소와 포트입니다. 공인 주소가 있는 호스트에서는 `0.0.0.0` 대신 사설 주소를 쓰고, 방화벽에서 러너 호스트만 허용하세요. 미러에는 인증이 없어서 접근할 수 있는 누구나 공개 이미지를 받아 디스크를 채울 수 있습니다. 그다음 다른 오버레이와 함께 적용합니다.
+
+```sh
+docker compose -f compose.yaml -f compose.mirror.yaml up -d
+```
+
+오버레이는 일부러 Docker Hub 로그인을 설정하지 않습니다. 업스트림 인증 정보를 넣으면 미러가 그 계정의 비공개 이미지를 이 호스트들에서 실행되는 모든 저장소의 모든 작업과, 미러에 닿는 다른 누구에게나 제공하게 됩니다. 평문 `http://`를 쓰면 레지스트리 트래픽이 네트워크에서 암호화되지 않습니다. 신뢰할 수 없는 네트워크라면 TLS 프록시 뒤에서 `https://`를 사용하세요.
+
+### 제약
+
+- **다운로드만 줄이고 압축 해제는 줄이지 않습니다.** 작업마다 내부 `dockerd`의 새 `vfs` 저장소에 모든 레이어를 다시 풀기 때문에 시간과 디스크가 듭니다.
+- **Docker Hub만 해당합니다.** Docker는 미러를 `docker.io` 이미지에만 적용합니다. `ghcr.io`, `quay.io` 등 다른 레지스트리의 이미지는 여전히 직접 받습니다.
+- **이 릴리스의 러너 이미지가 필요합니다.** `--registry-mirror`는 러너 엔트리포인트가 추가합니다. 이전 러너 이미지는 이 변수를 무시하고 Docker Hub에서 받습니다.
+- **BuildKit 컨테이너에는 적용되지 않습니다.** `docker pull`, `docker run`, 기본 빌더의 `docker build`는 미러를 씁니다. `docker/setup-buildx-action`이 기본으로 만드는 것 같은 `docker-container` 빌더는 자체 레지스트리 설정을 가진 BuildKit을 따로 실행하므로, 미러를 [`buildkitd.toml`](https://docs.docker.com/build/buildkit/toml-configuration/)에 따로 설정해야 합니다.
+- **캐시 크기는 TTL과 디스크로만 제한됩니다.** 레지스트리는 TTL 동안 아무도 받지 않은 내용을 지웁니다. 크기 제한은 없으니 `registry-mirror` 볼륨을 지켜보세요.
+- **미러 장애는 드러나지 않습니다.** 미러에 닿지 않거나 실패하면 `dockerd`는 Docker Hub에서 직접 받습니다. 러너가 미러를 쓰는지는 레지스트리 로그나 `curl http://ADDRESS/v2/_catalog`로 확인하세요.
+
 ## 사용하지 않는 이미지와 캐시 볼륨 정리
 
 매니저는 `local` 호스트와 `ssh://` 호스트에서 한동안 아무도 쓰지 않은 러너 이미지와 캐시 볼륨을 삭제합니다. 호스트마다 각 이미지와 캐시 볼륨으로 마지막으로 러너를 시작한 시각과, 자신의 이미지 받기 기능이 받은 이미지를 기록합니다.
@@ -193,6 +236,6 @@ docker compose exec manager runquill gc --unused --older-than 7d
 
 ## 기능 검증 현황
 
-개발자 컴퓨터의 실제 Docker로 확인한 항목: 레지스트리에서 이미지 받기, 실제 이미지와 볼륨을 대상으로 한 정리, 다섯 가지 OS 변형 모두의 러너 실행. Docker 스모크 테스트는 같은 저장소에 대해 Ubuntu 24.04와 Debian 13을 번갈아 실행하면서 각 이미지가 자기 도구 캐시만 재사용하는지, 패키지 캐시는 계속 공유되는지 확인합니다. plain 모드와 권한 있는 모드 모두에서 실행합니다.
+개발자 컴퓨터의 실제 Docker로 확인한 항목: 레지스트리에서 이미지 받기, 실제 이미지와 볼륨을 대상으로 한 정리, 다섯 가지 OS 변형 모두의 러너 실행. Docker 스모크 테스트는 같은 저장소에 대해 Ubuntu 24.04와 Debian 13을 번갈아 실행하면서 각 이미지가 자기 도구 캐시만 재사용하는지, 패키지 캐시는 계속 공유되는지 확인합니다. plain 모드와 권한 있는 모드 모두에서 실행합니다. Docker Hub 미러는 Docker Desktop에서 `compose.mirror.yaml`과 권한 있는 러너 이미지로 확인했습니다. `docker pull`과 `docker build`가 `--insecure-registry` 없이 `http://` 미러를 거쳤고, 미러가 Docker Hub에 닿지 못하는 상태에서도 이후 pull이 캐시에서 제공됐습니다.
 
-아직 확인하지 않은 항목: 도구 캐시를 쓰는 실제 `actions/setup-*` 작업, 패키지 캐시 변수를 쓰는 실제 npm, Go, NuGet, Bun 작업, `ssh://` 호스트에서 필요할 때 이미지 받기, 비공개 레지스트리, `os__` 선택자를 쓰는 아웃바운드 `agent://` 워커.
+아직 확인하지 않은 항목: 도구 캐시를 쓰는 실제 `actions/setup-*` 작업, 패키지 캐시 변수를 쓰는 실제 npm, Go, NuGet, Bun 작업, `ssh://` 호스트에서 필요할 때 이미지 받기, 비공개 레지스트리, `os__` 선택자를 쓰는 아웃바운드 `agent://` 워커, Linux 호스트·`ssh://` 호스트·아웃바운드 워커·K3s·`docker-container` 빌더에서의 Docker Hub 미러.

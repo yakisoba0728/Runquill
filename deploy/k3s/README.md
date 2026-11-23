@@ -53,6 +53,7 @@ A runner Pod can stay Terminating, for example on a NotReady node. Runquill does
 | `RUNQUILL_K8S_JOB_CPU` | unset | Optional CPU request and limit, for example `2`. |
 | `RUNQUILL_K8S_JOB_MEMORY` | unset | Optional memory request and limit, for example `4Gi`. |
 | `RUNQUILL_K8S_RUNNER_MODE` | `plain` | `plain` executes steps directly under UID 1001. `dind` adds the privileged Docker daemon for Docker builds and container-based jobs, actions, and services. |
+| `RUNQUILL_REGISTRY_MIRROR` | unset | Optional Docker Hub pull-through mirror for the `dind` daemon, such as `http://10.0.0.5:5000`. Use an address the Pod network reaches. See the [Docker Hub mirror](../../docs/runner-images.md#docker-hub-mirror) limits. |
 
 For DinD, use a dedicated cluster with trusted workflows. Label the approved worker nodes, set `RUNQUILL_K8S_NODE_SELECTOR` to select them, and allow privileged Pods in the runner namespace only. Keep the manager namespace restricted. Leave `RUNQUILL_DOCKER_HOSTS`, `RUNQUILL_DOCKER_HOST_LIMITS`, and `RUNQUILL_WORKER_POOLS` empty for this backend. `RUNQUILL_MAX_PER_REPOSITORY`, `RUNQUILL_SCHEDULER_WORKERS`, the `RUNQUILL_LOG_*` and `RUNQUILL_NOTIFY_*` settings apply here as well. Add them to `.env`, recreate `runquill-config`, and restart the Deployment. Use `runquill host cordon kubernetes` to pause new assignments without interrupting active jobs.
 

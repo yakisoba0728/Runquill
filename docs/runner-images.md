@@ -2,7 +2,7 @@
 
 [Runquill README](../README.md) · [한국어](runner-images.ko.md)
 
-Every Runquill runner starts from a runner image. This guide covers the published OS variants, how a job selects one in `runs-on`, how the manager pulls images onto its hosts, the tool cache of cached pools, and the cleanup of images and cache volumes nobody uses any more.
+Every Runquill runner starts from a runner image. This guide covers the published OS variants, how a job selects one in `runs-on`, how the manager pulls images onto its hosts, the tool cache of cached pools, the Docker Hub mirror for Docker-in-Docker runners, and the cleanup of images and cache volumes nobody uses any more.
 
 ## OS variants
 
@@ -150,6 +150,49 @@ After upgrading, the first job for each image starts with an empty tool cache. T
 
 The Docker integration test exercises cache reuse and isolation with a toolchain marker. A real `actions/setup-*` job is still a separate verification step.
 
+## Docker Hub mirror
+
+A privileged (Docker-in-Docker) runner starts its own `dockerd` with empty storage, so every `docker pull`, `docker run` and `docker build` base image of a job downloads from Docker Hub again. `RUNQUILL_REGISTRY_MIRROR` points that inner `dockerd` at a Docker Hub pull-through cache near your hosts with `--registry-mirror`. It is off by default.
+
+The value must be an `http://` or `https://` origin without a path, query or credentials, such as `http://10.0.0.5:5000`. Runquill refuses to start with any other value, including `localhost` and loopback addresses, because inside a runner they name the runner container itself. Whoever runs `docker create` reads it:
+
+| Host | Where to set it | Address to use |
+| --- | --- | --- |
+| `local` | the manager | The private address of the host the mirror publishes on. Runner containers reach a port published on that address through Docker's port forwarding; a port published on `127.0.0.1` is not reachable. On Docker Desktop, `http://host.docker.internal:PORT` also works. |
+| `ssh://` | the manager | One value applies to `local` and every SSH host, so use an address that all of them can route to, such as the mirror host's private LAN address. |
+| `agent://` | the worker process | The manager's value does not reach outbound workers. Set it in the worker's own environment, which can point at a mirror near that worker. See [outbound workers](outbound-workers.md#connect). |
+| K3s | `runquill-config` | Applies only with `RUNQUILL_K8S_RUNNER_MODE=dind`. Use an address the Pod network reaches, such as a node's private address or a Service name. The Compose overlay below does not apply. |
+
+Only privileged runners receive the variable. Runners in a pool with `privileged: false` have no inner `dockerd` and are unchanged.
+
+### Compose
+
+`compose.mirror.yaml` runs the CNCF Distribution `registry` image as a Docker Hub proxy with its cache in the `registry-mirror` volume, and passes `RUNQUILL_REGISTRY_MIRROR` to the manager. Add to `.env`:
+
+```sh
+RUNQUILL_REGISTRY_MIRROR=http://10.0.0.5:5000
+RUNQUILL_REGISTRY_MIRROR_BIND=10.0.0.5:5000
+# Optional: how long cached content is kept, 168h by default.
+RUNQUILL_REGISTRY_MIRROR_TTL=168h
+```
+
+`RUNQUILL_REGISTRY_MIRROR_BIND` is the host address and port the mirror publishes on. Use a private address, not `0.0.0.0` on a host with a public address, and allow only your runner hosts in the firewall: the mirror has no authentication, so anyone who reaches it can pull public images through it and fill its disk. Then apply it with your other overlays:
+
+```sh
+docker compose -f compose.yaml -f compose.mirror.yaml up -d
+```
+
+The overlay deliberately configures no Docker Hub login. With upstream credentials, the mirror would serve that account's private images to every job of every repository on these hosts, and to anyone else who reaches it. Plain `http://` keeps registry traffic unencrypted on your network; use `https://` behind a TLS proxy if that network is not trusted.
+
+### Limits
+
+- **It saves the download, not the extraction.** Each job still unpacks every layer into the fresh `vfs` storage of its inner `dockerd`, which takes time and disk.
+- **Docker Hub only.** Docker applies mirrors to `docker.io` images. Images from `ghcr.io`, `quay.io` or other registries still download directly.
+- **It needs the runner image of this release.** The runner entrypoint adds `--registry-mirror`. Older runner images ignore the variable and pull from Docker Hub.
+- **BuildKit containers are not covered.** `docker pull`, `docker run` and `docker build` with the default builder use the mirror. A `docker-container` builder, such as the one `docker/setup-buildx-action` creates by default, runs its own BuildKit with its own registry configuration and needs the mirror in its [`buildkitd.toml`](https://docs.docker.com/build/buildkit/toml-configuration/).
+- **The cache is bounded only by the TTL and the disk.** The registry removes content that nobody pulled within the TTL. It has no size limit, so watch the `registry-mirror` volume.
+- **A failing mirror is silent.** If the mirror cannot be reached or fails, `dockerd` pulls from Docker Hub directly. Check the registry log or `curl http://ADDRESS/v2/_catalog` to confirm that runners use it.
+
 ## Cleanup of unused images and cache volumes
 
 The manager removes runner images and cache volumes that nobody has used for a while on the `local` host and `ssh://` hosts. It records, per host, when it last started a runner with each image and cache volume, and which images its own puller pulled.
@@ -193,6 +236,6 @@ docker compose exec manager runquill gc --unused --older-than 7d
 
 ## Feature status
 
-Exercised on a developer machine with real Docker: pulls from a registry, cleanup against real images and volumes, and all five OS variants started as runners. The Docker smoke test alternates between Ubuntu 24.04 and Debian 13 for the same repository, checks that each image reuses only its own tool cache, and verifies that the package cache stays shared. It runs in both plain and privileged mode.
+Exercised on a developer machine with real Docker: pulls from a registry, cleanup against real images and volumes, and all five OS variants started as runners. The Docker smoke test alternates between Ubuntu 24.04 and Debian 13 for the same repository, checks that each image reuses only its own tool cache, and verifies that the package cache stays shared. It runs in both plain and privileged mode. The Docker Hub mirror was exercised with `compose.mirror.yaml` and a privileged runner image on Docker Desktop: `docker pull` and `docker build` went through an `http://` mirror without `--insecure-registry`, and a later pull was served from the cache while the mirror could not reach Docker Hub.
 
-Not yet exercised: a real `actions/setup-*` job using the tool cache, real npm, Go, NuGet and Bun jobs using the package cache variables, on-demand pulls on `ssh://` hosts, private registries and outbound `agent://` workers with `os__` selectors.
+Not yet exercised: a real `actions/setup-*` job using the tool cache, real npm, Go, NuGet and Bun jobs using the package cache variables, on-demand pulls on `ssh://` hosts, private registries, outbound `agent://` workers with `os__` selectors, and the Docker Hub mirror on Linux hosts, `ssh://` hosts, outbound workers, K3s and with `docker-container` builders.
