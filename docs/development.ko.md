@@ -27,7 +27,7 @@ CGO_ENABLED=0 go build -o runquill .
 
 러너 Dockerfile은 GitHub Actions 러너 이미지를 다이제스트로 고정합니다. `--build-arg RUNQUILL_RUNNER_BASE=IMAGE`로 호환 이미지에 자체 도구를 추가할 수 있습니다. 다른 기반 이미지는 `--build-arg RUNQUILL_RUNNER_OS=`에 `ubuntu22.04`, `ubuntu26.04`, `debian12`, `debian13` 중 하나를 넣어 빌드합니다. Kubernetes `plain` 모드와 `privileged: false` 풀을 위해 러너 파일은 `/home/runner`에 두고 사용자 UID는 1001로 유지합니다.
 
-러너 이미지를 빌드한 뒤 `RUNQUILL_TEST_DOCKER_IMAGE=runquill-runner:local go test ./internal/app -run '^TestDockerRunner$' -v`로 중첩 Docker 검증을 실행합니다. 로컬 GitHub 리스너 대역으로 Docker 빌드, PostgreSQL, 바인드 마운트, 컨테이너 삭제를 확인합니다.
+러너 이미지를 빌드한 뒤 `RUNQUILL_TEST_DOCKER_IMAGE=runquill-runner:local go test ./internal/app -run '^TestDockerRunner$' -v`로 중첩 Docker 검증을 실행합니다. 로컬 GitHub 리스너 대역으로 Docker 빌드, PostgreSQL, 바인드 마운트, 컨테이너 삭제를 확인합니다. 같은 이미지로 `-run '^TestDockerWarmRunner$'`를 실행하면 두 러너 모드에서 [미리 띄운 러너](workers.ko.md#러너를-미리-띄워-두기)를 시작하고 각각에 JIT 설정을 넘겨 봅니다.
 
 [CI](../.github/workflows/ci.yml)는 Go 점검을 amd64와 arm64 네이티브 이미지 빌드, 중첩 Docker 검증과 병렬로 실행합니다. amd64 런타임 점검에서는 K3s도 실행해 호스트 정비, 러너 배정, Pod와 Secret 정리를 확인합니다. 러너 이미지나 그 빌드 워크플로가 바뀌면 추가 OS 빌드 4개도 실행합니다. 관리자와 뷰어에 별도 GitHub 계정을 쓰는 [OAuth 검증](../internal/app/panel_live_oauth_test.go)은 전용 OAuth 앱을 준비해 실행할 수 있습니다.
 

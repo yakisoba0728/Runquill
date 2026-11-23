@@ -27,7 +27,7 @@ The manager and worker run only on Linux, and the tests run there. Windows and m
 
 The runner Dockerfile pins the upstream GitHub Actions runner image by digest. Use `--build-arg RUNQUILL_RUNNER_BASE=IMAGE` to extend a compatible image with your own toolchain. Pass `--build-arg RUNQUILL_RUNNER_OS=` with `ubuntu22.04`, `ubuntu26.04`, `debian12` or `debian13` to build another base. Keep the runner files in `/home/runner` and its user at UID 1001 for Kubernetes plain mode and pools with `privileged: false`.
 
-Run the nested Docker smoke test with `RUNQUILL_TEST_DOCKER_IMAGE=runquill-runner:local go test ./internal/app -run '^TestDockerRunner$' -v` after building the runner image. It checks Docker build, PostgreSQL, bind mounts, and removal with a local stand-in for the GitHub listener.
+Run the nested Docker smoke test with `RUNQUILL_TEST_DOCKER_IMAGE=runquill-runner:local go test ./internal/app -run '^TestDockerRunner$' -v` after building the runner image. It checks Docker build, PostgreSQL, bind mounts, and removal with a local stand-in for the GitHub listener. `-run '^TestDockerWarmRunner$'` with the same image starts [warm runners](workers.md#keep-runners-warm) in both runner modes and hands each a JIT config.
 
 [CI](../.github/workflows/ci.yml) runs the Go checks in parallel with the native amd64 and arm64 image builds and nested Docker smoke tests. The amd64 runtime check also runs K3s to verify host maintenance, runner assignment, and Pod and Secret cleanup. Changes to the runner image or its build workflows trigger the four additional OS builds. The [two-account OAuth check](../internal/app/panel_live_oauth_test.go) can be run with a dedicated OAuth App and separate GitHub accounts for the administrator and viewer.
 
