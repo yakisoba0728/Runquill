@@ -62,19 +62,19 @@ services:
 
 ## Job resources
 
-The same sampling pass records each job's CPU and memory, so you can see which pools are too small or too large. It runs by default, even with `RUNQUILL_ELASTIC=off`, and covers every runner on the `local` Docker host, including pools without `cpus` or `memory_mib`. Set `RUNQUILL_JOB_RESOURCES=off` to stop it; any other value than `on` or `off` stops the manager at startup.
+The same sampling pass records each job's CPU and memory, so you can see which pools are too small or too large. It runs by default, even with `RUNQUILL_ELASTIC=off`, and covers every runner on the `local` Docker host, including pools without `cpus` or `memory_mib`. Set `RUNQUILL_JOB_RESOURCES=off` to stop it; any other value than `on` or `off` stops the manager at startup. The pass always runs the `docker` CLI, so with `RUNQUILL_CONTAINER_ENGINE=podman` it stays off unless you set `RUNQUILL_JOB_RESOURCES=on` and the `docker` command reaches the Podman socket. `off` stops only the sampling: exited runners are still checked for memory kills.
 
 | Recorded | Where |
 | --- | --- |
 | Sample count, peak and average CPU in cores, peak memory in MiB | `local` Docker host only |
-| CPU and memory limits | The pool's guarantee as first sampled, so an elastic raise does not hide a pool that is too small. `0` is unlimited. |
+| CPU and memory limits | The pool's guarantee as first sampled, so an elastic raise does not hide a pool that is too small, and the highest effective limit sampled. `0` is unlimited. |
 | Killed for memory | `local` and `ssh://` Docker hosts from `State.OOMKilled` of the exited runner, and Kubernetes from the runner container's `OOMKilled` reason. Not on outbound `agent://` workers. |
 
 Fields a host does not record are left out of the output rather than shown as zero.
 
 With elastic limits off, each pass runs `docker ps`, `docker inspect` and, while runners run, one `docker stats --no-stream` for all of them. It skips `docker info` and never changes a container. Each `docker stats` call keeps the daemon busy for a second or two, so raise `RUNQUILL_ELASTIC_INTERVAL` on a busy host if that matters.
 
-Peaks are the highest of these snapshots, not a cgroup high-water mark: a spike between two samples, or a fast out-of-memory kill, can show a lower peak than the job reached. The out-of-memory flag is the engine's own report. Whether Docker sets it when a process inside the runner is killed but the runner keeps running has not been verified on a real engine.
+The average CPU covers the runner's whole life, including the idle time before it picks up the job. Peaks are the highest of these snapshots, not a cgroup high-water mark: a spike between two samples, or a fast out-of-memory kill, can show a lower peak than the job reached. The out-of-memory flag is the engine's own report. Docker 29 sets it when any process in the runner was killed for memory, even if the runner itself then exited normally; other engines and versions have not been checked.
 
 Read one job with `runquill jobs show JOB_ID`, `GET /api/jobs/{id}` or the MCP `get_job` tool. Compare recent jobs with their limits with `runquill usage --rightsizing`, `GET /api/usage/rightsizing` or the MCP `job_rightsizing` tool. They group finished jobs from the last seven days by pool, or with `--group job` by repository and runner label, and give each resource a verdict:
 

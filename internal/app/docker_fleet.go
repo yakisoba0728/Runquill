@@ -226,9 +226,6 @@ func (f *dockerFleet) snapshot(ctx context.Context) ([]dockerHostSnapshot, error
 				}
 			}
 			result.Containers, result.Err = host.containers(ctx)
-			if result.Err == nil {
-				result.OOMKilled, result.RunnerDiagnostics = host.exitedOOM(ctx, result.Containers)
-			}
 			if result.Err == nil && host.image != "" {
 				result.Err = host.checkRunnerImage(ctx)
 				if f.images.enabled() && (result.Err == nil || imageMissing(result.Err)) {
@@ -239,6 +236,9 @@ func (f *dockerFleet) snapshot(ctx context.Context) ([]dockerHostSnapshot, error
 			}
 			if result.Err == nil {
 				result.Err = host.privilegeConflict(ctx)
+			}
+			if result.Err == nil {
+				result.OOMKilled, result.RunnerDiagnostics = host.exitedOOM(ctx, result.Containers)
 			}
 		})
 	}

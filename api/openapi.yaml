@@ -285,6 +285,13 @@ components:
           type: integer
           format: int64
           description: The runner's guaranteed memory as first sampled; 0 is unlimited.
+        cpu_limit_max:
+          type: number
+          description: The highest effective CPU limit sampled, above cpu_limit after an elastic raise; 0 is unlimited.
+        memory_limit_max_mib:
+          type: integer
+          format: int64
+          description: The highest effective memory limit sampled, above memory_limit_mib after an elastic raise; 0 is unlimited.
         cpu_peak:
           type: number
           description: Highest sampled CPU use in cores.

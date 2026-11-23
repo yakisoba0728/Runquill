@@ -25,6 +25,8 @@ const jobResourcesSchema = `CREATE TABLE IF NOT EXISTS job_resources (
     samples INTEGER NOT NULL DEFAULT 0,
     cpu_limit REAL,
     memory_limit_mib INTEGER,
+    cpu_limit_max REAL,
+    memory_limit_max_mib INTEGER,
     cpu_peak REAL,
     cpu_sum REAL NOT NULL DEFAULT 0,
     memory_peak_mib INTEGER,
@@ -37,19 +39,24 @@ type jobResources struct {
 	Samples        int64    `json:"samples"`
 	CPULimit       *float64 `json:"cpu_limit,omitempty"`
 	MemoryLimitMiB *int64   `json:"memory_limit_mib,omitempty"`
-	CPUPeak        *float64 `json:"cpu_peak,omitempty"`
-	CPUAverage     *float64 `json:"cpu_average,omitempty"`
-	MemoryPeakMiB  *int64   `json:"memory_peak_mib,omitempty"`
-	OOMKilled      *bool    `json:"oom_killed,omitempty"`
+	// The max limits are the highest effective limits seen, above the guarantee after an elastic raise.
+	CPULimitMax       *float64 `json:"cpu_limit_max,omitempty"`
+	MemoryLimitMaxMiB *int64   `json:"memory_limit_max_mib,omitempty"`
+	CPUPeak           *float64 `json:"cpu_peak,omitempty"`
+	CPUAverage        *float64 `json:"cpu_average,omitempty"`
+	MemoryPeakMiB     *int64   `json:"memory_peak_mib,omitempty"`
+	OOMKilled         *bool    `json:"oom_killed,omitempty"`
 }
 
-const jobResourceColumns = `samples, cpu_limit, memory_limit_mib, cpu_peak, cpu_sum, memory_peak_mib, oom_killed`
+const jobResourceColumns = `samples, cpu_limit, memory_limit_mib, cpu_peak, cpu_sum, memory_peak_mib, oom_killed,
+    cpu_limit_max, memory_limit_max_mib`
 
 func scanJobResources(scan func(...any) error) (jobResources, error) {
 	var r jobResources
 	var cpuSum float64
 	var oom sql.NullBool
-	if err := scan(&r.Samples, &r.CPULimit, &r.MemoryLimitMiB, &r.CPUPeak, &cpuSum, &r.MemoryPeakMiB, &oom); err != nil {
+	if err := scan(&r.Samples, &r.CPULimit, &r.MemoryLimitMiB, &r.CPUPeak, &cpuSum, &r.MemoryPeakMiB, &oom,
+		&r.CPULimitMax, &r.MemoryLimitMaxMiB); err != nil {
 		return r, err
 	}
 	if r.Samples > 0 {
@@ -85,11 +92,13 @@ func recordJobSamples(ctx context.Context, db *sql.DB, runners []elasticRunner) 
 	}
 	defer tx.Rollback()
 	statement, err := tx.PrepareContext(ctx, `INSERT INTO job_resources
-            (job_id, samples, cpu_limit, memory_limit_mib, cpu_peak, cpu_sum, memory_peak_mib)
-        SELECT job_id, 1, ?, ?, ?, ?, ? FROM jobs WHERE runner_name = ?
+            (job_id, samples, cpu_limit, memory_limit_mib, cpu_peak, cpu_sum, memory_peak_mib, cpu_limit_max, memory_limit_max_mib)
+        SELECT job_id, 1, ?, ?, ?, ?, ?, ?, ? FROM jobs WHERE runner_name = ?
         ON CONFLICT (job_id) DO UPDATE SET samples = samples + 1,
             cpu_limit = coalesce(cpu_limit, excluded.cpu_limit),
             memory_limit_mib = coalesce(memory_limit_mib, excluded.memory_limit_mib),
+            cpu_limit_max = max(coalesce(cpu_limit_max, 0), excluded.cpu_limit_max),
+            memory_limit_max_mib = max(coalesce(memory_limit_max_mib, 0), excluded.memory_limit_max_mib),
             cpu_peak = max(coalesce(cpu_peak, 0), excluded.cpu_peak),
             cpu_sum = cpu_sum + excluded.cpu_sum,
             memory_peak_mib = max(coalesce(memory_peak_mib, 0), excluded.memory_peak_mib)`)
@@ -103,7 +112,7 @@ func recordJobSamples(ctx context.Context, db *sql.DB, runners []elasticRunner) 
 		}
 		cpu := math.Round(r.CPUUsage*100) / 100
 		if _, err := statement.ExecContext(ctx, cpuBase(r), memoryBase(r), cpu, cpu,
-			int64(math.Ceil(r.MemoryUsageMiB)), r.Name); err != nil {
+			int64(math.Ceil(r.MemoryUsageMiB)), r.CPULimit, r.MemoryLimitMiB, r.Name); err != nil {
 			return err
 		}
 	}
@@ -256,7 +265,8 @@ func parseRightsizingQuery(query url.Values) (group string, days int, ok bool) {
 // pool, or by repository and runner label (one label per workflow job).
 func readRightsizing(ctx context.Context, db *sql.DB, group string, days int, pools workerPools, now time.Time) (rightsizingResponse, error) {
 	response := rightsizingResponse{Group: group, Days: days, Groups: []rightsizingGroup{}}
-	rows, err := db.QueryContext(ctx, `SELECT j.sequence, j.job_id, j.repository, j.route, `+jobResourceColumns+`
+	rows, err := db.QueryContext(ctx, `SELECT j.sequence, j.job_id, j.repository, j.route,
+        samples, cpu_limit, memory_limit_mib, cpu_peak, cpu_sum, memory_peak_mib, oom_killed
         FROM jobs j JOIN job_resources USING (job_id)
         WHERE j.phase = ? AND j.changed_at > ? LIMIT ?`,
 		completed, now.Add(-time.Duration(days)*24*time.Hour).Unix(), usageRawLimit)
