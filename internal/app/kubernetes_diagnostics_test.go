@@ -127,3 +127,33 @@ func TestKubernetesSnapshotReportsOnlyCurrentMountWarnings(t *testing.T) {
 		}
 	}
 }
+
+// Exited runner Pods report whether Kubernetes killed them for memory; running ones stay unknown.
+func TestKubernetesSnapshotReportsMemoryKills(t *testing.T) {
+	terminated := func(name string, phase core.PodPhase, code int32, reason string) core.Pod {
+		return core.Pod{ObjectMeta: meta.ObjectMeta{Name: name}, Status: core.PodStatus{Phase: phase, ContainerStatuses: []core.ContainerStatus{{
+			Name: "runner", State: core.ContainerState{Terminated: &core.ContainerStateTerminated{ExitCode: code, Reason: reason}}}}}}
+	}
+	pods := []core.Pod{
+		terminated("runquill-oom", core.PodFailed, 137, "OOMKilled"),
+		terminated("runquill-done", core.PodSucceeded, 0, "Completed"),
+		{ObjectMeta: meta.ObjectMeta{Name: "runquill-busy"}, Status: core.PodStatus{Phase: core.PodRunning}},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(core.PodList{TypeMeta: meta.TypeMeta{APIVersion: "v1", Kind: "PodList"}, Items: pods})
+	}))
+	t.Cleanup(server.Close)
+	api, err := typed.NewForConfig(&rest.Config{Host: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := &kubeRunners{pods: api.Pods("runner-fixture"), events: api.Events("runner-fixture")}
+	hosts, err := runtime.snapshot(t.Context())
+	if err != nil || len(hosts) != 1 {
+		t.Fatalf("snapshot: %+v, %v", hosts, err)
+	}
+	if got := hosts[0].OOMKilled; len(got) != 2 || !got["runquill-oom"] || got["runquill-done"] {
+		t.Fatalf("OOMKilled = %v", got)
+	}
+}

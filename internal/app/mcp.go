@@ -444,7 +444,7 @@ var mcpTools = []mcpTool{
 			"limit":      mcpInteger("Number of jobs to return.", 1, panelHistoryMaxPage, mcpDefaultJobs),
 		})},
 	{Name: "get_job", Title: "Get job", Annotations: mcpReadOnly,
-		Description: "Show one job by its GitHub job id: outcome, failure or retry reason, timing, runner and its GitHub URL.",
+		Description: "Show one job by its GitHub job id: outcome, failure or retry reason, timing, runner, sampled CPU and memory with an out-of-memory flag, and its GitHub URL.",
 		InputSchema: mcpObject([]string{"id"}, map[string]*mcpSchema{
 			"id": mcpInteger("The GitHub Actions job id.", 1, mcpMaxJobID, nil),
 		})},
@@ -462,6 +462,13 @@ var mcpTools = []mcpTool{
 		Description: "Recent CPU and memory resize decisions of the elastic loop, newest first.",
 		InputSchema: mcpObject(nil, map[string]*mcpSchema{
 			"limit": mcpInteger("Number of decisions to return.", 1, elasticDecisionHistory, mcpDefaultDecisions),
+		})},
+	{Name: "job_rightsizing", Title: "Job rightsizing", Annotations: mcpReadOnly,
+		Description: "Compare the CPU and memory peaks of recently finished jobs with their limits, per worker pool or per repository and runner label. " +
+			"A verdict of oversized means every peak stayed below 25% of the limit; tight means a peak passed 80% or a runner was killed for memory.",
+		InputSchema: mcpObject(nil, map[string]*mcpSchema{
+			"group": {Type: "string", Description: "Group by worker pool or by repository and runner label.", Enum: []string{"pool", "job"}, Default: "pool"},
+			"days":  mcpInteger("Jobs that finished in this many days.", 1, 7, rightsizingDefaultAge),
 		})},
 }
 
@@ -503,6 +510,7 @@ var mcpHandlers = map[string]func(*mcpServer, context.Context, mcpArgs) (any, er
 	"list_hosts":        (*mcpServer).listHosts,
 	"usage_summary":     (*mcpServer).usageSummary,
 	"elastic_decisions": (*mcpServer).elasticDecisions,
+	"job_rightsizing":   (*mcpServer).jobRightsizing,
 }
 
 func (s *mcpServer) snapshot() panelSnapshot {
@@ -828,4 +836,23 @@ func (s *mcpServer) elasticDecisions(_ context.Context, args mcpArgs) (any, erro
 	}{report.Mode, report.IntervalSeconds, report.Decisions, len(report.Decisions)}
 	out.Decisions = out.Decisions[:min(len(out.Decisions), int(limit))]
 	return out, nil
+}
+
+// jobRightsizing returns what GET /api/usage/rightsizing serves.
+func (s *mcpServer) jobRightsizing(ctx context.Context, args mcpArgs) (any, error) {
+	group, ok, err := args.text("group")
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		group = "pool"
+	}
+	days, err := args.integer("days", 1, 7, rightsizingDefaultAge)
+	if err != nil {
+		return nil, err
+	}
+	if group != "pool" && group != "job" {
+		return nil, mcpToolError("group must be pool or job.")
+	}
+	return readRightsizing(ctx, s.db, group, int(days), s.panel.usagePools(), s.now())
 }

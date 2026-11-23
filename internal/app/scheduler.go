@@ -477,6 +477,9 @@ func (s *scheduler) reconcileFleet(ctx context.Context, active []job, snapshots 
 				return nil
 			}
 			leased, state, detail := *j, host.Containers[j.runnerName], host.RunnerDiagnostics[j.runnerName]
+			if killed, checked := host.OOMKilled[j.runnerName]; checked {
+				recordJobOOM(ctx, s.queue.DB, j.id, killed)
+			}
 			s.spawn(slots, &wg, func() {
 				gone, err := s.reconcile(ctx, leased, state, detail, now)
 				if err != nil {

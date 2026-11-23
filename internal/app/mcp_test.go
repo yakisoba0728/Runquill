@@ -287,7 +287,7 @@ func TestMCPToolsListSchemas(t *testing.T) {
 			t.Errorf("%s has no handler", tool.Name)
 		}
 	}
-	want := []string{"fleet_status", "list_jobs", "get_job", "list_hosts", "usage_summary", "elastic_decisions"}
+	want := []string{"fleet_status", "list_jobs", "get_job", "list_hosts", "usage_summary", "elastic_decisions", "job_rightsizing"}
 	if !slices.Equal(names, want) || len(mcpHandlers) != len(want) {
 		t.Fatalf("tools %v, want %v in that order", names, want)
 	}

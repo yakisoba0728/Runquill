@@ -41,10 +41,12 @@ type elasticConfig struct {
 	Mode     elasticMode
 	Interval time.Duration
 	Policy   elasticPolicy
+	// JobResources records each job's sampled usage, even with Mode off.
+	JobResources bool
 }
 
 func loadElasticConfig(getenv func(string) string) (elasticConfig, error) {
-	cfg := elasticConfig{Mode: elasticOff, Interval: 10 * time.Second, Policy: elasticPolicy{
+	cfg := elasticConfig{Mode: elasticOff, Interval: 10 * time.Second, JobResources: true, Policy: elasticPolicy{
 		ReserveCPUs: 1, ReserveMemoryMiB: 512, MemoryTrigger: 0.9, MaxMultiple: 2,
 		CPUBusy: 0.9, CPUIdle: 0.5, MinCPUStep: 0.1, MinMemoryStepMiB: 64,
 	}}
@@ -54,6 +56,13 @@ func loadElasticConfig(getenv func(string) string) (elasticConfig, error) {
 		cfg.Mode = mode
 	default:
 		return cfg, errors.New("RUNQUILL_ELASTIC must be off, observe or apply")
+	}
+	switch strings.TrimSpace(getenv("RUNQUILL_JOB_RESOURCES")) {
+	case "", "on":
+	case "off":
+		cfg.JobResources = false
+	default:
+		return cfg, errors.New("RUNQUILL_JOB_RESOURCES must be on or off")
 	}
 	duration := func(name string, target *time.Duration) error {
 		raw := strings.TrimSpace(getenv(name))
