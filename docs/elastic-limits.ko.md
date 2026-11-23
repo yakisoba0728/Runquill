@@ -10,7 +10,7 @@
 
 | `RUNQUILL_ELASTIC` | 동작 |
 | --- | --- |
-| `off`(기본값) | 측정하지 않습니다. |
+| `off`(기본값) | 한도를 바꾸지 않습니다. `RUNQUILL_JOB_RESOURCES=off`가 아니면 [작업 자원](#작업-자원) 기록을 위해 러너는 계속 측정합니다. |
 | `observe` | 러너를 측정하고 내릴 결정을 기록하지만 컨테이너는 바꾸지 않습니다. |
 | `apply` | 결정을 기록하고 `docker update`로 적용합니다. |
 
@@ -20,7 +20,7 @@
 
 | 변수 | 기본값 | 범위 | 동작 |
 | --- | --- | --- | --- |
-| `RUNQUILL_ELASTIC_INTERVAL` | `10s` | `1s`–`1h` | 러너를 측정하는 주기입니다. |
+| `RUNQUILL_ELASTIC_INTERVAL` | `10s` | `1s`–`1h` | 러너를 측정하는 주기입니다. 작업 자원 기록에도 쓰입니다. |
 | `RUNQUILL_ELASTIC_COOLDOWN` | 측정 주기 세 번 | `1s`–`1h`, 측정 주기 이상 | 러너 하나의 CPU나 메모리를 두 번 바꾸는 사이의 최소 간격입니다. |
 | `RUNQUILL_ELASTIC_HOST_RESERVE_CPUS` | `1` | `0` 이상 | 러너에 빌려주지 않을 CPU입니다. |
 | `RUNQUILL_ELASTIC_HOST_RESERVE_MEMORY_MIB` | `512` | MiB 단위 정수 | 러너에 빌려주지 않을 메모리입니다. |
@@ -57,6 +57,35 @@ services:
       RUNQUILL_ELASTIC_HOST_RESERVE_MEMORY_MIB: ${RUNQUILL_ELASTIC_HOST_RESERVE_MEMORY_MIB:-}
       RUNQUILL_ELASTIC_MEMORY_TRIGGER: ${RUNQUILL_ELASTIC_MEMORY_TRIGGER:-}
       RUNQUILL_ELASTIC_MAX_MULTIPLE: ${RUNQUILL_ELASTIC_MAX_MULTIPLE:-}
+      RUNQUILL_JOB_RESOURCES: ${RUNQUILL_JOB_RESOURCES:-}
 ```
+
+## 작업 자원
+
+같은 측정 단계에서 작업마다 CPU와 메모리 사용량을 기록하므로, 어떤 풀이 너무 작거나 큰지 알 수 있습니다. 기본으로 켜져 있고 `RUNQUILL_ELASTIC=off`여도 동작하며, `cpus`나 `memory_mib`가 없는 풀을 포함해 `local` Docker 호스트의 모든 러너를 측정합니다. 끄려면 `RUNQUILL_JOB_RESOURCES=off`로 설정합니다. `on`이나 `off`가 아닌 값이면 매니저가 시작 단계에서 멈춥니다.
+
+| 기록하는 값 | 기록하는 곳 |
+| --- | --- |
+| 측정 횟수, 코어 단위 CPU 최고값과 평균, MiB 단위 메모리 최고값 | `local` Docker 호스트만 |
+| CPU와 메모리 한도 | 처음 측정했을 때의 풀 보장값입니다. 그래서 탄력적 한도가 한도를 올려도 너무 작은 풀이 가려지지 않습니다. `0`은 무제한입니다. |
+| 메모리 부족으로 종료됨 | `local`과 `ssh://` Docker 호스트는 종료된 러너의 `State.OOMKilled`, Kubernetes는 러너 컨테이너의 `OOMKilled` 사유로 판단합니다. 아웃바운드 `agent://` 워커에서는 기록하지 않습니다. |
+
+호스트가 기록하지 않는 항목은 0으로 보여 주지 않고 출력에서 뺍니다.
+
+탄력적 한도가 꺼져 있으면 측정할 때마다 `docker ps`, `docker inspect`를 실행하고, 러너가 실행 중이면 모든 러너에 대해 `docker stats --no-stream`을 한 번 실행합니다. `docker info`는 건너뛰고 컨테이너는 바꾸지 않습니다. `docker stats` 한 번은 데몬을 1–2초 동안 사용하므로, 바쁜 호스트라면 `RUNQUILL_ELASTIC_INTERVAL`을 늘리세요.
+
+최고값은 이 측정값 가운데 가장 큰 값이며 cgroup의 최고 사용량이 아닙니다. 두 측정 사이에 잠깐 튄 사용량이나 빠르게 일어난 메모리 부족 종료는 실제보다 낮은 최고값으로 남을 수 있습니다. 메모리 부족 표시는 엔진이 보고한 값입니다. 러너는 계속 실행되고 그 안의 프로세스만 종료됐을 때 Docker가 이 값을 설정하는지는 실제 엔진에서 확인하지 않았습니다.
+
+작업 하나는 `runquill jobs show JOB_ID`, `GET /api/jobs/{id}`, MCP `get_job` 도구로 봅니다. 최근 작업을 한도와 비교하려면 `runquill usage --rightsizing`, `GET /api/usage/rightsizing`, MCP `job_rightsizing` 도구를 씁니다. 최근 7일 동안 끝난 작업을 풀별로, `--group job`이면 저장소와 러너 라벨별로 묶고 자원마다 판정을 붙입니다.
+
+| 판정 | 뜻 |
+| --- | --- |
+| `tight` | 최고값이 한도의 80%를 넘었거나, 메모리의 경우 러너가 메모리 부족으로 종료됐습니다. |
+| `oversized` | 측정한 작업이 3개 이상이고 모든 최고값이 한도의 25% 미만입니다. |
+| `ok` | 둘 다 아닙니다. |
+| `too_few_jobs` | 한도가 있는 측정 작업이 3개 미만이고 `tight`도 아닙니다. |
+| `unlimited` | 측정한 작업 중 한도가 있는 작업이 없습니다. |
+
+기록은 작업과 같이 7일 동안 보관하며 큐 백업에는 들어가지 않습니다.
 
 계획 규칙은 단위 테스트로, Docker 호출은 가짜 Docker 명령을 쓰는 테스트로 확인했습니다. 부하가 걸린 실제 Docker 호스트에서는 아직 탄력적 한도를 실행하지 않았습니다.

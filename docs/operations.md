@@ -85,7 +85,7 @@ Team users sign in with their enrolled GitHub account. Administrators add a team
 
 | Scope | Routes |
 | --- | --- |
-| `fleet:read` | `GET /snapshot`, `GET /api/events`, `GET /api/jobs`, `GET /api/jobs/{id}`, `GET /api/elastic`, `GET /api/usage`, `POST /mcp` |
+| `fleet:read` | `GET /snapshot`, `GET /api/events`, `GET /api/jobs`, `GET /api/jobs/{id}`, `GET /api/elastic`, `GET /api/usage`, `GET /api/usage/rightsizing`, `POST /mcp` |
 | `hosts:write` | `POST /api/hosts/cordon` with `{"host":"local","cordoned":true}`. Pausing a host does not interrupt its active runners. |
 | `jobs:write` | `POST /api/jobs/{id}/cancel`, `POST /api/jobs/{id}/retry` |
 
@@ -102,6 +102,8 @@ Select a job in the panel to see its runner label, current queue or startup expl
 ## Usage statistics
 
 The **Usage** screen and `GET /api/usage` report finished jobs, failures, runner time and queue wait by UTC day, repository, pool or host. A job counts once, on the UTC day it finished. Failures are jobs Runquill gave up on or that were cancelled in the panel, not GitHub job conclusions. Daily totals are kept for 400 days in the queue database but are not included in queue backups. [Details](panel.md#usage-statistics)
+
+The manager also records each job's sampled CPU and memory peaks and whether its runner was killed for memory. `runquill usage --rightsizing` lists pools or workflow jobs whose peaks stay far below or near their limits. [Job resources](elastic-limits.md#job-resources)
 
 ## Runner logs
 
