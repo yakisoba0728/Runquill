@@ -85,7 +85,7 @@ RUNQUILL_MANAGER_IMAGE=runquill-manager:local docker compose -f compose.yaml -f 
 
 | 범위 | 경로 |
 | --- | --- |
-| `fleet:read` | `GET /snapshot`, `GET /api/events`, `GET /api/jobs`, `GET /api/jobs/{id}`, `GET /api/elastic`, `GET /api/usage`, `POST /mcp` |
+| `fleet:read` | `GET /snapshot`, `GET /api/events`, `GET /api/jobs`, `GET /api/jobs/{id}`, `GET /api/elastic`, `GET /api/usage`, `GET /api/usage/rightsizing`, `POST /mcp` |
 | `hosts:write` | `POST /api/hosts/cordon`에 `{"host":"local","cordoned":true}`를 보냅니다. 배정을 멈춰도 실행 중인 러너는 계속 처리됩니다. |
 | `jobs:write` | `POST /api/jobs/{id}/cancel`, `POST /api/jobs/{id}/retry` |
 
@@ -102,6 +102,8 @@ Operator와 Admin은 러너 없이 대기 중인 작업을 패널이나 `jobs:wr
 ## 사용량 통계
 
 **사용량** 화면과 `GET /api/usage`는 끝난 작업의 수, 실패, 러너 사용 시간, 대기 시간을 UTC 날짜, 저장소, 풀, 호스트별로 보여줍니다. 작업은 끝난 UTC 날짜에 한 번만 집계합니다. 실패는 Runquill이 포기했거나 패널에서 취소한 작업이며 GitHub 작업 결과와는 다릅니다. 일별 합계는 대기열 DB에 400일 동안 보관하지만 대기열 백업에는 포함되지 않습니다. [자세히](panel.ko.md#사용량-통계)
+
+매니저는 작업마다 측정한 CPU와 메모리 최고값, 러너의 메모리 부족 종료 여부도 기록합니다. `runquill usage --rightsizing`은 최고값이 한도보다 훨씬 낮거나 한도에 가까운 풀이나 워크플로 작업을 보여 줍니다. [작업 자원](elastic-limits.ko.md#작업-자원)
 
 ## 러너 로그
 

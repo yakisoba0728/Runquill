@@ -10,10 +10,11 @@ Runquill은 에이전트가 운영 현황을 살펴볼 수 있도록 읽기 전�
 | --- | --- | --- |
 | `fleet_status` | 없음 | 최신 스냅샷의 대기 작업 수, 실행 중인 작업, 호스트 합계, 현재 문제입니다. `runquill fleet status --json`도 같은 결과를 출력합니다. |
 | `list_jobs` | `repository`, `outcome`, `since`(`90m`, `24h`, `7d` 등, 최대 `7d`), `before`, `limit`(1–100, 기본 20) | 최신 작업부터 보여 주는 작업 기록입니다. 기록된 단계별 소요 시간과 현재 진단이 있으면 함께 보여 줍니다. |
-| `get_job` | `id`(필수) | 작업 하나의 결과, 실패 또는 재시도 이유, 소요 시간, 러너, 실시간 상태입니다. |
+| `get_job` | `id`(필수) | 작업 하나의 결과, 실패 또는 재시도 이유, 소요 시간, 러너, 실시간 상태, [기록된 자원](elastic-limits.ko.md#작업-자원)과 메모리 부족 종료 여부입니다. |
 | `list_hosts` | 없음 | 호스트별 상태, 슬롯, 호스트당 최대 100개의 러너입니다. |
 | `usage_summary` | `window`(`24h` 또는 `7d`), `group`(`day`, `repository`, `pool`, `host`) | 끝난 작업 수, 실패, 러너 사용 시간, 대기 시간입니다. `group`을 주면 같은 통계를 그룹별로 나눈 `series`도 반환합니다. 작업이 많은 그룹부터 최대 500개이며, `window` 기간을 포함하는 UTC 날짜 전체를 `from`과 `to`로 지정한 `GET /api/usage`처럼 읽습니다. |
 | `elastic_decisions` | `limit`(1–200, 기본 20) | 최근 [탄력적 한도](elastic-limits.ko.md) 결정입니다. |
+| `job_rightsizing` | `group`(`pool` 또는 `job`), `days`(1–7, 기본 7) | 최근 끝난 작업의 한도 대비 CPU와 메모리 최고값, 메모리 부족 종료 수, 자원별 판정입니다. `GET /api/usage/rightsizing`과 같은 내용입니다. |
 
 결과는 JSON 텍스트와 구조화된 콘텐츠로 함께 반환합니다. 저장소, 작업, 러너 이름은 GitHub 사용자가 정한 값이므로, 서버 지침은 에이전트에게 이를 데이터로만 다루라고 안내합니다.
 

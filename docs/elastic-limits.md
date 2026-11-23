@@ -10,7 +10,7 @@ Elastic limits work only on the manager's `local` Docker host, for runners whose
 
 | `RUNQUILL_ELASTIC` | Behaviour |
 | --- | --- |
-| `off` (default) | No sampling. |
+| `off` (default) | No limit changes. Runners are still sampled for [job resources](#job-resources) unless `RUNQUILL_JOB_RESOURCES=off`. |
 | `observe` | Samples runners and records the decisions it would make, without changing any container. |
 | `apply` | Records the decisions and applies them with `docker update`. |
 
@@ -20,7 +20,7 @@ Start with `observe` and review the decisions on the panel's **Hosts & pools** s
 
 | Variable | Default | Range | Effect |
 | --- | --- | --- | --- |
-| `RUNQUILL_ELASTIC_INTERVAL` | `10s` | `1s`–`1h` | How often runners are sampled. |
+| `RUNQUILL_ELASTIC_INTERVAL` | `10s` | `1s`–`1h` | How often runners are sampled, also for job resources. |
 | `RUNQUILL_ELASTIC_COOLDOWN` | three intervals | `1s`–`1h`, at least the interval | Minimum time between two changes to one runner's CPU or memory. |
 | `RUNQUILL_ELASTIC_HOST_RESERVE_CPUS` | `1` | `0` or more | CPUs never lent to runners. |
 | `RUNQUILL_ELASTIC_HOST_RESERVE_MEMORY_MIB` | `512` | whole MiB | Memory never lent to runners. |
@@ -57,6 +57,35 @@ services:
       RUNQUILL_ELASTIC_HOST_RESERVE_MEMORY_MIB: ${RUNQUILL_ELASTIC_HOST_RESERVE_MEMORY_MIB:-}
       RUNQUILL_ELASTIC_MEMORY_TRIGGER: ${RUNQUILL_ELASTIC_MEMORY_TRIGGER:-}
       RUNQUILL_ELASTIC_MAX_MULTIPLE: ${RUNQUILL_ELASTIC_MAX_MULTIPLE:-}
+      RUNQUILL_JOB_RESOURCES: ${RUNQUILL_JOB_RESOURCES:-}
 ```
+
+## Job resources
+
+The same sampling pass records each job's CPU and memory, so you can see which pools are too small or too large. It runs by default, even with `RUNQUILL_ELASTIC=off`, and covers every runner on the `local` Docker host, including pools without `cpus` or `memory_mib`. Set `RUNQUILL_JOB_RESOURCES=off` to stop it; any other value than `on` or `off` stops the manager at startup.
+
+| Recorded | Where |
+| --- | --- |
+| Sample count, peak and average CPU in cores, peak memory in MiB | `local` Docker host only |
+| CPU and memory limits | The pool's guarantee as first sampled, so an elastic raise does not hide a pool that is too small. `0` is unlimited. |
+| Killed for memory | `local` and `ssh://` Docker hosts from `State.OOMKilled` of the exited runner, and Kubernetes from the runner container's `OOMKilled` reason. Not on outbound `agent://` workers. |
+
+Fields a host does not record are left out of the output rather than shown as zero.
+
+With elastic limits off, each pass runs `docker ps`, `docker inspect` and, while runners run, one `docker stats --no-stream` for all of them. It skips `docker info` and never changes a container. Each `docker stats` call keeps the daemon busy for a second or two, so raise `RUNQUILL_ELASTIC_INTERVAL` on a busy host if that matters.
+
+Peaks are the highest of these snapshots, not a cgroup high-water mark: a spike between two samples, or a fast out-of-memory kill, can show a lower peak than the job reached. The out-of-memory flag is the engine's own report. Whether Docker sets it when a process inside the runner is killed but the runner keeps running has not been verified on a real engine.
+
+Read one job with `runquill jobs show JOB_ID`, `GET /api/jobs/{id}` or the MCP `get_job` tool. Compare recent jobs with their limits with `runquill usage --rightsizing`, `GET /api/usage/rightsizing` or the MCP `job_rightsizing` tool. They group finished jobs from the last seven days by pool, or with `--group job` by repository and runner label, and give each resource a verdict:
+
+| Verdict | Meaning |
+| --- | --- |
+| `tight` | A peak passed 80% of its limit, or, for memory, a runner was killed for memory. |
+| `oversized` | At least three jobs were sampled and every peak stayed below 25% of its limit. |
+| `ok` | Neither. |
+| `too_few_jobs` | Fewer than three sampled jobs with a limit, and nothing tight. |
+| `unlimited` | No sampled job had a limit. |
+
+Records are kept as long as their jobs, seven days, and are not included in queue backups.
 
 The planning rules are covered by unit tests and the Docker calls by tests with a fake Docker command. Elastic limits have not yet been exercised on a real Docker host under load.
