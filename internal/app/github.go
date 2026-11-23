@@ -489,37 +489,63 @@ func (g *github) jobDetails(ctx context.Context, j job, token string) (workflowJ
 	return out, err
 }
 
-// forkRun says why the workflow run of a public repository's job came from a fork, or is empty
-// when the run's head repository is the job's repository. Anyone can open a pull request from a
-// fork of a public repository and change runs-on, so such runs never reach a Runquill runner.
-func (g *github) forkRun(ctx context.Context, j job, runID int64, token string) (string, error) {
+// workflowRun is what Runquill reads from GitHub about the workflow run of a job it launches.
+type workflowRun struct {
+	ID         int64  `json:"id"`
+	Event      string `json:"event"`
+	HeadBranch string `json:"head_branch"`
+	Repository *struct {
+		ID int64 `json:"id"`
+	} `json:"repository"`
+	HeadRepository *struct {
+		ID       int64  `json:"id"`
+		FullName string `json:"full_name"`
+	} `json:"head_repository"`
+}
+
+// workflowRun reads the workflow run of j from GitHub with the repository token, never from the
+// job's own output, so the job cannot influence what Runquill decides from it.
+func (g *github) workflowRun(ctx context.Context, j job, runID int64, token string) (workflowRun, error) {
+	var run workflowRun
 	if runID <= 0 {
-		return "", fmt.Errorf("GitHub did not report the workflow run of job %d", j.id)
-	}
-	var run struct {
-		ID         int64 `json:"id"`
-		Repository *struct {
-			ID int64 `json:"id"`
-		} `json:"repository"`
-		HeadRepository *struct {
-			ID       int64  `json:"id"`
-			FullName string `json:"full_name"`
-		} `json:"head_repository"`
+		return run, fmt.Errorf("GitHub did not report the workflow run of job %d", j.id)
 	}
 	path := fmt.Sprintf("/repos/%s/actions/runs/%d", j.repository, runID)
 	if err := g.request(ctx, http.MethodGet, path, token, nil, &run); err != nil {
-		return "", err
+		return run, err
 	}
+	if run.ID != runID || run.Repository == nil || run.Repository.ID != j.repositoryID {
+		return run, fmt.Errorf("GitHub returned a different workflow run for run %d", runID)
+	}
+	return run, nil
+}
+
+// forkReason says why the workflow run of a public repository's job came from a fork, or is empty
+// when the run's head repository is the job's repository. Anyone can open a pull request from a
+// fork of a public repository and change runs-on, so such runs never reach a Runquill runner.
+func (run workflowRun) forkReason(j job) string {
 	switch {
-	case run.ID != runID || run.Repository == nil || run.Repository.ID != j.repositoryID:
-		return "", fmt.Errorf("GitHub returned a different workflow run for run %d", runID)
 	case run.HeadRepository == nil:
-		return "the workflow run comes from a fork that no longer exists; Runquill does not run workflow runs from forks of public repositories", nil
+		return "the workflow run comes from a fork that no longer exists; Runquill does not run workflow runs from forks of public repositories"
 	case run.HeadRepository.ID != j.repositoryID:
 		return fmt.Sprintf("the workflow run comes from the fork %s; Runquill does not run workflow runs from forks of public repositories",
-			run.HeadRepository.FullName), nil
+			run.HeadRepository.FullName)
 	}
-	return "", nil
+	return ""
+}
+
+// cacheWriteEvents start runs whose code is the head branch's own. Other events either run code
+// from a pull request (pull_request*) or run on the default branch with input from outside it
+// (issue_comment, workflow_run, repository_dispatch), which is how default-branch caches get poisoned.
+var cacheWriteEvents = []string{"push", "schedule", "workflow_dispatch"}
+
+// writesCache reports whether a pool with cache_writes "default_branch" may let run's jobs write
+// the shared cache: a push, schedule or manual run on the repository's own default branch.
+// shortcut: GitHub's run has no full ref, so a tag with the default branch's name also passes;
+// a tag ruleset closes that until GitHub reports the ref.
+func (run workflowRun) writesCache(j job, defaultBranch string) bool {
+	return slices.Contains(cacheWriteEvents, run.Event) && defaultBranch != "" && run.HeadBranch == defaultBranch &&
+		run.HeadRepository != nil && run.HeadRepository.ID == j.repositoryID
 }
 
 // forkApprovalPolicy is the only fork pull request approval policy under which an outside

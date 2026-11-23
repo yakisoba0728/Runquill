@@ -278,7 +278,11 @@ func (c *workerClient) apply(ctx context.Context, task workerTask, received time
 	target := c.target
 	target.cpus, target.memoryMiB = task.CPUs, task.MemoryMiB
 	target.unprivileged, target.cache = task.Unprivileged, task.CacheRepository > 0
-	return target.start(withRunnerRepository(ctx, task.CacheRepository), task.Name, task.JIT)
+	start := withRunnerRepository(ctx, task.CacheRepository)
+	if task.ScratchCache {
+		start = withScratchCache(start)
+	}
+	return target.start(start, task.Name, task.JIT)
 }
 
 func (d docker) removeWorkerRunner(ctx context.Context, name string) error {

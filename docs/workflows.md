@@ -123,7 +123,7 @@ A workflow run that GitHub starts in the base repository still runs, even when s
 
 ### Isolate public repository jobs
 
-- Run them on a dedicated host in an unprivileged [worker pool](workers.md#route-jobs-to-worker-pools) with `privileged: false`, without `cache: true`, and with `repositories` limited to the public repositories. Jobs from one repository share cache volumes, so a cached pool lets one job poison the next.
+- Run them on a dedicated host in an unprivileged [worker pool](workers.md#route-jobs-to-worker-pools) with `privileged: false` and with `repositories` limited to the public repositories. If the pool sets `cache: true`, public repositories default to [`cache_writes: default_branch`](workers.md#protect-the-shared-cache): only push, schedule and manual runs on the default branch write the shared cache, and other jobs get an empty one. Setting `cache_writes` to `all` lets one job poison the next.
 - With an [organization runner group](install.md#connect-a-github-organization), use a group only for public repositories and allow public repositories in it. Do not mix private repositories into that group. GitHub does not assign a public repository's jobs to a group that disallows them, and Runquill reports a group that disallows public repositories but contains one.
 
 [GitHub security hardening for self-hosted runners](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#hardening-for-self-hosted-runners) · [Script injection](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#understanding-the-risk-of-script-injections)

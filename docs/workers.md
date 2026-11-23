@@ -54,20 +54,37 @@ Waiting jobs use slots in their requested pool, and available pools can advance 
 
 A label that names an unconfigured pool, or a repository the pool does not allow, keeps the job waiting with a retry reason such as `worker pool "build" is not configured`. Fix the pool in the panel's **Settings** and the job starts on a later pass without a manager restart. Only the 24-hour expiry fails it.
 
-Pools accept four more optional keys.
+Pools accept five more optional keys.
 
 ```dotenv
-RUNQUILL_WORKER_POOLS='{"lint":{"hosts":["local"],"privileged":false,"cache":true,"max_per_repository":2,"images":["ubuntu22.04"]}}'
+RUNQUILL_WORKER_POOLS='{"lint":{"hosts":["local"],"privileged":false,"cache":true,"cache_writes":"default_branch","max_per_repository":2,"images":["ubuntu22.04"]}}'
 ```
 
 - `privileged` defaults to `true`, which starts each runner with `--privileged` and its own Docker daemon. Set it to `false` to run the runner as UID 1001 with all capabilities dropped and `no-new-privileges`. Those jobs cannot use `docker`, service containers, job containers or `sudo`. A custom `image` for such a pool needs a runner user with UID 1001 that owns `/home/runner`.
 - `cache: true` mounts a named Docker volume `runquill-cache-<repository ID>` at `/home/runner/.cache`. Jobs from the same repository on the same host share these package and build-tool caches, including the npm, Go module, NuGet and Bun caches that the runner points there. The runner mounts `RUNNER_TOOL_CACHE` at `/home/runner/.cache/tools` in a separate volume for the repository, image ID and platform, so `actions/setup-*` reuses tools for the same image. Each host keeps its own volumes. On local and SSH hosts the manager removes a volume that no runner has used for 30 days. List volumes with `docker volume ls -f label=io.runquill.cache=1`. [Tool cache and cleanup](runner-images.md#tool-cache) · [Docker build layers](workflows.md#reuse-docker-build-layers-across-jobs)
+- `cache_writes` chooses which jobs of a `cache: true` pool use the shared cache volumes. `all` lets every job read and write them. `default_branch` gives them only to runs on the default branch, and other jobs start with an empty cache. Without the key, private repositories use `all` and public repositories use `default_branch`. [Protect the shared cache](#protect-the-shared-cache)
 - `max_per_repository` caps how many runners one repository can hold in that pool. It overrides `RUNQUILL_MAX_PER_REPOSITORY` for the pool. Without either value, a repository can use every free slot.
 - `images` lists the [runner OS](workflows.md#choose-the-runner-os) names that jobs in the pool may select with `os__NAME__`. Omit it to allow every name.
 
-[Outbound workers](outbound-workers.md) in a pool with `privileged: false` or `cache: true` must run the same Runquill release as the manager. Older agents reject runner tasks that carry these settings, so upgrade the workers along with the manager.
+[Outbound workers](outbound-workers.md) in a pool with `privileged: false`, `cache: true` or `cache_writes` must run the same Runquill release as the manager. Older agents reject runner tasks that carry these settings, so upgrade the workers along with the manager.
 
-The administrator panel's pool editor has checkboxes for Docker-in-Docker and the shared cache, and a field for the allowed runner OS names. It keeps each pool's `max_per_repository`, `warm` and `warm_max_idle_minutes` when saving but cannot change them. Once settings have been saved in the panel, they take precedence over `RUNQUILL_WORKER_POOLS`.
+The administrator panel's pool editor has checkboxes for Docker-in-Docker and the shared cache, and a field for the allowed runner OS names. It keeps each pool's `cache_writes`, `max_per_repository`, `warm` and `warm_max_idle_minutes` when saving but cannot change them. Once settings have been saved in the panel, they take precedence over `RUNQUILL_WORKER_POOLS`.
+
+### Protect the shared cache
+
+With `cache_writes` set to `all`, every job of a repository on a host writes the same cache volumes. A pull request job can then leave altered packages or tools that a later default-branch job runs. With `"cache_writes":"default_branch"`, a job mounts the repository's shared cache volumes only when its workflow run meets all of these:
+
+- The event is `push`, `schedule` or `workflow_dispatch`.
+- The run's head branch is the repository's default branch.
+- The run's head repository is the repository itself.
+
+Every other job gets an empty anonymous volume at `/home/runner/.cache` instead, with the same cache variables and `RUNNER_TOOL_CACHE`. This includes `pull_request`, `pull_request_target`, `merge_group`, `issue_comment`, `workflow_run` and pushes to other branches. Tools write to it as usual, and the engine removes it with the runner, so nothing it writes reaches another job. These jobs do not read the shared cache either. A read-only mount was not used, because npm, Go and `actions/setup-*` fail when they cannot write their cache, and a privileged runner can remount it writable.
+
+Runquill decides just before it registers the runner. It reads the event, head branch and head repository from GitHub's workflow run API, and the default branch from the repository API, with the installation token. Nothing the job runs can change these values. A pool with `default_branch` makes one more GitHub API request per launch. If the lookup fails, the job waits and retries.
+
+- GitHub does not say whether a run's head branch is a branch or a tag. A tag with the default branch's name, pushed by someone with write access, counts as the default branch. Block such tags with a tag ruleset.
+- With `privileged` left at `true`, a job is root on the host, so it can reach the shared volumes anyway. Use `privileged: false` where the protection must hold against a hostile job.
+- Outbound workers need this release. Older agents reject the task, and the job retries until the worker is upgraded.
 
 ## Keep runners warm
 

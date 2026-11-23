@@ -123,7 +123,7 @@ jobs:
 
 ### 공개 저장소 작업 분리
 
-- 전용 호스트에서 `privileged: false`이고 `cache: true`를 쓰지 않으며 `repositories`를 공개 저장소로 제한한 비특권 [워커 풀](workers.ko.md#워커-풀로-작업-분리)로 실행합니다. 같은 저장소의 작업은 캐시 볼륨을 공유하므로 캐시를 쓰는 풀에서는 한 작업이 다음 작업을 오염시킬 수 있습니다.
+- 전용 호스트에서 `privileged: false`이고 `repositories`를 공개 저장소로 제한한 비특권 [워커 풀](workers.ko.md#워커-풀로-작업-분리)로 실행합니다. 풀이 `cache: true`이면 공개 저장소는 기본으로 [`cache_writes: default_branch`](workers.ko.md#공유-캐시-보호)를 씁니다. 기본 브랜치의 push, schedule, 수동 실행만 공유 캐시에 쓰고, 나머지 작업은 빈 캐시를 받습니다. `cache_writes`를 `all`로 설정하면 한 작업이 다음 작업을 오염시킬 수 있습니다.
 - [조직 러너 그룹](install.ko.md#github-조직-연결)을 쓴다면 공개 저장소 전용 그룹을 만들고 공개 저장소를 허용합니다. 비공개 저장소를 그 그룹에 섞지 마세요. GitHub는 공개 저장소를 허용하지 않는 그룹에 공개 저장소의 작업을 배정하지 않으며, Runquill은 공개 저장소를 허용하지 않는데 공개 저장소가 들어 있는 그룹을 오류로 알립니다.
 
 [GitHub self-hosted 러너 보안 강화](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#hardening-for-self-hosted-runners) · [스크립트 인젝션](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#understanding-the-risk-of-script-injections)

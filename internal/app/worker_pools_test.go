@@ -69,10 +69,17 @@ func TestWorkerPoolsValidatePolicyAndSetDockerResources(t *testing.T) {
 		`{"build": {"hosts":["local"]},"other":{"hosts":["local"]}}`,
 		`{"build": {"hosts":["local"],"privileged":"no"}}`,
 		`{"build": {"hosts":["local"],"cache":"/cache"}}`,
+		`{"build": {"hosts":["local"],"cache":true,"cache_writes":"main"}}`,
+		`{"build": {"hosts":["local"],"cache":true,"cache_writes":"Default_Branch"}}`,
 		raw + raw,
 	} {
 		if _, err := fleet.configurePools(input); err == nil {
 			t.Errorf("accepted invalid worker pools: %s", input)
+		}
+	}
+	for _, writes := range []string{"all", "default_branch"} {
+		if _, err := fleet.configurePools(`{"build":{"hosts":["local"],"cache":true,"cache_writes":"` + writes + `"}}`); err != nil {
+			t.Errorf("rejected cache_writes %q: %v", writes, err)
 		}
 	}
 }

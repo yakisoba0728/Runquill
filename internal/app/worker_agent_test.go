@@ -296,10 +296,30 @@ func TestOutboundWorkerCarriesPoolRuntimeOptions(t *testing.T) {
 		{ID: "a", Operation: "remove", Name: testWorkerJob, Unprivileged: true, Expires: time.Now()},
 		{ID: "a", Operation: "remove", Name: testWorkerJob, CacheRepository: 42, Expires: time.Now()},
 		{ID: "a", Operation: "start", Name: testWorkerJob, Image: testWorkerImage, JIT: "x", CacheRepository: -1, Expires: time.Now()},
+		{ID: "a", Operation: "start", Name: testWorkerJob, Image: testWorkerImage, JIT: "x", ScratchCache: true, Expires: time.Now()},
+		{ID: "a", Operation: "remove", Name: testWorkerJob, ScratchCache: true, Expires: time.Now()},
 	} {
 		if validWorkerTask(task) {
 			t.Errorf("accepted invalid worker task %+v", task)
 		}
+	}
+}
+
+func TestWorkerStartsScratchCacheWithoutSharedVolumes(t *testing.T) {
+	dir := workerTestDocker(t)
+	task := workerTask{ID: rand.Text(), Operation: "start", Name: testWorkerJob, Image: testWorkerImage, JIT: "test-jit",
+		Unprivileged: true, CacheRepository: 42, ScratchCache: true, Expires: time.Now().Add(15 * time.Second)}
+	if !validWorkerTask(task) {
+		t.Fatal("rejected a scratch cache task")
+	}
+	c := &workerClient{engine: "worker-engine", target: docker{image: testWorkerImage, worker: testWorkerName}}
+	if err := c.apply(t.Context(), task, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	log, err := os.ReadFile(filepath.Join(dir, "commands"))
+	if err != nil || !strings.Contains(string(log), "--mount type=volume,dst=/home/runner/.cache --env RUNNER_TOOL_CACHE=/home/runner/.cache/tools "+testWorkerImage) ||
+		strings.Contains(string(log), "runquill-cache-42") || strings.Contains(string(log), "image inspect") {
+		t.Fatalf("scratch cache runner mounted the shared cache: %s (%v)", log, err)
 	}
 }
 

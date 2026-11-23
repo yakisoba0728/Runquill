@@ -657,13 +657,17 @@ func (s *scheduler) launch(ctx context.Context, j job, host, pool string, now ti
 		}
 		return false, fmt.Errorf("waiting for GitHub to queue job, status %q", observed.Status)
 	}
-	if !repo.Private {
-		// Only public repositories pay for this lookup; eligible already refused them unless allowed.
-		reason, err := s.github.forkRun(ctx, j, observed.RunID, token)
-		if err != nil {
+	restrictCache := policy.cacheWritesRestricted(repo)
+	var run workflowRun
+	if !repo.Private || restrictCache {
+		// Only public repositories and pools that restrict cache writes pay for this lookup.
+		if run, err = s.github.workflowRun(ctx, j, observed.RunID, token); err != nil {
 			return false, err
 		}
-		if reason != "" {
+	}
+	if !repo.Private {
+		// eligible already refused public repositories unless allowed.
+		if reason := run.forkReason(j); reason != "" {
 			return false, s.fail(ctx, j, now, reason)
 		}
 		// The runner takes any queued job with its label, and public labels are predictable, so a
@@ -722,14 +726,19 @@ func (s *scheduler) launch(ctx context.Context, j job, host, pool string, now ti
 		return true, err
 	}
 	if current == queued {
-		if err := s.runtime.startOn(withRunnerRepository(ctx, j.repositoryID), host, name, jit); err != nil {
+		start := withRunnerRepository(ctx, j.repositoryID)
+		scratch := restrictCache && !run.writesCache(j, repo.DefaultBranch)
+		if scratch {
+			start = withScratchCache(start)
+		}
+		if err := s.runtime.startOn(start, host, name, jit); err != nil {
 			return true, err
 		}
 		runnerLaunch := time.Now().UnixMilli()
 		if s.metrics != nil {
 			s.metrics.starts.Add(1)
 		}
-		slog.Info("runner started", "runner", name, "runner_host", host, "repository", j.repository, "job", j.id)
+		slog.Info("runner started", "runner", name, "runner_host", host, "repository", j.repository, "job", j.id, "scratch_cache", scratch)
 		_, err = s.queue.ExecContext(ctx, `UPDATE jobs SET retry_at = 0, retry_reason = '', runner_launch_ms = ?
             WHERE job_id = ? AND runner_name = ?`, runnerLaunch, j.id, name)
 		return true, err

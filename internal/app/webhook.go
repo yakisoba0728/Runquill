@@ -31,7 +31,9 @@ type repository struct {
 	Visibility string `json:"visibility"`
 	Archived   bool   `json:"archived"`
 	Disabled   bool   `json:"disabled"`
-	Owner      struct {
+	// DefaultBranch decides which runs may write a pool's shared cache; see cache_writes.
+	DefaultBranch string `json:"default_branch"`
+	Owner         struct {
 		Login string `json:"login"`
 	} `json:"owner"`
 }
