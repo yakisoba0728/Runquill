@@ -177,7 +177,7 @@ docker compose -f compose.yaml -f compose.panel.yaml exec -T manager runquill st
 
 ## 매니저 설정 추가
 
-Compose는 `compose.yaml`에 적힌 변수만 매니저에 전달합니다. `RUNQUILL_MAX_PER_REPOSITORY`, `RUNQUILL_SCHEDULER_WORKERS`, `RUNQUILL_LOG_FORMAT`, `RUNQUILL_LOG_LEVEL`, [알림](#알림-보내기) 변수, `RUNQUILL_ELASTIC*`, `RUNQUILL_BACKUP_*`, `RUNQUILL_METRICS_*`, `RUNQUILL_IMAGE_PULL*`, `RUNQUILL_RUNNER_IMAGES`, `RUNQUILL_CLEANUP_*`, [`RUNQUILL_ALLOW_PUBLIC_REPOSITORIES`](workflows.ko.md#공개-저장소에서-작업-실행) 같은 선택 설정은 값을 `.env`에 두고 `compose.yaml` 옆에 `compose.settings.yaml` 같은 오버레이를 저장합니다. `--upgrade`는 `compose.yaml`을 교체하지만 이 파일은 그대로 둡니다.
+Compose는 `compose.yaml`에 적힌 변수만 매니저에 전달합니다. `RUNQUILL_MAX_PER_REPOSITORY`, `RUNQUILL_SCHEDULER_WORKERS`, `RUNQUILL_LOG_FORMAT`, `RUNQUILL_LOG_LEVEL`, [알림](#알림-보내기) 변수, `RUNQUILL_ELASTIC*`, `RUNQUILL_BACKUP_*`, `RUNQUILL_METRICS_*`, `RUNQUILL_IMAGE_PULL*`, `RUNQUILL_RUNNER_IMAGES`, `RUNQUILL_CLEANUP_*`, `compose.mirror.yaml` 없이 쓰는 [`RUNQUILL_REGISTRY_MIRROR`](runner-images.ko.md#docker-hub-미러), [`RUNQUILL_ALLOW_PUBLIC_REPOSITORIES`](workflows.ko.md#공개-저장소에서-작업-실행) 같은 선택 설정은 값을 `.env`에 두고 `compose.yaml` 옆에 `compose.settings.yaml` 같은 오버레이를 저장합니다. `--upgrade`는 `compose.yaml`을 교체하지만 이 파일은 그대로 둡니다.
 
 ```yaml
 services:

@@ -182,6 +182,8 @@ RUNQUILL_REGISTRY_MIRROR_TTL=168h
 docker compose -f compose.yaml -f compose.mirror.yaml up -d
 ```
 
+이미 운영하는 미러를 쓰려면 `compose.mirror.yaml`을 빼고 [설정 오버레이](operations.ko.md#매니저-설정-추가)에 `RUNQUILL_REGISTRY_MIRROR`를 추가합니다. Compose는 목록에 있는 변수만 전달하므로 `.env`에만 적은 값은 효과가 없습니다.
+
 오버레이는 일부러 Docker Hub 로그인을 설정하지 않습니다. 업스트림 인증 정보를 넣으면 미러가 그 계정의 비공개 이미지를 이 호스트들에서 실행되는 모든 저장소의 모든 작업과, 미러에 닿는 다른 누구에게나 제공하게 됩니다. 평문 `http://`를 쓰면 레지스트리 트래픽이 네트워크에서 암호화되지 않습니다. 신뢰할 수 없는 네트워크라면 TLS 프록시 뒤에서 `https://`를 사용하세요.
 
 ### 제약
@@ -190,8 +192,8 @@ docker compose -f compose.yaml -f compose.mirror.yaml up -d
 - **Docker Hub만 해당합니다.** Docker는 미러를 `docker.io` 이미지에만 적용합니다. `ghcr.io`, `quay.io` 등 다른 레지스트리의 이미지는 여전히 직접 받습니다.
 - **이 릴리스의 러너 이미지가 필요합니다.** `--registry-mirror`는 러너 엔트리포인트가 추가합니다. 이전 러너 이미지는 이 변수를 무시하고 Docker Hub에서 받습니다.
 - **BuildKit 컨테이너에는 적용되지 않습니다.** `docker pull`, `docker run`, 기본 빌더의 `docker build`는 미러를 씁니다. `docker/setup-buildx-action`이 기본으로 만드는 것 같은 `docker-container` 빌더는 자체 레지스트리 설정을 가진 BuildKit을 따로 실행하므로, 미러를 [`buildkitd.toml`](https://docs.docker.com/build/buildkit/toml-configuration/)에 따로 설정해야 합니다.
-- **캐시 크기는 TTL과 디스크로만 제한됩니다.** 레지스트리는 TTL 동안 아무도 받지 않은 내용을 지웁니다. 크기 제한은 없으니 `registry-mirror` 볼륨을 지켜보세요.
-- **미러 장애는 드러나지 않습니다.** 미러에 닿지 않거나 실패하면 `dockerd`는 Docker Hub에서 직접 받습니다. 러너가 미러를 쓰는지는 레지스트리 로그나 `curl http://ADDRESS/v2/_catalog`로 확인하세요.
+- **캐시 크기는 TTL과 디스크로만 제한됩니다.** 레지스트리는 캐시한 지 TTL이 지난 내용을 지우고, 다음 pull 때 다시 받습니다. 크기 제한은 없으니 `registry-mirror` 볼륨을 지켜보세요.
+- **미러 장애는 드러나지 않습니다.** 미러가 연결을 거부하거나 실패하면 `dockerd`는 경고를 남기고 Docker Hub에서 직접 받습니다. 패킷을 버리는 주소라면 pull마다 연결 시간 초과만큼 늦어질 수 있습니다. 러너가 미러를 쓰는지는 레지스트리 로그나 `curl http://ADDRESS/v2/_catalog`로 확인하세요.
 
 ## 사용하지 않는 이미지와 캐시 볼륨 정리
 
