@@ -91,6 +91,9 @@ type docker struct {
 	security          *engineSecurity
 	// mirror is the validated RUNQUILL_REGISTRY_MIRROR of whoever runs "create": the manager or the outbound worker.
 	mirror string
+	// warm is how many idle started runners to keep; see warm.go.
+	warm        int
+	warmMaxIdle time.Duration
 }
 
 func (d docker) command(ctx context.Context, input []byte, args ...string) (string, error) {

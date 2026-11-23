@@ -26,6 +26,8 @@ type dockerFleet struct {
 	images *imageReadiness
 	// inspect checks on-demand images when Runquill does not pull them; nil runs the engine.
 	inspect imageCommand
+	// warm holds each host's warm runner backoff; set when the fleet is parsed.
+	warm *warmBackoff
 }
 
 type dockerHostSnapshot struct {
@@ -41,6 +43,8 @@ type dockerHostSnapshot struct {
 	EnrollmentAvailable bool
 	// The image fields are set while Runquill pulls images; ImageWait says why the host cannot start runners yet.
 	Image, ImageStatus, ImageWait string
+	// Warm counts idle warm runners, which are left out of Containers so their slots stay free for jobs.
+	Warm int
 }
 
 const dockerHostProbeTimeout = 5 * time.Second
@@ -69,7 +73,7 @@ func parseDockerFleet(image, hosts string) (*dockerFleet, error) {
 	if err != nil {
 		return nil, err
 	}
-	fleet := &dockerFleet{}
+	fleet := &dockerFleet{warm: &warmBackoff{hosts: make(map[string]warmRetry)}}
 	seen := make(map[string]bool)
 	for _, host := range strings.Split(hosts, ",") {
 		host = strings.TrimSpace(host)
@@ -226,6 +230,12 @@ func (f *dockerFleet) snapshot(ctx context.Context) ([]dockerHostSnapshot, error
 				}
 			}
 			result.Containers, result.Err = host.containers(ctx)
+			for name := range result.Containers {
+				if isWarmRunner(name) {
+					delete(result.Containers, name)
+					result.Warm++
+				}
+			}
 			if result.Err == nil && host.image != "" {
 				result.Err = host.checkRunnerImage(ctx)
 				if f.images.enabled() && (result.Err == nil || imageMissing(result.Err)) {
@@ -278,6 +288,12 @@ func (f *dockerFleet) startOn(ctx context.Context, target, name, jit string) err
 	host, err := f.host(target)
 	if err != nil {
 		return err
+	}
+	if host.warm > 0 {
+		image := runnerImageFrom(ctx)
+		if handed, err := f.handoff(ctx, host, name, jit, image != "" && image != host.image); handed || err != nil {
+			return err
+		}
 	}
 	if image := runnerImageFrom(ctx); image != "" && image != host.image {
 		if host.agentName() != "" {

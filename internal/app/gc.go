@@ -335,6 +335,8 @@ func removeOrphan(ctx context.Context, db *sql.DB, host orphanHost, c runnerCont
 		return "missing the Runquill ownership label", nil
 	case c.worker != "":
 		return "belongs to outbound worker " + c.worker, nil
+	case isWarmRunner(c.name):
+		return "idle warm runner; the manager replaces or removes it", nil
 	case tracked:
 		return "lease recorded on " + owner, nil
 	case c.created.IsZero() || now.Sub(c.created) < grace:
