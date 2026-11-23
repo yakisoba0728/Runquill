@@ -83,6 +83,25 @@ Omit the key to allow every name. The names are validated like catalogue names b
 
 On K3s, the selected image replaces the runner Pod's image, and the kubelet pulls it like any other image. Use `RUNQUILL_K8S_IMAGE_PULL_SECRET` for a private registry. K3s has no worker pools, so `images` does not apply there.
 
+#### Share pulled images between K3s nodes
+
+Each node pulls a runner image from the registry the first time a Pod there uses it, and the [job stage histograms](metrics.md#job-stage-histograms) count that pull in `runquill_job_github_assign_seconds`. K3s can embed Spegel, a distributed registry mirror, so that a node pulls an image another node already has over the cluster network. It is disabled by default. Enable it on every server node with `--embedded-registry` or `embedded-registry: true` in the K3s configuration file, and list the registry in `/etc/rancher/k3s/registries.yaml` on every node. Runquill's runner images come from `ghcr.io`:
+
+```yaml
+mirrors:
+  ghcr.io:
+```
+
+All nodes must reach each other on TCP ports 5001 and 6443 over their internal IP addresses. Only nodes that list a registry share its images. The mirror does not share the `latest` tag between nodes, and Runquill's runner images use version tags, so this does not affect them.
+
+Know the trust model before enabling it:
+
+- K3s assumes the same privilege and trust between all cluster members. Anyone who can push images into containerd on one node may be able to poison an image tag for the other nodes. Pin images by digest where integrity matters, for example in `RUNQUILL_RUNNER_IMAGE` and `RUNQUILL_RUNNER_IMAGES`.
+- Images pulled with registry credentials, such as through `RUNQUILL_K8S_IMAGE_PULL_SECRET`, are served to other nodes without those credentials.
+- With `RUNQUILL_K8S_RUNNER_MODE=dind`, a job controls a privileged Pod on its node. Enable the mirror only where the cluster is already dedicated to trusted workflows.
+
+Runquill has not been exercised with the embedded mirror. [K3s embedded registry mirror](https://docs.k3s.io/installation/registry-mirror)
+
 ### Workflow migration and checks
 
 When the panel's **Migrate** screen rewrites a job whose `runs-on` has one GitHub-hosted Ubuntu version label, such as `ubuntu-22.04`, and the manager's catalogue has that entry, the new label keeps the OS with `os__ubuntu2204__`. `ubuntu-latest` maps to a plain label because it is the default image. A job ID that starts with `os__` is left alone, because it would read as a selector. [Workflow migration](workflow-migration.md)

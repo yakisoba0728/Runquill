@@ -59,6 +59,8 @@ For DinD, use a dedicated cluster with trusted workflows. Label the approved wor
 
 A job can select another [runner OS](../../docs/runner-images.md#select-an-os-in-runs-on) with an `os__NAME__` label. The selected catalogue image replaces the runner Pod's image and the kubelet pulls it, so `RUNQUILL_IMAGE_PULL` has no effect here, and the cleanup of unused images and cache volumes skips this backend. All published variants keep the UID 1001 runner user that `plain` mode needs.
 
+Each node pulls a runner image the first time it runs it. To let nodes fetch images another node already has, enable the K3s embedded registry mirror after reading its trust caveats in [Share pulled images between K3s nodes](../../docs/runner-images.md#share-pulled-images-between-k3s-nodes).
+
 Leave `RUNQUILL_CONTAINER_ENGINE` unset; this backend refuses any value other than `docker`. [Elastic limits](../../docs/elastic-limits.md) and [runner logs](../../docs/panel.md#runner-logs) do not apply to Kubernetes runners. [Scheduled backups](../../docs/backups.md) work here too: point `RUNQUILL_BACKUP_DIR` at a path on a persistent volume, preferably not the queue PVC, or upload them to S3.
 
 The default K3s local-path volume persists manager restarts on its storage node. Use cluster-appropriate persistent storage and backups for recovery from node loss. Keep the manager at one replica. Drain existing jobs before switching the runner backend.

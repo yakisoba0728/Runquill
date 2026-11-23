@@ -83,6 +83,25 @@ RUNQUILL_WORKER_POOLS='{"build":{"hosts":["ssh://builder@worker.example.com"],"i
 
 K3s에서는 고른 이미지가 러너 Pod의 이미지를 대체하고, kubelet이 다른 이미지처럼 받습니다. 비공개 레지스트리에는 `RUNQUILL_K8S_IMAGE_PULL_SECRET`을 사용합니다. K3s에는 워커 풀이 없으므로 `images`는 적용되지 않습니다.
 
+#### K3s 노드 사이에서 받은 이미지 공유
+
+각 노드는 그 노드의 Pod가 러너 이미지를 처음 쓸 때 레지스트리에서 받으며, [작업 단계 히스토그램](metrics.ko.md#작업-단계-히스토그램)은 이 시간을 `runquill_job_github_assign_seconds`에 넣습니다. K3s는 분산 레지스트리 미러인 Spegel을 내장할 수 있어서, 다른 노드가 이미 가진 이미지를 클러스터 네트워크로 받을 수 있습니다. 기본으로는 꺼져 있습니다. 모든 서버 노드에서 `--embedded-registry`나 K3s 설정 파일의 `embedded-registry: true`로 켜고, 모든 노드의 `/etc/rancher/k3s/registries.yaml`에 레지스트리를 적습니다. Runquill 러너 이미지는 `ghcr.io`에서 받습니다.
+
+```yaml
+mirrors:
+  ghcr.io:
+```
+
+모든 노드가 내부 IP로 서로의 TCP 5001, 6443 포트에 닿아야 합니다. 레지스트리를 적은 노드끼리만 그 레지스트리의 이미지를 공유합니다. 미러는 `latest` 태그를 노드 사이에 공유하지 않지만, Runquill 러너 이미지는 버전 태그를 쓰므로 영향이 없습니다.
+
+켜기 전에 신뢰 모델을 확인하세요.
+
+- K3s는 모든 클러스터 구성원이 같은 권한과 신뢰를 가진다고 가정합니다. 한 노드의 containerd에 이미지를 넣을 수 있는 사람은 다른 노드에 쓰일 이미지 태그를 오염시킬 수 있습니다. 무결성이 중요하면 `RUNQUILL_RUNNER_IMAGE`와 `RUNQUILL_RUNNER_IMAGES`처럼 이미지를 다이제스트로 고정합니다.
+- `RUNQUILL_K8S_IMAGE_PULL_SECRET` 같은 레지스트리 자격 증명으로 받은 이미지도 다른 노드에는 자격 증명 없이 제공됩니다.
+- `RUNQUILL_K8S_RUNNER_MODE=dind`에서는 작업이 자기 노드의 특권 Pod를 제어합니다. 이미 신뢰하는 워크플로 전용인 클러스터에서만 미러를 켜세요.
+
+Runquill은 내장 미러와 함께 아직 검증하지 않았습니다. [K3s 내장 레지스트리 미러](https://docs.k3s.io/installation/registry-mirror)
+
 ### 워크플로 이전과 점검
 
 패널의 **마이그레이션** 화면이 `runs-on`에 GitHub 호스팅 Ubuntu 버전 라벨(예: `ubuntu-22.04`)이 하나 있는 작업을 바꿀 때, 매니저의 러너 이미지 목록에 그 항목이 있으면 새 라벨에 `os__ubuntu2204__`를 넣어 OS를 유지합니다. `ubuntu-latest`는 기본 이미지이므로 선택자 없는 라벨로 바뀝니다. 작업 ID가 `os__`로 시작하면 선택자로 읽히므로 그 작업은 그대로 둡니다. [워크플로 이전](workflow-migration.ko.md)
