@@ -718,6 +718,9 @@ const words = {
   "Observed only": "기록만 함",
   "No hosts sampled yet.": "아직 측정한 호스트가 없습니다.",
   "No decisions yet.": "아직 결정이 없습니다.",
+  // Panel review fixes (views/overview.js, views/runners.js, views/logs.js)
+  "Showing {shown} of {total} waiting jobs. Open the queue for the rest.": "대기 중인 작업 {total}개 중 {shown}개를 표시합니다. 나머지는 대기열에서 확인하세요.",
+  "Provisioned": "준비 시각",
   // Server resources (views/hosts.js, panel_resources.go)
   "Server resources": "서버 자원",
   "Server resources per host": "호스트별 서버 자원",
