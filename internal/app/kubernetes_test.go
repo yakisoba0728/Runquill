@@ -76,6 +76,9 @@ func TestKubernetesRunnerLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer q.close()
+	if err := migrateUsage(ctx, q.DB); err != nil {
+		t.Fatal(err)
+	}
 	panel := newPanel(config{})
 	access := panelAccessForTest(t, q)
 	handler := panelHandler(panel, access)
