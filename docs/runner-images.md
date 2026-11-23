@@ -135,6 +135,17 @@ Protect that directory like the GitHub App key. Outbound workers pull nothing fo
 
 In a pool with `cache: true`, each runner mounts the repository's existing `runquill-cache-<repository ID>` volume at `/home/runner/.cache` for package and build-tool caches. A separate volume at `/home/runner/.cache/tools` scopes `RUNNER_TOOL_CACHE` to that repository and the runner's actual image ID and platform. Jobs on the same host reuse downloaded `actions/setup-*` tools when those values match. Jobs can read and modify their mounted caches. Moving a tag to a new image ID starts a fresh tool cache.
 
+Tools that already keep their download cache under `~/.cache`, such as pip, uv, Poetry, Yarn 1 and the Go build cache, reuse it with no setting. The runner also points these download caches into the volume:
+
+| Variable | Path | Default it replaces |
+| --- | --- | --- |
+| `npm_config_cache` | `/home/runner/.cache/npm` | `~/.npm` |
+| `GOMODCACHE` | `/home/runner/.cache/go-mod` | `~/go/pkg/mod` |
+| `NUGET_PACKAGES` | `/home/runner/.cache/nuget-packages` | `~/.nuget/packages` |
+| `BUN_INSTALL_CACHE_DIR` | `/home/runner/.cache/bun` | `~/.bun/install/cache` |
+
+A job or workflow `env` that sets one of them takes precedence. Runquill does not move a whole tool home, because it also holds credentials, settings and installed binaries: set `GRADLE_USER_HOME`, `CARGO_HOME` or Maven's `-Dmaven.repo.local` in the workflow yourself if you accept sharing them. With these variables set, the `cache:` option of `actions/setup-node` and `actions/setup-go` saves and restores the persistent directory through the GitHub Actions cache, which a cached pool usually no longer needs. `actions/setup-go` caches by default, and its restore can report tar errors over the read-only module files a previous job left. Set `cache: false` on it in cached pools. Every job of the repository on that host can write these caches, so a job can leave altered packages for the next one. Outbound workers set the variables after they are upgraded.
+
 After upgrading, the first job for each image starts with an empty tool cache. The old shared tool files stay in the repository volume under the new mount, and other repository cache files remain available. The cache works on `local`, `ssh://`, and outbound `agent://` workers. Upgrade outbound workers to enable the new tool cache layout on each worker.
 
 The Docker integration test exercises cache reuse and isolation with a toolchain marker. A real `actions/setup-*` job is still a separate verification step.
@@ -184,4 +195,4 @@ docker compose exec manager runquill gc --unused --older-than 7d
 
 Exercised on a developer machine with real Docker: pulls from a registry, cleanup against real images and volumes, and all five OS variants started as runners. The Docker smoke test alternates between Ubuntu 24.04 and Debian 13 for the same repository, checks that each image reuses only its own tool cache, and verifies that the package cache stays shared. It runs in both plain and privileged mode.
 
-Not yet exercised: a real `actions/setup-*` job using the tool cache, on-demand pulls on `ssh://` hosts, private registries and outbound `agent://` workers with `os__` selectors.
+Not yet exercised: a real `actions/setup-*` job using the tool cache, real npm, Go, NuGet and Bun jobs using the package cache variables, on-demand pulls on `ssh://` hosts, private registries and outbound `agent://` workers with `os__` selectors.

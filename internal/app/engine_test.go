@@ -52,6 +52,8 @@ func TestContainerEngineCreateArgs(t *testing.T) {
 		" --mount type=volume,src=runquill-cache-7-tools-key,dst=/home/runner/.cache/tools,volume-label=io.runquill.cache=1,volume-nocopy"
 	podmanMounts := " --mount type=volume,src=runquill-cache-7,dst=/home/runner/.cache" +
 		" --mount type=volume,src=runquill-cache-7-tools-key,dst=/home/runner/.cache/tools"
+	packageEnv := " --env npm_config_cache=/home/runner/.cache/npm --env GOMODCACHE=/home/runner/.cache/go-mod" +
+		" --env NUGET_PACKAGES=/home/runner/.cache/nuget-packages --env BUN_INSTALL_CACHE_DIR=/home/runner/.cache/bun"
 	toolEnv := " --env RUNNER_TOOL_CACHE=/home/runner/.cache/tools img"
 	for _, test := range []struct {
 		name, engine, volume, tools string
@@ -64,12 +66,12 @@ func TestContainerEngineCreateArgs(t *testing.T) {
 			common + dockerLogs + "--privileged img", "run/runquill-jit", nil, nil},
 		{"docker plain cached", "docker", "runquill-cache-7", "runquill-cache-7-tools-key", true, docker{image: "img", cpus: 1.5, memoryMiB: 512, worker: "w1"},
 			common + dockerLogs + "--label io.runquill.worker=w1 " + plain +
-				" --cpus 1.5 --memory 512m --memory-swap 512m" + dockerMounts + toolEnv,
+				" --cpus 1.5 --memory 512m --memory-swap 512m" + packageEnv + dockerMounts + toolEnv,
 			"run/runquill/jit", nil, []string{"run/runquill/", "home/runner/.cache/", "home/runner/.cache/tools/"}},
 		{"podman dind", "podman", "", "", false, docker{image: "img"},
 			common + podmanLogs + "--privileged img", "run/runquill-jit", nil, nil},
 		{"podman plain cached", "podman", "runquill-cache-7", "runquill-cache-7-tools-key", true, docker{image: "img"},
-			common + podmanLogs + plain + podmanMounts + toolEnv, "run/runquill/jit",
+			common + podmanLogs + plain + packageEnv + podmanMounts + toolEnv, "run/runquill/jit",
 			[]string{"volume create --ignore --label io.runquill.cache=1 runquill-cache-7", "volume create --ignore --label io.runquill.cache=1 --opt nocopy runquill-cache-7-tools-key"},
 			[]string{"run/runquill/", "home/runner/.cache/", "home/runner/.cache/tools/"}},
 	} {
