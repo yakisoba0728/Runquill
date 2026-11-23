@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -123,5 +124,22 @@ func TestSchedulerPreservesKubernetesFailureAfterRemovingPod(t *testing.T) {
 	if err != nil || len(jobs) != 1 || jobs[0].runnerName != "" ||
 		jobs[0].retryReason != "Previous runner · "+cause.Message || len(runtime.removed) != 1 {
 		t.Fatalf("retry evidence after cleanup: jobs=%+v removed=%v err=%v", jobs, runtime.removed, err)
+	}
+}
+
+func TestStatusReportsWarmRunnersAndPoolTarget(t *testing.T) {
+	hosts := []hostCapacity{
+		{dockerHostSnapshot: dockerHostSnapshot{Name: "local", Pool: "build", Containers: map[string]string{}, Warm: 2}, Limit: 4},
+		{dockerHostSnapshot: dockerHostSnapshot{Name: "agent://edge", Pool: "build", Containers: map[string]string{}}, Limit: 1},
+		{dockerHostSnapshot: dockerHostSnapshot{Name: "ssh://runner@b", Containers: map[string]string{}}, Limit: 1},
+	}
+	report := summarizeStatus(nil, hosts, 0, 4, time.Now())
+	report.configure("docker", scopeSelected, workerPools{"build": {Warm: 3}, "default": {Warm: 1}}, nil, hosts, jobPlacementDiagnostics{})
+	got := [][2]int{}
+	for _, host := range report.Hosts {
+		got = append(got, [2]int{host.Warm, host.WarmTarget})
+	}
+	if want := [][2]int{{2, 3}, {0, 0}, {0, 1}}; !slices.Equal(got, want) {
+		t.Fatalf("warm, target per host = %v, want %v", got, want)
 	}
 }

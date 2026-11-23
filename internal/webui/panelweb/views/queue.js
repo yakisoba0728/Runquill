@@ -4,9 +4,10 @@
 import { jobActionButtons, pendingJob, poolName } from "../fleet.js";
 import { serverText, tr } from "../i18n.js";
 import {
-  block, button, createKv, createTable, externalLink, field, fill, format, h, isGitHubJobURL, linkTarget, message, pageHead,
-  state, statusLine, submitForm, time,
+  block, button, createKv, createTable, errorText, externalLink, field, fill, format, h, isGitHubJobURL, linkTarget, message, pageHead,
+  state, statusLine, submitForm,
 } from "../ui.js";
+import { resourceView, timingView } from "./jobinsight.js";
 
 let parts = null;
 const lists = [["queue", "Queue"], ["active", "Assigned"], ["recent", "Cleaned up"]];
@@ -25,11 +26,6 @@ function groups(snapshot) {
 function reason(job) {
   const text = job.diagnostic?.message || job.retry_reason;
   return text ? serverText(text) : "";
-}
-
-function durationMillis(value) {
-  if (!Number.isFinite(value)) return "—";
-  return value < 1000 ? tr("{n}ms", { n: value }) : format.duration(value / 1000);
 }
 
 function render() {
@@ -78,16 +74,45 @@ function leave() {
   parts.linked = null;
 }
 
+// loadInsight fetches GET /api/jobs/{id} for the selected job's resources and
+// execution time, again whenever its state changes; render() runs when it ends.
+function loadInsight(job) {
+  const key = job.id + ":" + (job.status || "CLEANED");
+  if (parts.insight?.key === key) return parts.insight;
+  const insight = { key, pending: true, data: null, failed: "" };
+  parts.insight = insight;
+  parts.ctx.api.get("./api/jobs/" + encodeURIComponent(job.id)).then((data) => { insight.data = data; }, (error) => {
+    // A job not yet in the history has nothing recorded.
+    if (error.status !== 404) insight.failed = errorText(error);
+  }).finally(() => {
+    insight.pending = false;
+    if (parts?.insight === insight) render();
+  });
+  return insight;
+}
+
 function renderDetail(job, target) {
   if (!job) {
     target.hidden = true;
     target.replaceChildren();
     return;
   }
-  const signature = JSON.stringify(job) + parts.ctx.can("operator");
-  if (!target.hidden && target.dataset.signature === signature) return;
+  const insight = loadInsight(job);
+  // The queue time of a waiting job grows every snapshot; only the timing part follows it.
+  const timing = { ...job.timing, execution_seconds: job.timing?.execution_seconds ?? insight.data?.timing?.execution_seconds };
+  const timingKey = JSON.stringify(timing);
+  const signature = JSON.stringify({ ...job, timing: { ...job.timing, runquill_queue_seconds: null } }) + parts.ctx.can("operator") +
+    JSON.stringify([insight.key, insight.pending, insight.failed]);
+  if (!target.hidden && target.dataset.signature === signature) {
+    if (parts.timingKey !== timingKey) {
+      parts.timingKey = timingKey;
+      target.querySelector("[data-timing]")?.replaceChildren(timingView(timing));
+    }
+    return;
+  }
   const focused = target.contains(document.activeElement) ? document.activeElement.textContent : null;
   target.dataset.signature = signature;
+  parts.timingKey = timingKey;
   target.hidden = false;
   const actions = pendingJob(job) && !job.runner ? jobActionButtons(parts.ctx, job, async () => {
     if (!parts) return;
@@ -110,21 +135,6 @@ function renderDetail(job, target) {
   facts.set("image", job.runner_image ? h("span", { class: "mono" }, job.runner_image) : "—");
   facts.show("retry", !!job.retry_at);
   if (job.retry_at) facts.set("retry", format.time(job.retry_at));
-  const timing = job.timing || {};
-  const stages = [["discovery", "Discovery time", format.duration(timing.creation_to_discovery_seconds)]];
-  if (timing.jit_requested_at) {
-    stages.push(
-      ["queue", "Scheduler wait", durationMillis(timing.scheduler_wait_millis)],
-      ["jit", "JIT registration", durationMillis(timing.jit_registration_millis)],
-      ["runtime", "Runtime launch", durationMillis(timing.runtime_launch_millis)],
-      ["assignment", "GitHub assignment", format.duration(timing.launch_to_github_start_seconds)],
-    );
-  } else {
-    stages.push(["queue", "Queue time", format.duration(timing.runquill_queue_seconds)],
-      ["startup", "Startup time", format.duration(timing.provision_to_start_seconds)]);
-  }
-  const timings = createKv(stages.map(([key, label]) => [key, label]), { label: "Job timings" });
-  for (const [key, , value] of stages) timings.set(key, value);
   const events = [
     ["created", "Created on GitHub", timing.github_created_at],
     ["discovered", "Discovered", timing.discovered_at],
@@ -140,13 +150,15 @@ function renderDetail(job, target) {
   const why = reason(job) || serverText(job.pool_error || "");
   const retry = job.retry_reason && serverText(job.retry_reason) !== why ? serverText(job.retry_reason) : "";
   target.replaceChildren(
-    h("div", { class: "detail-head" }, h("h2", { id: "job-detail-title" }, tr("Job #{id}", { id: job.id })),
+    h("div", { class: "detail-head" }, h("h2", { id: "job-detail-title", tabindex: "-1" }, tr("Job #{id}", { id: job.id })),
       h("span", { class: "muted" }, job.repository), link,
       actions.length ? h("div", { class: "actions" }, ...actions) : null),
     h("div", { class: "detail-body" },
       why || retry ? h("p", { class: "reason" }, [why, retry].filter(Boolean).join(" ")) : null,
-      h("div", {}, h("h3", {}, tr("Details")), facts.element),
-      h("div", {}, h("h3", {}, tr("Timings")), timings.element,
+      h("div", {}, h("h3", {}, tr("Stage timing")), h("div", { "data-timing": "" }, timingView(timing)),
+        h("h3", { class: "spaced" }, tr("Resources")),
+        resourceView(insight.data?.resources, { pending: insight.pending, failed: insight.failed })),
+      h("div", {}, h("h3", {}, tr("Details")), facts.element,
         events.length ? h("h3", { class: "spaced" }, tr("Timeline")) : null, events.length ? timeline.element : null)),
   );
   if (focused) [...target.querySelectorAll("button, a")].find((node) => node.textContent === focused)?.focus({ preventScroll: true });
@@ -235,7 +247,7 @@ export default {
         detail),
       ctx.demo ? "" : diagnoseBlock(ctx),
     );
-    parts = { ctx, table, tabs, search, pool, detail, list: "queue", selected: null, target: linkTarget("queue", "job"), linked: null };
+    parts = { ctx, table, tabs, search, pool, detail, list: "queue", selected: null, target: linkTarget("queue", "job"), linked: null, insight: null };
     render();
   },
 

@@ -39,14 +39,18 @@ export function sample(name) {
   });
 
   // builder-east is still pulling its pool's runner image (RUNQUILL_IMAGE_PULL=missing).
-  let hosts = [host("local", 2, 1), host("builder-west", 2, 1),
-    host("builder-east", 2, 0, 0, { status: "UNAVAILABLE", image_status: "pulling",
+  // The default pool keeps one warm runner per host, the build pool two.
+  let hosts = [host("local", 2, 1, 0, { warm: 1, warm_target: 1 }), host("builder-west", 2, 1, 0, { warm: 1, warm_target: 2 }),
+    host("builder-east", 2, 0, 0, { status: "UNAVAILABLE", image_status: "pulling", warm_target: 2,
       error: "pulling runner image ghcr.io/garden-lab/runner-build:2026.11" }),
     host("agent://edge-1", 1, 0, 0, { image_status: undefined })];
   let jobs = [
     job(4826, "papertrail", "RUNNING", "local", { runner_image: runnerImage, timing: timing("webhook", 120, 119, 114, 110) }),
     job(4824, "pattern-kit", "RUNNING", "builder-west", { runner_label: "runquill-18061-1-os__ubuntu2204__lint",
       runner_os: "ubuntu2204", runner_image: runnerImage + "-ubuntu22.04", timing: timing("webhook", 221, 220, 217, 213) }),
+    job(4825, "forecast", "CLEANUP", "local", { runner_label: "runquill-18060-1-forecast",
+      diagnostic: { code: "runner_memory_limit", message: "The container engine reported an out-of-memory kill. Check the worker pool memory limit." },
+      timing: timing("webhook", 900, 899, 896, 890) }),
     job(4827, "forecast", "WAITING", "", { queue_position: 1, runner_label: "runquill-18062-1-os__debian13__forecast",
       runner_os: "debian13", runner_image: runnerImage + "-debian13",
       retry_reason: "waiting for runner image " + runnerImage + "-debian13 on local",
@@ -95,7 +99,7 @@ export function sample(name) {
       recent: firstClean ? [cleaned] : [],
       runner_inventory: jobs.filter((job) => job.runner).map((job) => ({
         name: job.runner, job_id: job.id, host: job.runner_host, pool: job.pool,
-        runtime_state: job.status === "RUNNING" ? "running" : undefined,
+        runtime_state: { RUNNING: "running", CLEANUP: "exited" }[job.status],
         runner_os: job.runner_os, runner_image: job.runner_image,
       })),
       fleet: {

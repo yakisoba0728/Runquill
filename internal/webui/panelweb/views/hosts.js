@@ -17,7 +17,7 @@ function pools(hosts) {
   const result = new Map();
   for (const host of hosts) {
     const key = host.pool || "default";
-    if (!result.has(key)) result.set(key, { name: key, hosts: 0, ready: 0, reserved: 0, free: 0, occupied: 0, limit: 0 });
+    if (!result.has(key)) result.set(key, { name: key, hosts: 0, ready: 0, reserved: 0, free: 0, occupied: 0, limit: 0, warm: 0, warmTarget: 0 });
     const pool = result.get(key);
     pool.hosts++;
     pool.ready += Number(workerState(host) === "UP");
@@ -25,6 +25,8 @@ function pools(hosts) {
     pool.occupied += host.occupied_slots;
     pool.limit += host.slot_limit;
     pool.free += availableSlots(host);
+    pool.warm += host.warm || 0;
+    pool.warmTarget = Math.max(pool.warmTarget, host.warm_target || 0);
   }
   return [...result.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -98,7 +100,8 @@ export default {
       { label: "Host", className: "id long", cell: (host) => [host.name, host.error ? h("span", { class: "sub" }, serverText(host.error)) : null] },
       { label: "Pool", cell: (host) => poolName(host.pool) },
       { label: "State", cell: (host) => [state(workerState(host)),
-        imageStates[host.image_status] ? h("span", { class: "sub" }, tr(imageStates[host.image_status])) : null] },
+        imageStates[host.image_status] ? h("span", { class: "sub" }, tr(imageStates[host.image_status])) : null,
+        host.warm || host.warm_target ? h("span", { class: "sub" }, tr("{n} of {target} warm runners idle", { n: host.warm || 0, target: host.warm_target || 0 })) : null] },
       { label: "Slot limit", num: true, cell: (host) => format.number(host.slot_limit) },
       { label: "Occupied", num: true, cell: (host) => format.number(host.occupied_slots) },
       { label: "Reserved", num: true, cell: (host) => format.number(host.reserved_slots) },
@@ -138,6 +141,9 @@ export default {
         { label: "Reserved", num: true, cell: (pool) => format.number(pool.reserved) },
         { label: "Available", num: true, cell: (pool) => format.number(pool.free) },
         { label: "Slot limit", num: true, cell: (pool) => format.number(pool.limit) },
+        { label: "Warm runners", num: true, cell: (pool) => pool.warmTarget
+          ? [tr("{n} idle", { n: format.number(pool.warm) }), h("span", { class: "sub" }, tr("{n} per host", { n: format.number(pool.warmTarget) }))]
+          : pool.warm ? tr("{n} idle", { n: format.number(pool.warm) }) : h("span", { class: "muted" }, tr("Off")) },
         { label: "Usage", cell: (pool) => h("progress", {
           class: "meter", max: Math.max(1, pool.limit), value: Math.min(Math.max(1, pool.limit), pool.occupied + pool.reserved),
           "aria-label": tr("{host} capacity", { host: poolName(pool.name) }),

@@ -1,6 +1,9 @@
 package app
 
-import "strings"
+import (
+	"cmp"
+	"strings"
+)
 
 type jobDiagnostic struct {
 	Code    string `json:"code"`
@@ -15,6 +18,12 @@ type jobPlacementDiagnostics struct {
 
 func (r *statusReport) configure(backend, repositoryScope string, pools workerPools, jobs []job, hosts []hostCapacity, placement jobPlacementDiagnostics) {
 	r.pools, r.Backend, r.RepositoryScope = pools, backend, repositoryScope
+	for i := range r.Hosts {
+		// Outbound workers never keep warm runners (worker_pools.go refuses the setting there).
+		if host := &r.Hosts[i]; !strings.HasPrefix(host.Name, "agent://") {
+			host.WarmTarget = pools[cmp.Or(host.Pool, defaultWorkerPool)].Warm
+		}
+	}
 	active := make(map[[2]string]int)
 	for i, j := range jobs {
 		pool, err := pools.forJob(j)

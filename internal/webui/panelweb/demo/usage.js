@@ -1,4 +1,4 @@
-// Sample responses for the Usage view: the same shape as GET /api/usage.
+// Sample responses for the Usage view: the same shapes as GET /api/usage and GET /api/usage/rightsizing.
 // Jobs are generated deterministically per UTC day, so a range always shows
 // the same numbers, and every group adds up to the same totals.
 const repositories = [
@@ -83,4 +83,27 @@ function usage(query) {
   return { from, to, group, totals: totals(jobs), series };
 }
 
-export default { "GET /api/usage": usage };
+
+// GET /api/usage/rightsizing: the same shape as job_resources.go readRightsizing.
+const resource = (limit, peak, ratio, verdict) => ({ limit, peak_max: peak, ...(ratio == null ? {} : { peak_ratio: ratio }), verdict });
+function rightsizing(query) {
+  const group = query.get("group") === "job" ? "job" : "pool";
+  const days = Math.min(7, Math.max(1, Number(query.get("days")) || 7));
+  const scale = (n) => Math.max(1, Math.round(n * days / 7));
+  const groups = group === "pool" ? [
+    { key: "default", jobs: scale(148), sampled_jobs: scale(131), oom_kills: 2,
+      cpu: resource(2, 1.97, 0.99, "tight"), memory: resource(4096, 4096, 1, "tight") },
+    { key: "build", jobs: scale(61), sampled_jobs: 0, oom_kills: 0 },
+  ] : [
+    { key: "garden-lab/papertrail runquill-18062-1-test", jobs: scale(90), sampled_jobs: scale(84), oom_kills: 0,
+      cpu: resource(2, 0.38, 0.19, "oversized"), memory: resource(4096, 702, 0.17, "oversized") },
+    { key: "garden-lab/forecast runquill-18060-1-forecast", jobs: scale(40), sampled_jobs: scale(35), oom_kills: 2,
+      cpu: resource(2, 1.97, 0.99, "tight"), memory: resource(4096, 4096, 1, "tight") },
+    { key: "garden-lab/pattern-kit runquill-18061-1-os__ubuntu2204__lint", jobs: scale(61), sampled_jobs: 0, oom_kills: 0 },
+    { key: "garden-lab/first-workflow runquill-17990-1-first-job", jobs: 2, sampled_jobs: 2, oom_kills: 0,
+      cpu: resource(2, 0.41, 0.21, "too_few_jobs"), memory: resource(0, 612, null, "unlimited") },
+  ];
+  return { group, days, groups };
+}
+
+export default { "GET /api/usage": usage, "GET /api/usage/rightsizing": rightsizing };

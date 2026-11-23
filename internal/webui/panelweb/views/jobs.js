@@ -1,11 +1,13 @@
 // Jobs: finished and waiting jobs from GET /api/jobs (kept seven days), with
-// filters, paging and retry/cancel for waiting jobs.
+// filters, paging and retry/cancel for waiting jobs. Selecting a job ID opens
+// its stage timing and resources from GET /api/jobs/{id}; #/jobs?job=ID too.
 import { jobActionButtons, poolName } from "../fleet.js";
 import { serverText, tr } from "../i18n.js";
 import {
-  button, createTable, errorText, externalLink, field, format, h, intro, isGitHubJobURL, message, pageHead, select, state, statusLine,
-  time,
+  button, createKv, createTable, errorText, externalLink, field, format, h, intro, isGitHubJobURL, message, pageHead, select, state,
+  statusLine, time,
 } from "../ui.js";
+import { resourceView, timingView } from "./jobinsight.js";
 
 const pageSize = 25;
 let parts = null;
@@ -68,6 +70,67 @@ function render() {
   parts.failed = false;
 }
 
+// openDetail loads one job and shows it under the table. focus moves to its
+// heading once it arrives, for a person who chose it from the list.
+async function openDetail(id, focus = true) {
+  const current = parts;
+  if (!current) return;
+  current.selected = id;
+  current.table.update(current.rows);
+  const ticket = ++current.detailTicket;
+  const { detail } = current;
+  detail.hidden = false;
+  detail.replaceChildren(h("p", { class: "muted detail-loading" }, tr("Loading job #{id}…", { id })));
+  let job;
+  try {
+    job = await current.ctx.api.get("./api/jobs/" + encodeURIComponent(id));
+  } catch (error) {
+    if (parts !== current || ticket !== current.detailTicket || error.status === 401) return;
+    detail.replaceChildren(detailHead(id, null), h("p", { class: "detail-body error-text" }, errorText(error)));
+    if (focus) detail.querySelector("h2").focus();
+    return;
+  }
+  if (parts !== current || ticket !== current.detailTicket) return;
+  const facts = createKv([["outcome", "Outcome"], ["pool", "Pool"], ["host", "Host"], ["label", "Runner label"], ["os", "Runner OS"],
+    ["queued", "Queued"], ["started", "Started"], ["finished", "Finished"]], { wide: true, label: "Job details" });
+  facts.set("outcome", state(outcomeState(job)));
+  facts.set("pool", job.pool ? poolName(job.pool) : "—");
+  facts.set("host", job.host || "—");
+  facts.set("label", job.runner_label ? h("code", {}, job.runner_label) : "—");
+  facts.set("os", job.runner_os || "—");
+  facts.set("queued", format.date(job.queued_at));
+  facts.set("started", format.date(job.started_at));
+  facts.set("finished", format.date(job.finished_at));
+  const why = job.failure || job.diagnostic?.message || (job.outcome === "waiting" ? job.retry_reason : "");
+  detail.replaceChildren(detailHead(id, job),
+    h("div", { class: "detail-body" },
+      why ? h("p", { class: "reason" }, serverText(why)) : null,
+      h("div", {}, h("h3", {}, tr("Stage timing")), timingView(job.timing || {}),
+        h("h3", { class: "spaced" }, tr("Resources")), resourceView(job.resources)),
+      h("div", {}, h("h3", {}, tr("Details")), facts.element)));
+  if (focus) detail.querySelector("h2").focus();
+}
+
+function detailHead(id, job) {
+  return h("div", { class: "detail-head" },
+    h("h2", { id: "job-history-title", tabindex: "-1" }, tr("Job #{id}", { id })),
+    job ? h("span", { class: "muted" }, job.repository) : null,
+    job && isGitHubJobURL(job.url) ? externalLink(tr("Open in GitHub"), job.url) : null,
+    h("div", { class: "actions" }, button("Close", closeDetail, { small: true, "aria-label": tr("Close job #{id}", { id }) })));
+}
+
+function closeDetail() {
+  if (!parts) return;
+  const id = parts.selected;
+  parts.selected = null;
+  parts.detailTicket++;
+  parts.detail.hidden = true;
+  parts.detail.replaceChildren();
+  parts.table.update(parts.rows);
+  if (location.hash.startsWith("#/jobs?")) history.replaceState(null, "", "#/jobs");
+  [...parts.table.element.querySelectorAll("tbody tr")].find((row) => row.dataset.key === String(id))?.querySelector(".cell-button")?.focus();
+}
+
 function clearFilters() {
   if (!parts) return;
   parts.form.reset();
@@ -94,11 +157,16 @@ export default {
     const table = createTable({
       label: "Job history",
       key: (job) => job.id,
+      rowClass: (job) => job.id === parts?.selected ? "selected" : "",
       columns: [
         { label: "Repository", className: "long", cell: (job) => isGitHubJobURL(job.url)
           ? externalLink(job.repository, job.url, tr("{repo} job {id} on GitHub", { repo: job.repository, id: job.id }))
           : job.repository },
-        { label: "Job", className: "id", cell: (job) => ["#" + job.id, job.runner_label ? h("span", { class: "sub" }, job.runner_label) : null] },
+        { label: "Job", className: "id", cell: (job) => [h("button", {
+          type: "button", class: "cell-button", "aria-expanded": String(job.id === parts?.selected), "aria-controls": "job-history-detail",
+          "aria-label": tr("Details of job {id}", { id: job.id }),
+          on: { click: () => job.id === parts.selected ? closeDetail() : void openDetail(job.id) },
+        }, "#" + job.id), job.runner_label ? h("span", { class: "sub" }, job.runner_label) : null] },
         { label: "Outcome", className: "wrap", cell: (job) => {
           const reason = job.failure || job.diagnostic?.message || (job.outcome === "waiting" ? job.retry_reason : "");
           return [state(outcomeState(job)),
@@ -123,17 +191,24 @@ export default {
     const more = button("Load older jobs", () => void load(true));
     const count = h("span");
     const output = statusLine();
+    const detail = h("section", { class: "detail", id: "job-history-detail", "aria-labelledby": "job-history-title", hidden: true });
     root.append(
       pageHead("Jobs"),
-      intro("Runquill keeps finished jobs for seven days. Job logs stay on GitHub."),
+      intro("Runquill keeps finished jobs for seven days. Job logs stay on GitHub. Select a job ID for its stage timing and resources."),
       h("div", { class: "block" },
         form, table.element,
         h("div", { class: "table-foot" }, count, more),
-        output),
+        output, detail),
     );
-    parts = { ctx, form, table, more, count, output, rows: [], cursor: 0, loaded: false, failed: false, ticket: 0 };
+    parts = { ctx, form, table, more, count, output, detail, rows: [], cursor: 0, loaded: false, failed: false, ticket: 0,
+      selected: null, detailTicket: 0 };
     render();
     void load();
+  },
+
+  params(search) {
+    const id = Number(search.get("job"));
+    if (parts && Number.isSafeInteger(id) && id > 0) void openDetail(id);
   },
 
   commands() {

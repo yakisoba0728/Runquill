@@ -60,11 +60,16 @@ function poolEntry(list, originals, name = "", pool = {}) {
       field("Pool name", poolName),
       field("CPU limit", input({ name: "cpus", type: "number", min: 0.01, step: "any" }, pool.cpus || "")),
       field("Memory limit (MiB)", input({ name: "memory", type: "number", min: 6 }, pool.memory_mib || "")),
+      // The server refuses warm runners with a build cache or on outbound workers; its message is shown on save.
+      field("Warm runners per host", input({ name: "warm", type: "number", min: 0, step: 1, placeholder: "0" }, pool.warm || "")),
+      field("Replace idle warm runners after (minutes)", input({ name: "warm_idle", type: "number", min: 0, step: 1, placeholder: "30" },
+        pool.warm_max_idle_minutes || "")),
       field("Pool runner image", input({ name: "image", maxLength: 256, placeholder: tr("Use default image") }, pool.image), { className: "span" }),
       field("Allowed runner OS", input({ name: "images", maxLength: 2700, class: "mono", placeholder: tr("Allow every runner OS"),
         title: tr("Comma-separated runner image catalogue names, such as ubuntu22.04, debian12") }, (pool.images || []).join(", ")), { className: "span" }),
       field("Worker addresses", input({ name: "hosts", rows: 2, placeholder: tr("One worker address per line") }, (pool.hosts || []).join("\n")), { className: "half" }),
       field("Allowed repositories", repositories, { className: "half" })),
+    h("p", { class: "entry-hint muted" }, tr("Warm runners start before a job arrives, on local and SSH hosts only, and cannot be combined with a shared build cache.")),
     h("div", { class: "entry-foot" },
       h("label", { class: "check" }, h("input", { type: "checkbox", name: "privileged", checked: pool.privileged !== false }), tr("Run Docker-in-Docker (privileged)")),
       h("label", { class: "check" }, h("input", { type: "checkbox", name: "cache", checked: pool.cache === true }), tr("Keep a shared build cache")),
@@ -157,6 +162,8 @@ function settingsForm(ctx) {
         // An absent value means the privileged default; keep it absent unless it changes.
         privileged: row.privileged ? (row.original.privileged === false ? true : row.original.privileged) : false,
         cache: row.cache,
+        warm: Number(row.warm) || undefined,
+        warm_max_idle_minutes: Number(row.warm_idle) || undefined,
         images: poolImages(row.images, row.pool_name),
       }])),
     }, { timeout: 10000 });

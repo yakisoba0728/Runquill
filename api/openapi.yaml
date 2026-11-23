@@ -480,6 +480,12 @@ components:
         enrollment_available:
           type: boolean
           description: An administrator can issue a one-time code for this configured outbound worker.
+        warm:
+          type: integer
+          description: Idle warm runners on this host, waiting for a job. Absent when there are none.
+        warm_target:
+          type: integer
+          description: The warm runners its worker pool keeps on each local or SSH host. Absent when the pool keeps none or the host is an outbound worker.
     StatusJob:
       type: object
       required: [id, repository, status]
