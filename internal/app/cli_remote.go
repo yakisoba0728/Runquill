@@ -411,6 +411,9 @@ func jobResourceCPU(r *jobResources) string {
 	text := "peak " + remoteNumber(*r.CPUPeak) + ", average " + remoteNumber(*r.CPUAverage) + " of "
 	if *r.CPULimit > 0 {
 		text += remoteNumber(*r.CPULimit) + " CPUs"
+		if r.CPULimitMax != nil && *r.CPULimitMax > *r.CPULimit {
+			text += " (raised to " + remoteNumber(*r.CPULimitMax) + ")"
+		}
 	} else {
 		text += "unlimited CPUs"
 	}
@@ -423,6 +426,9 @@ func jobResourceMemory(r *jobResources) string {
 		text = fmt.Sprintf("peak %d MiB of ", *r.MemoryPeakMiB)
 		if *r.MemoryLimitMiB > 0 {
 			text += fmt.Sprintf("%d MiB", *r.MemoryLimitMiB)
+			if r.MemoryLimitMaxMiB != nil && *r.MemoryLimitMaxMiB > *r.MemoryLimitMiB {
+				text += fmt.Sprintf(" (raised to %d MiB)", *r.MemoryLimitMaxMiB)
+			}
 		} else {
 			text += "unlimited"
 		}

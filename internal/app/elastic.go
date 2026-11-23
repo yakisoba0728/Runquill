@@ -58,7 +58,10 @@ func loadElasticConfig(getenv func(string) string) (elasticConfig, error) {
 		return cfg, errors.New("RUNQUILL_ELASTIC must be off, observe or apply")
 	}
 	switch strings.TrimSpace(getenv("RUNQUILL_JOB_RESOURCES")) {
-	case "", "on":
+	case "":
+		// The sampler always runs the docker CLI, so other engines opt in.
+		cfg.JobResources = cmp.Or(strings.TrimSpace(getenv("RUNQUILL_CONTAINER_ENGINE")), "docker") == "docker"
+	case "on":
 	case "off":
 		cfg.JobResources = false
 	default:

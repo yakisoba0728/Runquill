@@ -53,7 +53,7 @@ func TestRecordJobSamplesKeepsPeaksAndFirstLimits(t *testing.T) {
 		t.Fatalf("read: %+v, %v", got, err)
 	}
 	if got.Samples != 2 || *got.CPULimit != 2 || *got.MemoryLimitMiB != 1024 || *got.CPUPeak != 1.5 || *got.CPUAverage != 1 ||
-		*got.MemoryPeakMiB != 900 || got.OOMKilled != nil {
+		*got.MemoryPeakMiB != 900 || got.OOMKilled != nil || *got.CPULimitMax != 3 || *got.MemoryLimitMaxMiB != 1280 {
 		t.Fatalf("resources %s", mustJSON(t, got))
 	}
 	var rows int
@@ -203,6 +203,15 @@ func TestElasticOffStillRecordsJobSamples(t *testing.T) {
 	if _, err := loadElasticConfig(func(name string) string { return map[string]string{"RUNQUILL_JOB_RESOURCES": "yes"}[name] }); err == nil {
 		t.Fatal("invalid RUNQUILL_JOB_RESOURCES accepted")
 	}
+	// The sampler runs the docker CLI, so Podman deployments record only when asked to.
+	podman := map[string]string{"RUNQUILL_CONTAINER_ENGINE": "podman"}
+	if cfg, err = loadElasticConfig(func(name string) string { return podman[name] }); err != nil || cfg.JobResources {
+		t.Fatalf("podman default: %+v, %v", cfg, err)
+	}
+	podman["RUNQUILL_JOB_RESOURCES"] = "on"
+	if cfg, err = loadElasticConfig(func(name string) string { return podman[name] }); err != nil || !cfg.JobResources {
+		t.Fatalf("podman on: %+v, %v", cfg, err)
+	}
 }
 
 func TestRightsizingThresholds(t *testing.T) {
@@ -302,9 +311,12 @@ func TestJobResourcesThroughPanelCLIAndMCP(t *testing.T) {
         VALUES (8, 4, 2, 1024, 1.5, 4, 1000, 1), (7, 0, NULL, NULL, NULL, 0, NULL, NULL)`); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := f.q.Exec(`UPDATE job_resources SET cpu_limit_max = 2, memory_limit_max_mib = 1280 WHERE job_id = 8`); err != nil {
+		t.Fatal(err)
+	}
 	_, code, stdout, stderr := runRemote(t, "jobs", "show", "8")
 	if code != 0 || stderr != "" || !strings.Contains(stdout, "CPU         peak 1.5, average 1 of 2 CPUs (4 samples)") ||
-		!strings.Contains(stdout, "MEMORY      peak 1000 MiB of 1024 MiB, killed for memory") {
+		!strings.Contains(stdout, "MEMORY      peak 1000 MiB of 1024 MiB (raised to 1280 MiB), killed for memory") {
 		t.Fatalf("jobs show 8: code %d, stderr %q\n%s", code, stderr, stdout)
 	}
 	_, code, stdout, _ = runRemote(t, "jobs", "show", "7", "--json")
