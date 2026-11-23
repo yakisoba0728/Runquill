@@ -58,7 +58,7 @@ const roles = { viewer: 1, operator: 2, admin: 3 };
 
 const routes = [
   { id: "overview", title: "Overview", group: "Operations" },
-  { id: "queue", title: "Queue", group: "Operations" },
+  { id: "queue", title: "Queue", group: "Operations", fixtures: true },
   { id: "jobs", title: "Jobs", group: "Operations", fixtures: true },
   { id: "runners", title: "Runners", group: "Operations" },
   { id: "hosts", title: "Hosts & pools", group: "Operations", fixtures: true },

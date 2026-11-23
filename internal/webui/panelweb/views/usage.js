@@ -1,9 +1,10 @@
 // Usage: finished-job totals from GET /api/usage over a range of UTC days,
-// grouped by day, repository, pool or host, with a per-day column chart.
+// grouped by day, repository, pool or host, with a per-day column chart, and
+// CPU and memory right-sizing from GET /api/usage/rightsizing.
 import { poolName } from "../fleet.js";
 import { language, tr } from "../i18n.js";
 import {
-  block, button, createKv, createTable, errorText, field, format, h, loadStyle, message, pageHead, select, statusLine,
+  block, button, createKv, createTable, errorText, field, format, h, loadStyle, message, pageHead, select, state, statusLine,
 } from "../ui.js";
 
 const maxDays = 400;
@@ -167,6 +168,88 @@ async function load() {
   }
 }
 
+// Right-sizing verdicts (job_resources.go rightsizingResource.finish), as a
+// state tone and label: a tight limit is a problem, an oversized one a waste.
+const verdicts = {
+  tight: ["failed", "Tight"],
+  oversized: ["waiting", "Oversized"],
+  ok: ["ok", "Fits"],
+  too_few_jobs: ["", "Too few jobs"],
+  unlimited: ["", "No limit"],
+};
+
+const coreText = (value) => tr("{n} CPUs", { n: format.number(Math.round(value * 100) / 100) });
+const mibText = (value) => format.bytes(value * 1048576);
+
+function resourceCell(resource, text) {
+  if (!resource) return h("span", { class: "muted" }, tr("Not sampled"));
+  const [tone, label] = verdicts[resource.verdict] || ["", resource.verdict];
+  const peak = resource.limit > 0 ? tr("Peak {peak} of {limit}", { peak: text(resource.peak_max), limit: text(resource.limit) })
+    : tr("Peak {peak}", { peak: text(resource.peak_max) });
+  const ratio = Number.isFinite(resource.peak_ratio)
+    ? tr("Highest peak {percent} of its limit", { percent: resource.peak_ratio.toLocaleString(language, { style: "percent", maximumFractionDigits: 0 }) }) : null;
+  return [state("", label, tone), h("span", { class: "sub" }, peak), ratio ? h("span", { class: "sub" }, ratio) : null];
+}
+
+// The job group key is "owner/repo runner-label" (one label per workflow job).
+function rightsizingKey(group, key) {
+  if (group === "pool") return poolName(key);
+  const [repository, label] = key.split(" ");
+  return [repository, label ? h("span", { class: "sub" }, label) : null];
+}
+
+function rightsizingSection(ctx) {
+  const form = h("form", { class: "toolbar", "aria-label": tr("Right-sizing filters") },
+    field("Group by", select("group", [["pool", "Pool"], ["job", "Workflow job"]])),
+    field("Finished in", select("days", [1, 2, 3, 5, 7].map((days) => [String(days), days === 1 ? "Last day" : tr("Last {n} days", { n: days })]))),
+    button("Apply filters", null, { type: "submit" }));
+  form.elements.days.value = "7";
+  const output = statusLine();
+  const status = h("span", { class: "muted", role: "status" });
+  let group = "pool";
+  const table = createTable({
+    label: "CPU and memory right-sizing",
+    key: (row) => row.key || "-",
+    columns: [
+      { label: "Group", rowHeader: true, className: "id long", cell: (row) => rightsizingKey(group, row.key) },
+      { label: "Sampled jobs", num: true, cell: (row) => tr("{sampled} of {total}", { sampled: format.number(row.sampled_jobs), total: format.number(row.jobs) }) },
+      { label: "CPU", className: "wrap", cell: (row) => resourceCell(row.cpu, coreText) },
+      { label: "Memory", className: "wrap", cell: (row) => resourceCell(row.memory, mibText) },
+      { label: "Memory kills", num: true, cell: (row) => row.oom_kills ? state("FAILED", format.number(row.oom_kills), "failed") : "0" },
+    ],
+  });
+  let ticket = 0;
+  async function load() {
+    const current = ++ticket;
+    const params = new URLSearchParams({ group: form.elements.group.value, days: form.elements.days.value });
+    message(output, "");
+    status.textContent = tr("Loading right-sizing…");
+    try {
+      const data = await ctx.api.get("./api/usage/rightsizing?" + params);
+      if (current !== ticket || !table.element.isConnected) return;
+      group = data.group;
+      table.update(data.groups, "No finished jobs with resource samples in this range.");
+      status.textContent = "";
+      message(output, data.truncated ? tr("Showing the {n} groups with the most jobs.", { n: format.number(data.groups.length) }) : "", "waiting");
+    } catch (error) {
+      if (current !== ticket) return;
+      status.textContent = "";
+      if (error.status !== 401) message(output, errorText(error), "failed");
+    }
+  }
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void load();
+  });
+  table.update([], "Loading…");
+  void load();
+  return block("Right-sizing", {
+    actions: [status],
+    note: "Compares recent jobs' CPU and memory peaks with their limits. Runquill samples runners on the local Docker host only.",
+  }, form, table.element, output,
+  h("p", { class: "muted usage-note" }, tr("Tight: a peak above 80% of the limit, or a memory kill. Oversized: every peak below 25% of the limit, over at least 3 sampled jobs.")));
+}
+
 export default {
   id: "usage",
   title: "Usage",
@@ -212,6 +295,7 @@ export default {
       h("div", { class: "block" }, form, output),
       block("Totals", { actions: [range] }, h("div", { class: "usage-totals" }, totals.element)),
       block("Breakdown", { actions: [status] }, notice, results),
+      rightsizingSection(ctx),
       h("p", { class: "block muted usage-note" }, tr("Counts finished jobs by the UTC day they ended. Failed means Runquill gave up on the job or it was cancelled; GitHub's own job conclusion is not counted. Runner time runs from provisioning to cleanup. Waits run from queueing to provisioning and are estimated from histogram buckets.")),
     );
     parts = { ctx, form, totals, range, status, output, notice, results, data: null, ticket: 0 };

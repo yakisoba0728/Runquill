@@ -168,6 +168,9 @@ type statusHost struct {
 	// ImageStatus is ready, pulling, missing or failed while Runquill pulls runner images on this host.
 	ImageStatus         string `json:"image_status,omitempty"`
 	EnrollmentAvailable bool   `json:"enrollment_available,omitempty"`
+	// Warm counts idle warm runners on the host; WarmTarget is its pool's warm setting.
+	Warm       int `json:"warm,omitempty"`
+	WarmTarget int `json:"warm_target,omitempty"`
 }
 
 type statusJob struct {
@@ -302,7 +305,7 @@ func summarizeStatus(jobs []job, hosts []hostCapacity, unassigned, limit int, no
 		runners := &statusRunners{ReservedSlots: unassigned, UnassignedReservedSlots: unassigned}
 		for _, host := range hosts {
 			row := statusHost{Name: host.Name, Pool: host.Pool, Status: "UP", Cordoned: host.Cordoned, SlotLimit: host.Limit,
-				ImageStatus: host.ImageStatus, EnrollmentAvailable: host.EnrollmentAvailable}
+				ImageStatus: host.ImageStatus, EnrollmentAvailable: host.EnrollmentAvailable, Warm: host.Warm}
 			if host.Err != nil {
 				row.Status = "UNAVAILABLE"
 				row.Error = strings.Join(strings.Fields(host.Err.Error()), " ")
