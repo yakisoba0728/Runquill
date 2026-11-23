@@ -24,6 +24,8 @@ type workerPool struct {
 	Image        string   `json:"image"`
 	Privileged   *bool    `json:"privileged,omitempty"` // nil keeps the Docker-in-Docker default
 	Cache        bool     `json:"cache,omitempty"`
+	// CacheWrites is "all" or "default_branch"; empty means "all", or "default_branch" for public repositories.
+	CacheWrites string `json:"cache_writes,omitempty"`
 	// MaxPerRepository caps one repository's runners in this pool; 0 uses RUNQUILL_MAX_PER_REPOSITORY.
 	MaxPerRepository int `json:"max_per_repository,omitempty"`
 	// Images limits the runner image catalogue names jobs in this pool may select; nil allows all.
@@ -69,6 +71,9 @@ func (f *dockerFleet) configurePools(raw string) (workerPools, error) {
 		}
 		if strings.HasPrefix(pool.Image, "-") || strings.ContainsAny(pool.Image, " \t\r\n") {
 			return nil, fmt.Errorf("worker pool %q: image must be a Docker image reference", name)
+		}
+		if pool.CacheWrites != "" && pool.CacheWrites != cacheWritesAll && pool.CacheWrites != cacheWritesDefaultBranch {
+			return nil, fmt.Errorf("worker pool %q: cache_writes must be %q or %q", name, cacheWritesAll, cacheWritesDefaultBranch)
 		}
 		if err := checkWarmPool(pool); err != nil {
 			return nil, fmt.Errorf("worker pool %q: %w", name, err)
@@ -140,6 +145,17 @@ func (p workerPools) forJob(j job) (string, error) {
 		return name, fmt.Errorf("repository %s is not allowed to use worker pool %q", j.repository, name)
 	}
 	return name, nil
+}
+
+const (
+	cacheWritesAll           = "all"
+	cacheWritesDefaultBranch = "default_branch"
+)
+
+// cacheWritesRestricted reports whether only default-branch runs of repo may write the pool's cache.
+// Public repositories default to it because anyone can trigger some of their workflows.
+func (p workerPool) cacheWritesRestricted(repo repository) bool {
+	return p.Cache && (p.CacheWrites == cacheWritesDefaultBranch || p.CacheWrites == "" && !repo.Private)
 }
 
 func (p workerPool) allows(repo string) bool {

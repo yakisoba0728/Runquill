@@ -733,6 +733,10 @@ components:
           type: boolean
         cache:
           type: boolean
+        cache_writes:
+          type: string
+          enum: [all, default_branch]
+          description: Which runs may write the shared cache. With default_branch, other runs get an empty cache that is removed with the runner. Absent means all, or default_branch for public repositories.
         max_per_repository:
           type: integer
         images:

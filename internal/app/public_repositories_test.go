@@ -2,12 +2,14 @@ package app
 
 import (
 	"cmp"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -392,6 +394,75 @@ func TestOrganizationRunnerGroupPublicRepositories(t *testing.T) {
 			}
 		} else if err == nil || !strings.Contains(err.Error(), test.err) {
 			t.Errorf("allow=%v group public=%v: error %v, want %q", test.allow, test.groupPublic, err, test.err)
+		}
+	}
+}
+
+// cacheRuntime records whether each runner was started with a scratch cache.
+type cacheRuntime struct {
+	*testRuntime
+	scratch []bool
+}
+
+func (r *cacheRuntime) startOn(ctx context.Context, host, name, jit string) error {
+	r.scratch = append(r.scratch, scratchCache(ctx))
+	return r.testRuntime.startOn(ctx, host, name, jit)
+}
+
+func TestSchedulerLetsOnlyDefaultBranchRunsWriteSharedCache(t *testing.T) {
+	const (
+		private = `{"id":2,"full_name":"owner/repo","private":true,"default_branch":"main","owner":{"login":"owner"}}`
+		public  = `{"id":2,"full_name":"owner/repo","private":false,"visibility":"public","default_branch":"main","owner":{"login":"owner"}}`
+	)
+	run := func(event, branch string, headRepository int) string {
+		return fmt.Sprintf(`{"id":17,"event":%q,"head_branch":%q,"repository":{"id":2},"head_repository":{"id":%d,"full_name":"owner/repo"}}`,
+			event, branch, headRepository)
+	}
+	restricted := workerPool{Cache: true, CacheWrites: cacheWritesDefaultBranch}
+	for _, test := range []struct {
+		name, repo, run string
+		pool            workerPool
+		// runCalls is -1 when the launch must wait for the run lookup instead of starting a runner.
+		runCalls int32
+		scratch  bool
+	}{
+		{"default pool", private, "", workerPool{Cache: true}, 0, false},
+		{"explicit all", private, "", workerPool{Cache: true, CacheWrites: cacheWritesAll}, 0, false},
+		{"no cache", private, "", workerPool{CacheWrites: cacheWritesDefaultBranch}, 0, false},
+		{"push to default branch", private, run("push", "main", 2), restricted, 1, false},
+		{"schedule", private, run("schedule", "main", 2), restricted, 1, false},
+		{"manual run on default branch", private, run("workflow_dispatch", "main", 2), restricted, 1, false},
+		{"push to another branch", private, run("push", "feature", 2), restricted, 1, true},
+		{"pull request from default branch name", private, run("pull_request", "main", 2), restricted, 1, true},
+		{"pull_request_target", private, run("pull_request_target", "main", 2), restricted, 1, true},
+		{"issue comment", private, run("issue_comment", "main", 2), restricted, 1, true},
+		{"workflow_run", private, run("workflow_run", "main", 2), restricted, 1, true},
+		{"other head repository", private, run("push", "main", 3), restricted, 1, true},
+		{"missing event", private, `{"id":17,"head_branch":"main","repository":{"id":2},"head_repository":{"id":2}}`, restricted, 1, true},
+		{"missing default branch", `{"id":2,"full_name":"owner/repo","private":true,"owner":{"login":"owner"}}`, run("push", "main", 2), restricted, 1, true},
+		{"run lookup fails", private, "", restricted, -1, false},
+		{"public default", public, run("push", "main", 2), workerPool{Cache: true}, 1, false},
+		{"public pull request", public, run("pull_request", "feature", 2), workerPool{Cache: true}, 1, true},
+		{"public explicit all", public, run("pull_request", "feature", 2), workerPool{Cache: true, CacheWrites: cacheWritesAll}, 1, false},
+	} {
+		f := &publicFixture{allow: true, repo: test.repo, run: test.run}
+		q := testQueue(t)
+		now := time.Now()
+		recordTestJob(t, q, 9, "runquill-17-1-ci", now)
+		runtime := &cacheRuntime{testRuntime: &testRuntime{hosts: []dockerHostSnapshot{{Name: "local", Pool: defaultWorkerPool, Containers: map[string]string{}}}}}
+		s := &scheduler{queue: q, github: f.github(t), runtime: runtime, limit: 1, pools: workerPools{defaultWorkerPool: test.pool}}
+		if err := s.tick(t.Context(), now); err != nil {
+			t.Fatal(err)
+		}
+		got := readJob(t, q, 9)
+		if test.runCalls < 0 {
+			if f.runCalls.Load() != 1 || f.registered.Load() != 0 || len(runtime.scratch) != 0 || !strings.Contains(got.retryReason, "HTTP 500") {
+				t.Errorf("%s: the job must wait without a runner: %+v, JIT %d", test.name, got, f.registered.Load())
+			}
+			continue
+		}
+		if f.runCalls.Load() != test.runCalls || !slices.Equal(runtime.scratch, []bool{test.scratch}) {
+			t.Errorf("%s: run lookups %d, scratch %v; want %d, %v (%+v)", test.name, f.runCalls.Load(), runtime.scratch, test.runCalls, test.scratch, got)
 		}
 	}
 }

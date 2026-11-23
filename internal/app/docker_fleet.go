@@ -308,6 +308,7 @@ func (f *dockerFleet) startOn(ctx context.Context, target, name, jit string) err
 			if task.CacheRepository, err = runnerCacheRepository(ctx); err != nil {
 				return err
 			}
+			task.ScratchCache = scratchCache(ctx)
 		}
 		return f.workers.execute(ctx, host, task)
 	}

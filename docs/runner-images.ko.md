@@ -152,7 +152,7 @@ services:
 
 ## 도구 캐시
 
-`cache: true`를 설정한 풀에서는 러너마다 저장소의 기존 `runquill-cache-<저장소 ID>` 볼륨을 `/home/runner/.cache`에 마운트해 패키지와 빌드 도구 캐시로 씁니다. `/home/runner/.cache/tools`에 마운트하는 별도 볼륨은 `RUNNER_TOOL_CACHE`를 그 저장소와 러너의 실제 이미지 ID, 플랫폼 단위로 나눕니다. 같은 호스트의 작업은 이 값이 같으면 `actions/setup-*`가 받은 도구를 재사용합니다. 작업은 마운트된 캐시를 읽고 수정할 수 있습니다. 태그가 새 이미지 ID를 가리키게 되면 도구 캐시도 새로 시작합니다.
+`cache: true`를 설정한 풀에서는 러너마다 저장소의 기존 `runquill-cache-<저장소 ID>` 볼륨을 `/home/runner/.cache`에 마운트해 패키지와 빌드 도구 캐시로 씁니다. `/home/runner/.cache/tools`에 마운트하는 별도 볼륨은 `RUNNER_TOOL_CACHE`를 그 저장소와 러너의 실제 이미지 ID, 플랫폼 단위로 나눕니다. 같은 호스트의 작업은 이 값이 같으면 `actions/setup-*`가 받은 도구를 재사용합니다. 작업은 마운트된 캐시를 읽고 수정할 수 있습니다. [`cache_writes`](workers.ko.md#공유-캐시-보호)가 `default_branch`이면 기본 브랜치 밖의 작업은 대신 러너와 함께 지워지는 빈 캐시를 받습니다. 태그가 새 이미지 ID를 가리키게 되면 도구 캐시도 새로 시작합니다.
 
 pip, uv, Poetry, Yarn 1, Go 빌드 캐시처럼 이미 `~/.cache` 아래에 다운로드 캐시를 두는 도구는 별도 설정 없이 이 볼륨을 재사용합니다. 러너는 다음 다운로드 캐시도 볼륨 안으로 옮깁니다.
 
@@ -163,7 +163,7 @@ pip, uv, Poetry, Yarn 1, Go 빌드 캐시처럼 이미 `~/.cache` 아래에 다�
 | `NUGET_PACKAGES` | `/home/runner/.cache/nuget-packages` | `~/.nuget/packages` |
 | `BUN_INSTALL_CACHE_DIR` | `/home/runner/.cache/bun` | `~/.bun/install/cache` |
 
-작업이나 워크플로의 `env`에서 이 변수를 설정하면 그 값이 우선합니다. 도구의 홈 디렉터리 전체는 자격 증명, 설정, 설치된 바이너리도 담고 있어서 Runquill이 옮기지 않습니다. 이것들까지 공유해도 된다면 `GRADLE_USER_HOME`, `CARGO_HOME`, Maven의 `-Dmaven.repo.local`을 워크플로에서 직접 설정합니다. 이 변수가 설정되면 `actions/setup-node`와 `actions/setup-go`의 `cache:` 옵션은 영속 디렉터리를 GitHub Actions 캐시로 저장하고 복원합니다. 캐시를 쓰는 풀에서는 대개 이 옵션이 더 필요 없습니다. `actions/setup-go`는 기본으로 캐시를 쓰며, 이전 작업이 남긴 읽기 전용 모듈 파일 위로 복원하면서 tar 오류를 낼 수 있습니다. 캐시를 쓰는 풀에서는 `cache: false`를 설정하세요. 이 캐시는 그 호스트에서 실행되는 저장소의 모든 작업이 쓸 수 있으므로, 한 작업이 바꾼 패키지가 다음 작업에 남을 수 있습니다. 아웃바운드 워커는 업그레이드한 뒤부터 이 변수를 설정합니다.
+작업이나 워크플로의 `env`에서 이 변수를 설정하면 그 값이 우선합니다. 도구의 홈 디렉터리 전체는 자격 증명, 설정, 설치된 바이너리도 담고 있어서 Runquill이 옮기지 않습니다. 이것들까지 공유해도 된다면 `GRADLE_USER_HOME`, `CARGO_HOME`, Maven의 `-Dmaven.repo.local`을 워크플로에서 직접 설정합니다. 이 변수가 설정되면 `actions/setup-node`와 `actions/setup-go`의 `cache:` 옵션은 영속 디렉터리를 GitHub Actions 캐시로 저장하고 복원합니다. 캐시를 쓰는 풀에서는 대개 이 옵션이 더 필요 없습니다. `actions/setup-go`는 기본으로 캐시를 쓰며, 이전 작업이 남긴 읽기 전용 모듈 파일 위로 복원하면서 tar 오류를 낼 수 있습니다. 캐시를 쓰는 풀에서는 `cache: false`를 설정하세요. 풀이 [`cache_writes`](workers.ko.md#공유-캐시-보호)를 제한하지 않으면 이 캐시는 그 호스트에서 실행되는 저장소의 모든 작업이 쓸 수 있으므로, 한 작업이 바꾼 패키지가 다음 작업에 남을 수 있습니다. 아웃바운드 워커는 업그레이드한 뒤부터 이 변수를 설정합니다.
 
 업그레이드 후 각 이미지의 첫 작업은 빈 도구 캐시로 시작합니다. 이전에 공유하던 도구 파일은 새 마운트 아래의 저장소 볼륨에 남고, 저장소의 다른 캐시 파일도 계속 쓸 수 있습니다. 캐시는 `local`, `ssh://`, 아웃바운드 `agent://` 워커에서 동작합니다. 워커마다 새 도구 캐시 구조를 쓰려면 아웃바운드 워커를 업그레이드합니다.
 

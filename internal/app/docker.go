@@ -44,6 +44,19 @@ func runnerCacheRepository(ctx context.Context) (int64, error) {
 	return id, nil
 }
 
+type scratchCacheKey struct{}
+
+// withScratchCache gives a runner of a cache-enabled pool an empty cache that is removed with it,
+// instead of the repository's shared volumes, because its run may not write them (cache_writes).
+func withScratchCache(ctx context.Context) context.Context {
+	return context.WithValue(ctx, scratchCacheKey{}, true)
+}
+
+func scratchCache(ctx context.Context) bool {
+	scratch, _ := ctx.Value(scratchCacheKey{}).(bool)
+	return scratch
+}
+
 // runnerCacheVolume is the repository's shared package and build-tool cache.
 func runnerCacheVolume(ctx context.Context) (string, error) {
 	id, err := runnerCacheRepository(ctx)
@@ -94,6 +107,8 @@ type docker struct {
 	// warm is how many idle started runners to keep; see warm.go.
 	warm        int
 	warmMaxIdle time.Duration
+	// scratchCache replaces the shared cache volumes with one anonymous volume that "rm -v" removes.
+	scratchCache bool
 }
 
 func (d docker) command(ctx context.Context, input []byte, args ...string) (string, error) {
@@ -200,10 +215,16 @@ func (d docker) createPlan(engine *containerEngine, name, cacheVolume, toolVolum
 		memory := strconv.FormatInt(d.memoryMiB, 10) + "m"
 		args = append(args, "--memory", memory, "--memory-swap", memory)
 	}
-	if cacheVolume != "" {
+	if cacheVolume != "" || d.scratchCache {
 		for _, env := range packageCacheEnv {
 			args = append(args, "--env", env)
 		}
+	}
+	if d.scratchCache {
+		// Not read-only shared volumes: tools fail on them, and a privileged runner can remount them writable.
+		args = append(args, "--mount", "type=volume,dst="+runnerCachePath, "--env", "RUNNER_TOOL_CACHE="+runnerToolCache)
+		plan.dirs = append(plan.dirs, runnerCachePath[1:]+"/", runnerToolCache[1:]+"/")
+	} else if cacheVolume != "" {
 		// Named volumes survive "rm -v", so the cache outlives each ephemeral runner.
 		for _, cache := range []struct {
 			name, path string
@@ -243,7 +264,8 @@ func (d docker) start(ctx context.Context, name, jit string) error {
 	}
 	imageRef := d.image
 	var volume, toolVolume string
-	if d.cache {
+	d.scratchCache = d.cache && scratchCache(ctx)
+	if d.cache && !d.scratchCache {
 		if volume, err = runnerCacheVolume(ctx); err != nil {
 			return err
 		}

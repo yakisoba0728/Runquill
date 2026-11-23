@@ -54,20 +54,37 @@ runs-on: ${{ format('runquill-{0}-{1}-pool__build__compile-{2}', github.run_id, 
 
 라벨에 설정되지 않은 풀을 지정했거나 풀이 허용하지 않는 저장소라면 작업은 `worker pool "build" is not configured` 같은 재시도 이유와 함께 대기합니다. 패널의 **설정**에서 풀을 고치면 매니저를 재시작하지 않아도 이후 스케줄링에서 작업이 시작됩니다. 실패로 기록되는 경우는 24시간 기한이 지났을 때뿐입니다.
 
-풀에는 다음 네 가지 선택 항목도 쓸 수 있습니다.
+풀에는 다음 다섯 가지 선택 항목도 쓸 수 있습니다.
 
 ```dotenv
-RUNQUILL_WORKER_POOLS='{"lint":{"hosts":["local"],"privileged":false,"cache":true,"max_per_repository":2,"images":["ubuntu22.04"]}}'
+RUNQUILL_WORKER_POOLS='{"lint":{"hosts":["local"],"privileged":false,"cache":true,"cache_writes":"default_branch","max_per_repository":2,"images":["ubuntu22.04"]}}'
 ```
 
 - `privileged`의 기본값은 `true`이며, 러너마다 `--privileged`와 내부 Docker 데몬을 사용합니다. `false`로 설정하면 러너를 UID 1001로 실행하고 모든 capability를 제거하며 `no-new-privileges`를 적용합니다. 이 풀의 작업은 `docker`, 서비스 컨테이너, 작업 컨테이너, `sudo`를 사용할 수 없습니다. 이런 풀에 사용자 지정 `image`를 쓰려면 `/home/runner`를 소유한 UID 1001 러너 사용자가 이미지에 있어야 합니다.
 - `cache: true`는 `runquill-cache-<저장소 ID>`라는 Docker 볼륨을 `/home/runner/.cache`에 마운트합니다. 같은 호스트의 같은 저장소 작업은 패키지와 빌드 도구 캐시를 공유하며, 러너가 이 볼륨으로 옮기는 npm, Go 모듈, NuGet, Bun 캐시도 여기에 포함됩니다. `RUNNER_TOOL_CACHE` 경로인 `/home/runner/.cache/tools`에는 저장소, 이미지 ID, 플랫폼별 볼륨을 따로 마운트하므로 `actions/setup-*`가 받은 도구는 같은 이미지를 쓰는 작업에서 재사용합니다. 각 호스트는 자체 볼륨을 유지합니다. 로컬과 SSH 호스트에서는 매니저가 30일 동안 러너가 쓰지 않은 볼륨을 삭제합니다. 목록은 `docker volume ls -f label=io.runquill.cache=1`로 확인합니다. [도구 캐시와 정리](runner-images.ko.md#도구-캐시) · [Docker 빌드 레이어 캐시](workflows.ko.md#다음-작업에서-docker-빌드-레이어-재사용)
+- `cache_writes`는 `cache: true` 풀에서 공유 캐시 볼륨을 쓸 작업을 정합니다. `all`은 모든 작업이 읽고 쓰게 합니다. `default_branch`는 기본 브랜치 실행에만 공유 캐시를 주고, 나머지 작업은 빈 캐시로 시작합니다. 생략하면 비공개 저장소는 `all`, 공개 저장소는 `default_branch`를 씁니다. [공유 캐시 보호](#공유-캐시-보호)
 - `max_per_repository`는 해당 풀에서 저장소 하나가 사용할 수 있는 러너 수를 제한하며, 그 풀에서는 `RUNQUILL_MAX_PER_REPOSITORY`보다 우선합니다. 둘 다 없으면 저장소 하나가 빈 슬롯을 모두 쓸 수 있습니다.
 - `images`는 풀의 작업이 `os__NAME__`으로 고를 수 있는 [러너 OS](workflows.ko.md#러너-os-선택) 이름 목록입니다. 생략하면 모든 이름을 허용합니다.
 
-`privileged: false` 또는 `cache: true`를 설정한 풀의 [아웃바운드 워커](outbound-workers.ko.md)는 매니저와 같은 Runquill 릴리스를 실행해야 합니다. 이전 버전 에이전트는 이 설정이 담긴 러너 작업을 거부하므로 매니저와 함께 워커도 업그레이드하세요.
+`privileged: false`, `cache: true`, `cache_writes` 중 하나를 설정한 풀의 [아웃바운드 워커](outbound-workers.ko.md)는 매니저와 같은 Runquill 릴리스를 실행해야 합니다. 이전 버전 에이전트는 이 설정이 담긴 러너 작업을 거부하므로 매니저와 함께 워커도 업그레이드하세요.
 
-관리자 패널의 풀 편집기에는 Docker-in-Docker와 공유 캐시 체크박스, 허용할 러너 OS 이름 입력란이 있습니다. 편집기는 저장할 때 풀의 `max_per_repository`, `warm`, `warm_max_idle_minutes` 값을 유지하지만 바꾸지는 못합니다. 패널에서 설정을 한 번 저장하면 그 값이 `RUNQUILL_WORKER_POOLS`보다 우선합니다.
+관리자 패널의 풀 편집기에는 Docker-in-Docker와 공유 캐시 체크박스, 허용할 러너 OS 이름 입력란이 있습니다. 편집기는 저장할 때 풀의 `cache_writes`, `max_per_repository`, `warm`, `warm_max_idle_minutes` 값을 유지하지만 바꾸지는 못합니다. 패널에서 설정을 한 번 저장하면 그 값이 `RUNQUILL_WORKER_POOLS`보다 우선합니다.
+
+### 공유 캐시 보호
+
+`cache_writes`가 `all`이면 한 호스트에서 실행되는 저장소의 모든 작업이 같은 캐시 볼륨에 씁니다. 그러면 풀 리퀘스트 작업이 바꿔 둔 패키지나 도구를 나중에 기본 브랜치 작업이 실행할 수 있습니다. `"cache_writes":"default_branch"`이면 워크플로 실행이 다음 조건을 모두 만족할 때만 작업이 저장소의 공유 캐시 볼륨을 마운트합니다.
+
+- 이벤트가 `push`, `schedule`, `workflow_dispatch` 중 하나입니다.
+- 실행의 head 브랜치가 저장소의 기본 브랜치입니다.
+- 실행의 head 저장소가 그 저장소 자신입니다.
+
+나머지 작업은 대신 `/home/runner/.cache`에 빈 익명 볼륨을 받으며, 캐시 변수와 `RUNNER_TOOL_CACHE`는 같게 설정됩니다. `pull_request`, `pull_request_target`, `merge_group`, `issue_comment`, `workflow_run`, 다른 브랜치로의 push가 여기에 해당합니다. 도구는 평소처럼 이 볼륨에 쓰고, 엔진이 러너와 함께 볼륨을 지우므로 여기에 쓴 내용은 다른 작업에 남지 않습니다. 이 작업은 공유 캐시를 읽지도 않습니다. 읽기 전용 마운트를 쓰지 않은 이유는 npm, Go, `actions/setup-*`가 캐시에 쓰지 못하면 실패하고, 특권 러너는 읽기 전용 마운트를 쓰기 가능으로 다시 마운트할 수 있기 때문입니다.
+
+Runquill은 러너를 등록하기 직전에 판단합니다. 이벤트, head 브랜치, head 저장소는 GitHub 워크플로 실행 API에서, 기본 브랜치는 저장소 API에서 설치 토큰으로 읽습니다. 작업이 실행하는 어떤 코드도 이 값을 바꿀 수 없습니다. `default_branch` 풀은 실행마다 GitHub API 요청을 하나 더 합니다. 조회에 실패하면 작업은 기다렸다가 다시 시도합니다.
+
+- GitHub는 실행의 head 브랜치가 브랜치인지 태그인지 알려 주지 않습니다. 쓰기 권한이 있는 사람이 기본 브랜치와 이름이 같은 태그를 푸시하면 기본 브랜치로 취급됩니다. 태그 룰셋으로 그런 태그를 막으세요.
+- `privileged`가 기본값 `true`이면 작업은 호스트의 root이므로 어차피 공유 볼륨에 접근할 수 있습니다. 악의적인 작업까지 막아야 한다면 `privileged: false`를 쓰세요.
+- 아웃바운드 워커는 이 릴리스가 필요합니다. 이전 버전 에이전트는 작업을 거부하고, 작업은 워커를 업그레이드할 때까지 다시 시도합니다.
 
 ## 러너를 미리 띄워 두기
 
