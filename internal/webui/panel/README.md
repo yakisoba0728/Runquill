@@ -16,7 +16,7 @@ npm run build        # writes ../panelv2/, commit the result
 npm run size         # gzip budget, design §6.8
 ```
 
-The build is byte-identical across runs and across macOS arm64, Linux arm64 and Linux amd64 with the same lockfile and Node version. `go build` never needs Node: the server embeds the committed `internal/webui/panelv2/`. `.gitattributes` marks that directory as generated.
+The build is byte-identical across runs and across macOS arm64, Linux arm64 and Linux amd64 with the same lockfile and Node version. `go build` never needs Node, because the output is committed. Embedding and serving it behind `RUNQUILL_PANEL_V2=1` is the next (Go) step. `.gitattributes` marks the directory as generated.
 
 ## Output
 
@@ -24,9 +24,9 @@ The build is byte-identical across runs and across macOS arm64, Linux arm64 and 
 internal/webui/panelv2/
   index.html                  <body data-mode="demo">; one <script src> per file, no inline script or style
   theme.js                    public/theme.js as is: applies the saved theme before the first paint
-  assets/panel-<hash>.js      entry: shell, sign-in, live store, router (static imports nothing)
+  assets/panel-<hash>.js      entry: shell, sign-in, live store, router (loads every other chunk with import(`./…`))
   assets/panel-<hash>.css     stratum.css + src/panel.css
-  assets/chunk-<hash>.js      lazy: each screen, the Korean catalogue, the server message templates
+  assets/chunk-<hash>.js      lazy: each screen, the Korean catalogue, the server message templates (screens import the entry back)
   assets/demo-<hash>.js       lazy, sample panel only: everything under src/demo/
 ```
 

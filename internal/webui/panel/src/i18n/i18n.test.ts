@@ -31,16 +31,21 @@ describe("i18n", () => {
     expect(serverText("  Anything at all \n")).toBe("Anything at all");
   });
 
-  it("has a Korean entry for every English key written in the source", () => {
+  it("has a Korean entry for the English keys written in the source", () => {
     const keys = new Set<string>();
     const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
       entry.isDirectory() ? walk(join(dir, entry.name)) : /\.tsx?$/.test(entry.name) && !entry.name.includes(".test.") ? [join(dir, entry.name)] : []);
     for (const file of walk(join(__dirname, ".."))) {
-      if (file.includes("/demo/")) continue; // sample notes are checked below
+      if (file.includes("/demo/")) continue; // sample fixtures: server-like English data, not keys
       const source = readFileSync(file, "utf8");
-      for (const match of source.matchAll(/\b(?:t|fill)\(\s*"((?:[^"\\]|\\.)+)"|\b(?:title|label|key): "([A-Z][^"]*)"/g)) keys.add(match[1] ?? match[2]);
+      // t("…"), fill("…"), table fields (title: "…") and both arms of a ternary (? "…" : "…").
+      for (const match of source.matchAll(/\b(?:t|fill)\(\s*"((?:[^"\\]|\\.)+)"|\b(?:title|label|key): "([A-Z][^"]*)"|[?:] "([A-Z{][^"]*)"/g)) {
+        keys.add(match[1] ?? match[2] ?? match[3]);
+      }
     }
-    const missing = [...keys].filter((key) => !Object.hasOwn(ko, key));
+    // Codes and fixed text that are not translated.
+    const literal = new Set(["POST", "Meta+K /", "Control+K /", "Ctrl K", "English", "CORDONED"]);
+    const missing = [...keys].filter((key) => !Object.hasOwn(ko, key) && !literal.has(key));
     expect(missing).toEqual([]);
   });
 });

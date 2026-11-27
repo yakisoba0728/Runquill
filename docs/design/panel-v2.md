@@ -799,7 +799,7 @@ export default defineConfig({
     rolldownOptions: {
       output: {
         entryFileNames: "assets/panel-[hash].js",
-        // src/demo/ 아래 모듈은 모두 "demo" 그룹 하나로. Rolldown 1.3부터 advancedChunks는 codeSplitting으로 바뀜(구현 확인)
+        // src/demo/ 아래 모듈은 모두 "demo" 그룹 하나로. 설치된 Rolldown 1.3.4는 advancedChunks를 deprecated로 표시하고 codeSplitting을 권함
         codeSplitting: { groups: [{ name: "demo", test: /[\\/]src[\\/]demo[\\/]/ }] },
         chunkFileNames: (chunk) => (chunk.name === "demo" ? "assets/demo-[hash].js" : "assets/chunk-[hash].js"),
         assetFileNames: "assets/panel-[hash][extname]",
@@ -1012,7 +1012,7 @@ React·ReactDOM과 Stratum JS의 압축 크기는 구현하면서 빌드 결과�
 | `TestPanelSamplePanelIsReadOnly` (`app/panel_test.go:159`) | `views/*.js`, `demo/*.js` 등에서 fixture가 GET만 답하는지, 화면 코드가 `fetch`·`EventSource`·`XMLHttpRequest`·`sendBeacon`·`WebSocket`을 직접 쓰지 않는지 | 같은 검사를 소스 `internal/webui/panel/src/**/*.{ts,tsx}`에, `src/api.ts`와 `src/live.ts`만 예외로. 번들은 축약되어 검사할 수 없음 |
 | 나머지 패널 서버 테스트(`panel_access_test.go`, `panel_jobs_test.go`, `panel_settings_test.go`, `panel_backups_test.go`, `panel_migrate_test.go`, `panel_resources_test.go`, `panel_live_oauth_test.go`) | API 동작 | 그대로 |
 
-**프런트엔드 단위 테스트**(Vitest + Testing Library + jsdom, Stratum과 같은 도구). 1단계에는 `api`, `live`, `router`, `i18n`(소스의 모든 `t("…")` 키가 `ko.json`에 있는지 포함), 주의 항목·`summary`, `confirm()` 테스트가 있습니다.
+**프런트엔드 단위 테스트**(Vitest + Testing Library + jsdom, Stratum과 같은 도구). 1단계에는 `api`, `live`, `router`, `i18n`(소스에 적힌 영어 키, 곧 `t("…")`, `fill("…")`, `title: "…"`, 삼항 양쪽의 문자열이 `ko.json`에 있는지 포함. 변수로 넘기는 키는 잡지 못함), 주의 항목·`summary`, `confirm()` 테스트가 있습니다.
 
 - `api.ts`: 일반 문장·JSON 오류 해석, 401 콜백, 시간 초과·네트워크 문구, 샘플 모드 거부.
 - `live.ts`: 가짜 타이머와 가짜 `EventSource`로 4초/10초/60초 규칙, 폴링 백오프, 숨은 탭, 401.
@@ -1048,6 +1048,20 @@ Stratum 0.1.1의 `dist`를 직접 읽은 결과도 같습니다.
 
 빌드된 `index.html`에는 `<script src>`와 `<link>`만 있습니다. 모듈 프리로드 폴리필은 껐습니다.
 
+**다른 엔진과 개발 서버.** 같은 확인 스크립트를 Firefox와 WebKit(Playwright 캐시의 엔진)에서도 돌렸습니다.
+
+- WebKit은 모두 통과했습니다.
+- Firefox도 모두 통과했습니다. 다만 일부러 끊은 연결 시험에서 `EventSource` 연결 실패가 콘솔 오류로 찍힙니다. Chromium이 같은 상황에서 503을 찍는 것과 같은 성격입니다.
+- e2e를 만들 때 주의할 점: WebKit에서는 Playwright의 `page.screenshot()`이 `<style>`을 넣어 CSP 위반이 생깁니다. CSP 검사와 스크린샷을 한 페이지에서 같이 하지 않습니다.
+
+그 밖에 확인한 것:
+
+- 건너뛰기 링크: 첫 Tab 위치에서 화면에 보이고, Enter를 누르면 제목으로 포커스가 갑니다.
+- 영어 페이지의 한글: 팔레트, 사용자 메뉴, 폰 서랍, 토스트, 로그인 화면 상태에서 한글이 없습니다(언어 전환 링크 "한국어"만 예외).
+- 개발 서버(`npm run dev`, 개발용 React): 경고와 오류가 없습니다.
+
+[§9 Q7](#9-열린-질문)의 정확한 브라우저 하한은 아직 정하지 않았습니다.
+
 **결정성.** 같은 lockfile과 Node 26.13.1로 빌드해 `diff -r`로 비교했고, 결과가 모두 같았습니다.
 
 - 같은 macOS arm64에서 두 번 빌드한 결과.
@@ -1060,7 +1074,7 @@ lockfile에는 Linux용 `@rolldown/binding-linux-*`와 `lightningcss-linux-*`가
 
 **설계와 달라진 점.**
 
-- `rolldownOptions.output.codeSplitting`을 씁니다. `advancedChunks`는 Rolldown 1.3에서 폐기되었습니다.
+- `rolldownOptions.output.codeSplitting`을 씁니다. 설치된 Rolldown 1.3.4의 타입에서 `advancedChunks`는 deprecated입니다.
 - 내비게이션 아이콘이 아직 없어 사이드바 레일(`⌘\`)을 `rail={false}`로 막았습니다.
 - `api.ts`에는 `request`만 옮겼습니다. `download`, `stream`, 샘플 응답용 `createApi`는 쓰는 화면과 함께 2~4단계에서 옮깁니다.
 - 떠나기 가드(`useLeaveGuard`)는 설정 화면(4단계)과 함께 만듭니다.
@@ -1071,9 +1085,10 @@ lockfile에는 Linux용 `@rolldown/binding-linux-*`와 `lightningcss-linux-*`가
 1. `internal/webui/assets.go`에 `//go:embed panelv2`와 `PanelV2()`를 더합니다. `panelv2/`에는 `_`나 `.`로 시작하는 파일이 없어 `all:`이 필요 없습니다.
 2. `RUNQUILL_PANEL_V2=1`이면 라이브 패널과 `panel --demo` 모두 v2를 서빙합니다. 경로는 `GET /`(라이브면 `data-mode` 치환), `GET /theme.js`, `GET /assets/{file}`입니다. `{file}`은 `^(?:panel|chunk|demo)-[A-Za-z0-9_-]+\.(?:js|css)$`가 아니면 400이고, 라이브면 `demo-*`는 404입니다. CSP와 `no-store`는 v1과 같습니다. 아니면 v1 라우트를 그대로 둡니다.
 3. [§7.2](#72-테스트)의 Go 테스트를 `panelv2` 기준으로 더합니다.
-   - 임베드된 `index.html`이 참조하는 파일이 200인지 확인합니다. 진입 청크는 `import("./chunk-…")`처럼 같은 디렉터리 상대 경로로 청크를 부릅니다.
+   - 임베드된 `index.html`이 참조하는 파일이 200인지 확인합니다. 진입 청크는 다른 청크를 ``import(`./chunk-….js`)``처럼 백틱 문자열로 부르고, 화면 청크는 진입 청크를 `from"./panel-….js"`로 되부릅니다. 따옴표 종류와 상관없이 `\./(panel|chunk|demo)-[A-Za-z0-9_-]+\.(js|css)`로 찾으면 됩니다.
    - `demo-*` 분리와 404를 확인합니다.
    - 번역 테스트가 v1 `i18n.js`와 `internal/webui/panel/src/i18n/ko.json`, `server-patterns.json`을 둘 다 검사하게 합니다.
+   - 읽기 전용 검사(`TestPanelSamplePanelIsReadOnly`의 v2판)는 `src/**/*.test.ts(x)`를 빼야 합니다. 테스트 파일은 `fetch`와 `EventSource`를 직접 바꿔 끼웁니다. 예외는 `src/api.ts`와 `src/live.ts`입니다.
 4. `.github/workflows/ci.yml`에 `panel` 작업을 더합니다([§6.5](#65-ci-최신성-검사), 경로는 `internal/webui/panelv2`). 순서는 `npm ci`, `npm run typecheck`, `npm test`, `npm run build`, `git diff --exit-code -- ../panelv2`와 `git status --porcelain -- ../panelv2`가 비었는지 확인, `npm run size`입니다.
    - `-diff` 속성 때문에 `git diff`는 내용을 보여 주지 않습니다. 종료 코드는 그대로이므로 실패 안내 문구를 함께 출력합니다.
    - 빌드는 Vite 경고 `<script src="./theme.js"> … can't be bundled without type="module"`를 출력합니다. 의도한 동작입니다.
