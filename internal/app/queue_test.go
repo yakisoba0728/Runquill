@@ -5,6 +5,47 @@ import (
 	"time"
 )
 
+func TestQueueRecordKeepsJobPhaseAndLeaseOnRedelivery(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		initial   phase
+		incoming  phase
+		wantPhase phase
+		changed   bool
+	}{
+		{"duplicate queued", queued, queued, queued, false},
+		{"late queued", inProgress, queued, inProgress, false},
+		{"late in progress", completed, inProgress, completed, false},
+		{"duplicate completed", completed, completed, completed, false},
+		{"new completion", inProgress, completed, completed, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			q := testQueue(t)
+			ctx := t.Context()
+			first := time.Unix(1_800_000_000, 0)
+			j := recordTestJob(t, q, 9, "runquill-1-1-ci", first)
+			if _, err := q.ExecContext(ctx, `UPDATE jobs SET phase = ?, runner_name = 'runner',
+				runner_host = 'local', runner_id = 55, launched_at = ? WHERE job_id = ?`, tt.initial, first.Unix(), j.id); err != nil {
+				t.Fatal(err)
+			}
+			want := readJob(t, q, j.id)
+			later := first.Add(time.Minute)
+			j.phase = tt.incoming
+			changed, err := q.record(ctx, j, later)
+			if err != nil || changed != tt.changed {
+				t.Fatalf("record returned (%v, %v), want (%v, nil)", changed, err, tt.changed)
+			}
+			want.phase = tt.wantPhase
+			if tt.changed {
+				want.changedAt = later.Unix()
+			}
+			if got := readJob(t, q, j.id); got != want {
+				t.Fatalf("stored job = %+v, want %+v", got, want)
+			}
+		})
+	}
+}
+
 func TestQueueRecordMovesQueuedJobToNewInstallation(t *testing.T) {
 	q := testQueue(t)
 	first := time.Unix(1_800_000_000, 0)
