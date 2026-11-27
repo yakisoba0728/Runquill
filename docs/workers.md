@@ -68,7 +68,7 @@ RUNQUILL_WORKER_POOLS='{"lint":{"hosts":["local"],"privileged":false,"cache":tru
 
 [Outbound workers](outbound-workers.md) in a pool with `privileged: false`, `cache: true` or `cache_writes` must run the same Runquill release as the manager. Older agents reject runner tasks that carry these settings, so upgrade the workers along with the manager.
 
-The administrator panel's pool editor has checkboxes for Docker-in-Docker and the shared cache, and a field for the allowed runner OS names. It keeps each pool's `cache_writes`, `max_per_repository`, `warm` and `warm_max_idle_minutes` when saving but cannot change them. Once settings have been saved in the panel, they take precedence over `RUNQUILL_WORKER_POOLS`.
+The administrator panel's pool editor lets you set Docker-in-Docker, shared caching, allowed runner OS names, `warm` and `warm_max_idle_minutes`. It preserves `cache_writes` and `max_per_repository` when you save. Once settings have been saved in the panel, they take precedence over `RUNQUILL_WORKER_POOLS`.
 
 ### Protect the shared cache
 
@@ -103,7 +103,7 @@ RUNQUILL_WORKER_POOLS='{"default":{"warm":2,"warm_max_idle_minutes":30}}'
 - `warm` cannot be combined with `cache: true`, because the cache volume belongs to the job's repository, which is unknown before the job arrives. The manager rejects `warm` for pools with outbound `agent://` workers, and K3s does not use worker pools.
 - Warm runners need the runner image from this release or later. A custom pool image must keep its entrypoint.
 - Each warm runner takes at most one job and is removed afterwards, like any runner. Idle warm runners still hold memory and, with Docker-in-Docker, a running daemon, so keep `warm` within the host's capacity.
-- Warm runners are named `runquill-warm-…`. They do not appear in `status`, the panel or `gc --dry-run`, and `gc --remove-orphans` leaves them alone. List them with `docker ps --filter name=runquill-warm-`. Podman has not been tested with warm runners.
+- Warm runners are named `runquill-warm-…`. See idle counts and configured targets in **Hosts & pools** or in the `warm` and `warm_target` fields of `runquill status --json`. `gc --dry-run` omits idle warm runners, and `gc --remove-orphans` skips them. List them with `docker ps --filter name=runquill-warm-`. Podman has not been tested with warm runners.
 
 ## Share capacity across repositories
 

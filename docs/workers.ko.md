@@ -68,7 +68,7 @@ RUNQUILL_WORKER_POOLS='{"lint":{"hosts":["local"],"privileged":false,"cache":tru
 
 `privileged: false`, `cache: true`, `cache_writes` 중 하나를 설정한 풀의 [아웃바운드 워커](outbound-workers.ko.md)는 매니저와 같은 Runquill 릴리스를 실행해야 합니다. 이전 버전 에이전트는 이 설정이 담긴 러너 작업을 거부하므로 매니저와 함께 워커도 업그레이드하세요.
 
-관리자 패널의 풀 편집기에는 Docker-in-Docker와 공유 캐시 체크박스, 허용할 러너 OS 이름 입력란이 있습니다. 편집기는 저장할 때 풀의 `cache_writes`, `max_per_repository`, `warm`, `warm_max_idle_minutes` 값을 유지하지만 바꾸지는 못합니다. 패널에서 설정을 한 번 저장하면 그 값이 `RUNQUILL_WORKER_POOLS`보다 우선합니다.
+관리자 패널의 풀 편집기에서 Docker-in-Docker, 공유 캐시, 허용할 러너 OS 이름, `warm`, `warm_max_idle_minutes`를 설정할 수 있습니다. 저장할 때 `cache_writes`와 `max_per_repository` 값은 유지됩니다. 패널에서 설정을 한 번 저장하면 그 값이 `RUNQUILL_WORKER_POOLS`보다 우선합니다.
 
 ### 공유 캐시 보호
 
@@ -103,7 +103,7 @@ RUNQUILL_WORKER_POOLS='{"default":{"warm":2,"warm_max_idle_minutes":30}}'
 - 캐시 볼륨은 작업 저장소의 것인데 작업이 오기 전에는 저장소를 알 수 없으므로 `warm`은 `cache: true`와 함께 쓸 수 없습니다. 매니저는 아웃바운드 `agent://` 워커가 있는 풀의 `warm`을 거부하며, K3s는 워커 풀을 쓰지 않습니다.
 - 이 기능에는 이번 릴리스 이후의 러너 이미지가 필요합니다. 풀의 사용자 지정 이미지는 기본 엔트리포인트를 유지해야 합니다.
 - 미리 띄운 러너도 다른 러너처럼 작업을 최대 하나만 받고 끝나면 제거됩니다. 대기 중에도 메모리를 쓰고 Docker-in-Docker라면 데몬도 실행 중이므로 `warm`은 호스트 용량 안에서 정하세요.
-- 미리 띄운 러너의 이름은 `runquill-warm-…`입니다. `status`, 패널, `gc --dry-run`에는 나오지 않으며 `gc --remove-orphans`도 건드리지 않습니다. `docker ps --filter name=runquill-warm-`으로 확인하세요. Podman에서는 아직 시험하지 않았습니다.
+- 미리 띄운 러너의 이름은 `runquill-warm-…`입니다. 대기 중인 수와 설정한 목표 수는 **호스트와 풀** 화면이나 `runquill status --json`의 `warm`, `warm_target` 항목에서 확인할 수 있습니다. `gc --dry-run` 목록과 `gc --remove-orphans` 삭제 대상에서는 대기 중인 웜 러너가 제외됩니다. `docker ps --filter name=runquill-warm-`으로 확인하세요. Podman에서는 아직 시험하지 않았습니다.
 
 ## 저장소 간 슬롯 공유
 
