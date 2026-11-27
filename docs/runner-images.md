@@ -123,7 +123,7 @@ The manager pulls runner images onto the `local` host and `ssh://` hosts itself.
 The puller covers each host's configured image (the default runner image or its pool's `image`) and, on demand, catalogue images that a waiting job selected on that host. An on-demand image is pulled on one eligible host, the least occupied or the one already pulling it, not on every host, and is forgotten an hour after the last job asked for it.
 
 - The puller inspects the images every 30 seconds, runs at most two pulls at once and one per host, and stops a pull after 15 minutes. A failed pull is retried after 30 seconds, then with a doubling delay of up to 10 minutes. An image that appears on a host meanwhile, for example a local build, is used at once.
-- While a host's own image is missing, the manager still starts. The host shows as unavailable with the image state (`missing`, `pulling` or `failed` with the pull error) on the panel's **Hosts & pools** screen and in `GET /snapshot` (`image_status`). `runquill status` runs in its own process and sees only whether the image is there (`ready` or `missing`). Jobs that would run there wait with `waiting for runner image IMAGE on HOST`.
+- While a host's own image is missing, the manager still starts. The host shows as unavailable with the image state (`missing`, `pulling` or `failed` with the pull error) on the panel's **Hosts** screen and in `GET /snapshot` (`image_status`). `runquill status` runs in its own process and sees only whether the image is there (`ready` or `missing`). Jobs that would run there wait with `waiting for runner image IMAGE on HOST`.
 - Credentials typed into an image reference are removed from logs and pull errors.
 
 The exceptions:

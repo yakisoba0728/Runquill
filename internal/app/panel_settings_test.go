@@ -52,7 +52,7 @@ func TestPanelSettingsAreAuditedAndAppliedWithoutRestart(t *testing.T) {
 		return key
 	}
 	admin, viewer := login(101), login(102)
-	handler := panelHandler(panel, access)
+	handler := panelHandler(panel, access, true)
 	call := func(method, session, origin string, policy operationPolicy, expected int) {
 		t.Helper()
 		body, err := json.Marshal(policy)

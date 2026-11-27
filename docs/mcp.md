@@ -30,7 +30,7 @@ Use `fleet:read` for agent inspection. For a state change authorized by the oper
 
 ## Access
 
-Create a `fleet:read` API token under **Team & tokens** in the panel. The endpoint accepts API tokens only: a browser session cookie is always refused with HTTP 401, so a web page cannot use your panel session to call it. A request that carries an `Origin` header must come from the panel origin. One manager runs at most 4 MCP requests at a time, each limited to 5 seconds.
+Create a `fleet:read` API token under **API tokens** in the panel’s user menu. The endpoint accepts API tokens only: a browser session cookie is always refused with HTTP 401, so a web page cannot use your panel session to call it. A request that carries an `Origin` header must come from the panel origin. One manager runs at most 4 MCP requests at a time, each limited to 5 seconds.
 
 The endpoint speaks MCP revision `2026-07-28` statelessly and revision `2025-11-25` for clients that start with `initialize`. Clients that only support older revisions are refused with an unsupported-version error.
 

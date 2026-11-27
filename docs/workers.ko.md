@@ -103,7 +103,7 @@ RUNQUILL_WORKER_POOLS='{"default":{"warm":2,"warm_max_idle_minutes":30}}'
 - 캐시 볼륨은 작업 저장소의 것인데 작업이 오기 전에는 저장소를 알 수 없으므로 `warm`은 `cache: true`와 함께 쓸 수 없습니다. 매니저는 아웃바운드 `agent://` 워커가 있는 풀의 `warm`을 거부하며, K3s는 워커 풀을 쓰지 않습니다.
 - 이 기능에는 이번 릴리스 이후의 러너 이미지가 필요합니다. 풀의 사용자 지정 이미지는 기본 엔트리포인트를 유지해야 합니다.
 - 미리 띄운 러너도 다른 러너처럼 작업을 최대 하나만 받고 끝나면 제거됩니다. 대기 중에도 메모리를 쓰고 Docker-in-Docker라면 데몬도 실행 중이므로 `warm`은 호스트 용량 안에서 정하세요.
-- 미리 띄운 러너의 이름은 `runquill-warm-…`입니다. 대기 중인 수와 설정한 목표 수는 **호스트와 풀** 화면이나 `runquill status --json`의 `warm`, `warm_target` 항목에서 확인할 수 있습니다. `gc --dry-run` 목록과 `gc --remove-orphans` 삭제 대상에서는 대기 중인 웜 러너가 제외됩니다. `docker ps --filter name=runquill-warm-`으로 확인하세요. Podman에서는 아직 시험하지 않았습니다.
+- 미리 띄운 러너의 이름은 `runquill-warm-…`입니다. 대기 중인 수와 설정한 목표 수는 **호스트** 화면이나 `runquill status --json`의 `warm`, `warm_target` 항목에서 확인할 수 있습니다. `gc --dry-run` 목록과 `gc --remove-orphans` 삭제 대상에서는 대기 중인 웜 러너가 제외됩니다. `docker ps --filter name=runquill-warm-`으로 확인하세요. Podman에서는 아직 시험하지 않았습니다.
 
 ## 저장소 간 슬롯 공유
 
@@ -117,4 +117,4 @@ RUNQUILL_WORKER_POOLS='{"default":{"warm":2,"warm_max_idle_minutes":30}}'
 
 ## 탄력적 러너 한도
 
-`RUNQUILL_ELASTIC=observe` 또는 `apply`를 설정하면 `local` Docker 호스트에서 바쁜 러너가 다른 러너나 빈 슬롯에 약속되지 않은 CPU와 메모리를 풀의 `cpus`, `memory_mib`의 배수까지 빌려 씁니다. 한도는 풀 설정값 아래로 내려가지 않고 메모리는 줄이지 않습니다. `observe`는 결정만 기록하며 **호스트와 풀** 화면에서 확인할 수 있습니다. 부하가 걸린 실제 호스트에서는 아직 검증하지 않았습니다. [탄력적 한도](elastic-limits.ko.md)
+`RUNQUILL_ELASTIC=observe` 또는 `apply`를 설정하면 `local` Docker 호스트에서 바쁜 러너가 다른 러너나 빈 슬롯에 약속되지 않은 CPU와 메모리를 풀의 `cpus`, `memory_mib`의 배수까지 빌려 씁니다. 한도는 풀 설정값 아래로 내려가지 않고 메모리는 줄이지 않습니다. `observe`는 결정만 기록하며 **호스트** 화면에서 확인할 수 있습니다. 부하가 걸린 실제 호스트에서는 아직 검증하지 않았습니다. [탄력적 한도](elastic-limits.ko.md)

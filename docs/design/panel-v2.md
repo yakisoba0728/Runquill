@@ -768,7 +768,7 @@ function usePoll<T>(path: string | null, interval: (data?: T, error?: ApiError) 
 | `internal/webui/panel/node_modules/` | 설치물 | `.gitignore` |
 | `internal/webui/panelweb/` | 빌드 결과(생성물). `assets.go`의 `//go:embed panelweb`가 그대로 읽음 | 커밋, `.gitattributes`에 `linguist-generated=true -diff` |
 
-결과 디렉터리 이름을 지금과 같게 두면 `internal/webui/assets.go`, `.github/workflows/demo-pages.yml`의 복사, `.github/workflows/release.yml:91`의 `runquill-panel-demo.tar.gz`가 경로를 바꾸지 않아도 됩니다(내용 검사는 바뀝니다, [§6.7](#67-바뀌는-다른-파일)).
+6단계에서는 `internal/webui/assets.go`, Pages 배포와 릴리스 데모 tar가 `panelweb/`만 사용합니다. 5단계에서 Pages와 데모 tar가 사용하는 `panelv2/` 경로는 이때 함께 바꿉니다([§7.6](#76-4단계-관리-화면-확인-결과)).
 
 TypeScript를 씁니다. Stratum이 타입을 제공하고, 빌드는 Vite가 타입을 지우기만 하므로 런타임 비용이 없습니다. 타입 검사는 `tsc --noEmit`로 CI에서만 합니다.
 
@@ -881,7 +881,12 @@ panel:
     - run: npm run size       # 예산 검사, §6.8
     - uses: actions/setup-go@<sha>
       with: { go-version-file: go.mod }
-    - run: npx playwright install --with-deps chromium && npm run e2e   # §7.2
+    - uses: actions/cache@<sha>
+      with:
+        path: ~/.cache/ms-playwright
+        key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('internal/webui/panel/node_modules/playwright-core/browsers.json') }}
+    - run: npx playwright install --with-deps
+    - run: npx playwright test
 ```
 
 실패하면 "`internal/webui/panel`에서 `npm run build`를 실행해 결과를 커밋하세요"를 출력합니다.
@@ -921,7 +926,7 @@ go run . panel --demo               # (저장소 루트) 빌드 결과를 Go 서
 | `api/openapi.yaml` | 정적 파일 경로(`/panel.css`~`/demo/{file}`)를 `/theme.js`, `/assets/{file}`로 |
 | `.github/workflows/ci.yml` | `panel` 작업(§6.5) |
 | `.github/workflows/demo-pages.yml` | `test -f _site/app.js && test -f _site/views/overview.js && test -f _site/demo/jobs.js`를 `test -f _site/index.html && test -f _site/theme.js && ls _site/assets/demo-*.js`로. `grep -Fq 'data-mode="demo"'`는 그대로 |
-| `.github/workflows/release.yml` | 변경 없음(같은 디렉터리를 tar). 데모 tar에 `assets/`가 들어감 |
+| `.github/workflows/release.yml` | 데모 tar의 경로를 5단계의 `panelv2/`에서 `panelweb/`으로 바꿈. 데모 tar에 `assets/`가 들어감 |
 | `AGENTS.md` | "The panel is embedded static HTML, CSS and JavaScript and has no frontend build step"을 "패널 소스는 `internal/webui/panel/`, 빌드 결과는 커밋된 `internal/webui/panelweb/`. Go 빌드에는 Node가 필요 없고, 패널을 고칠 때만 `npm run build`"로. 작업 표의 패널 행에 소스 경로 추가 |
 | `docs/development.md`, 저장소 구조 | 위와 같은 내용, Node 버전과 명령 |
 | `docs/panel.md`, `docs/panel.ko.md` | 탐색 표, 화면 설명, 주소, 팔레트, 로그 위치(§2) |
@@ -1031,9 +1036,9 @@ React·ReactDOM과 Stratum JS의 압축 크기는 구현하면서 빌드 결과�
 | 3 operator 동작 | 재시도·취소, 배정 중지·재개, 로그 탭, 워커 등록, 저장소 점검(admin, 2단계에서 미룸) | 〃 |
 | 4 관리 화면 | 설정(`SaveBar`, 가드), 팀, API 토큰, 감사, 백업, 이전 | 〃 |
 | 5 전환 | 프런트엔드: §1 전체 점검, 남은 행 `Menu`, Stratum 제안 정리([§7.7](#77-5단계-프런트엔드-확인-결과)). Go·CI: v2를 기본 패널로 서빙하고 v1은 한 릴리스 동안 선택해서 켜는 패널로 남김, 문서(영어·한국어) 갱신, `openapi.yaml`, Pages·데모 tar를 v2로, CI에 e2e | 릴리스 노트에 화면 변경, 예전 주소 동작, v1로 돌아가는 방법 |
-| 6 정리 | 다음 마이너 릴리스에서 v1 소스 삭제, v2 결과를 `panelweb/`으로 옮김, 선택 스위치 제거 | |
+| 6 정리 | 다음 마이너 릴리스에서 [§7.6의 6단계 체크리스트](#6단계-체크리스트) 실행 | v2만 임베드·서빙하고 CI, Pages, 데모 tar가 `panelweb/`을 사용 |
 
-**5단계와 6단계의 나눔**(2026-11-28 결정). [§9 Q2](#9-열린-질문)대로 5단계는 v2를 **기본값**으로 만들고, v1은 한 릴리스 동안 선택해서 켤 수 있게 남깁니다. v1 소스 삭제, 빌드 결과를 `panelweb/`으로 옮기기, 선택 스위치 제거는 6단계입니다. 그래서 5단계 동안에도 빌드 결과는 `panelv2/`에 있고, v1 파일과 v1 번역도 그대로 있습니다. v1을 고르는 방법(환경 변수 이름 등)은 Go 단계가 정합니다.
+**5단계와 6단계의 나눔**(2026-11-28 결정). [§9 Q2](#9-열린-질문)대로 5단계는 v2를 **기본값**으로 만들고, v1은 한 릴리스 동안 선택해서 켤 수 있게 남깁니다. v1 소스 삭제, 빌드 결과를 `panelweb/`으로 옮기기, 선택 스위치 제거는 6단계입니다. 그래서 5단계 동안에도 빌드 결과는 `panelv2/`에 있고, v1 파일과 v1 번역도 그대로 있습니다. 라이브 패널과 `panel --demo`에서 `RUNQUILL_PANEL_V2=0` 또는 `false`로 v1을 고를 수 있습니다. v1을 선택하면 시작 로그에 사용 중단 예고가 표시됩니다. 빈 값은 기본값을 쓰고 올바르지 않은 불리언 값은 시작 오류입니다.
 
 **단계별 값**(Q2를 권하는 대로 정했을 때):
 
@@ -1041,7 +1046,7 @@ React·ReactDOM과 Stratum JS의 압축 크기는 구현하면서 빌드 결과�
 | --- | --- | --- | --- |
 | Vite `outDir` | `../panelv2` | `../panelv2` | `../panelweb` |
 | embed | `assets.go`에 `//go:embed panelv2`와 `PanelV2()`를 더함 | 같음 | `panelweb`만, `PanelV2()` 제거 |
-| 서빙 | `RUNQUILL_PANEL_V2=1`이면 라이브·`panel --demo` 모두 v2, 아니면 v1 | 기본은 v2, v1을 고르면 v1 | v2 |
+| 서빙 | `RUNQUILL_PANEL_V2=1`이면 라이브·`panel --demo` 모두 v2, 아니면 v1 | 기본은 v2, `RUNQUILL_PANEL_V2=0` 또는 `false`이면 v1 | v2 |
 | CI 최신성 검사 경로 | `internal/webui/panelv2` | `internal/webui/panelv2` | `internal/webui/panelweb` |
 | GitHub Pages, 릴리스 데모 tar | v1 | v2(`panelv2/`) | v2(`panelweb/`) |
 | 서버 정적 라우트 | v1 라우트 유지, v2일 때만 `/theme.js`·`/assets/{file}` | v2 라우트가 기본, v1을 고르면 v1 라우트 | §6.4 |
@@ -1080,7 +1085,7 @@ v1이 남아 있는 동안(1~5단계) Go의 번역 테스트는 v1 `i18n.js`와 
 - 대상: `go run . panel --demo --port 0`으로 띄운 실제 Go 서버의 샘플 패널. 진짜 CSP와 헤더 아래에서 돌고, `securitypolicyviolation` 이벤트가 하나라도 나면 실패.
 - 시나리오 3개 × 모든 샘플 화면 렌더, 예전 주소 리디렉션, 팔레트(⌘K, `/`, 영어·한국어 검색), 테마 저장, `?lang=ko`, 폰 크기(390×844)에서 서랍과 시트, `@axe-core/playwright` 위반 0.
 - 라이브 모드는 같은 서버의 HTML을 `page.route`로 `data-mode="live"`로 바꾸고 `/api/me`, `/api/events`(`text/event-stream` 본문 하나), 쓰기 API를 가로채서: 로그인 실패 이유 5개, 세션 만료, 연결 끊김 표시, 재시도·취소 확인, 설정 저장 안 한 변경 가드, 토큰 한 번 표시.
-- CI는 Chromium만. WebKit·Firefox는 수동 실행(Stratum과 같은 방식).
+- 5단계부터 CI에서 Chromium, Firefox, WebKit을 모두 실행합니다.
 
 ### 7.3 1단계 프런트엔드 확인 결과
 
@@ -1275,7 +1280,7 @@ lockfile에는 Linux용 `@rolldown/binding-linux-*`와 `lightningcss-linux-*`가
 - e2e는 `e2e/live.ts`의 `startLive(page, role, snapshot)`로 라이브 모드를 띄웁니다. 4단계에서는 §7.2에 남은 항목을 더합니다.
   - 로그인 실패 이유 5개, 연결 끊김 표시, 설정의 저장 안 한 변경 가드, 토큰 한 번 표시.
   - 설정·팀·토큰·감사·백업·이전의 왕복.
-- CI에는 아직 e2e가 없습니다. 5단계(또는 4단계 끝)에 `panel` 작업에 `npx playwright install --with-deps chromium`과 `npm run e2e`를 더합니다. 서버는 `go run`으로 뜨므로 그 작업에 Go가 필요합니다.
+- 이 단계에서는 e2e를 로컬에서 실행했습니다. 5단계부터 CI의 `panel` 작업에서 Go와 세 브라우저를 준비하고 `npx playwright test`를 실행합니다.
 - 한국어 카탈로그는 25.5 KB / 30 KB입니다. 4단계 화면 문장은 대부분 v1에 있지만, 넘으면 서버 문장과 화면 문장을 나눕니다.
 - `stratum.ts`의 `split` 문구에 저장하지 않은 변경 문구가 아직 없습니다(설정 화면에서 더함).
 - 행 `Menu`(작업·호스트)와 폰 로그 도구 `Menu`는 위의 이유로 미뤘습니다.
@@ -1353,19 +1358,21 @@ lockfile에는 Linux용 `@rolldown/binding-linux-*`와 `lightningcss-linux-*`가
 - 눈으로 본 확인은 Chromium만 했습니다. 스크린 리더로 듣지는 않았습니다.
 - 확인 뒤 포커스 복귀는 워커 제거만 e2e로 봤습니다. 풀 제거, 토큰 폐기, 역할 변경, 사용 중지는 같은 `confirm({ returnFocus })` 경로입니다.
 
-**5단계와 6단계에 넘기는 것.**
+#### 5단계 전환
 
-처음에는 아래를 모두 5단계에 두었습니다. [§7.1](#71-단계)의 나눔에 따라 1~3은 6단계로 옮겼고, 8·9는 [§7.7](#77-5단계-프런트엔드-확인-결과)에서 끝냈습니다.
+- 라이브 패널과 `panel --demo`의 기본은 v2입니다. v1은 이번 릴리스에 한해 `RUNQUILL_PANEL_V2=0` 또는 `false`로 선택할 수 있습니다.
+- CI는 `panelv2/`의 최신성을 확인합니다. `panel` 작업에 Go를 설치하고 Playwright 브라우저를 캐시해 Chromium, Firefox, WebKit을 실행합니다.
+- Pages와 릴리스 데모 tar는 `panelv2/`의 `index.html`, `theme.js`와 `assets/`를 배포합니다. 상대 경로와 해시 라우팅으로 하위 경로에서 동작합니다.
+- 영어·한국어 문서에 새 화면, 예전 주소, v1 선택 방법을 반영했습니다. 토큰의 `expires_at`과 감사 기록의 `occurred_at`은 Unix 초이며, 이전 미리보기의 `files[].jobs`는 `null`일 수 있습니다.
 
-1. **(6단계) 출력 옮기기.** `vite.config.ts`의 `outDir`를 `../panelweb`으로 바꿉니다. 그 전에 v1 소스(`panelweb/*.js`, `views/`, `demo/`, `i18n.js`, CSS)를 지웁니다. `panelv2/`는 지웁니다. `.gitattributes`의 생성 표시와 README의 경로도 바꿉니다.
-2. **(6단계) 서빙 정리.** `internal/webui/assets.go`에서 `//go:embed panelv2`와 `PanelV2()`를 지우고 `panelweb`만 남깁니다. `internal/app/panel.go`에서 v1을 고르는 분기를 없애고 §6.4의 정적 라우트(`/`, `/theme.js`, `/assets/{file}`, 라이브에서 `demo-*` 404)만 남깁니다. v1의 `/views/*.js`·`/demo/*.js` 라우트도 지웁니다. `TestPanelRoutesAndFirstJobEvidence`와 임베드 참조 검사도 같이 바꿉니다.
-3. **(6단계) 번역 테스트.** Go의 `panelTranslations`에서 v1 `i18n.js` 읽기를 지우고 v2 JSON만 검사합니다. 서버 문장의 번역은 한 곳(`ko.json`, `server-patterns.json`)에만 넣습니다.
-4. **(5단계) 기본값 전환과 CI.** v2를 기본으로 서빙하고, v1은 한 릴리스 동안 고를 수 있게 남깁니다. 최신성 검사 경로는 6단계까지 `internal/webui/panelv2`입니다(§6.5). `panel` 작업에 `npx playwright install --with-deps chromium`과 `npm run e2e`를 더합니다(Go가 필요함). 서버 라우트를 쓰는 다른 검사도 확인합니다. 프런트엔드 쪽에서 지금 스위치 이름(`RUNQUILL_PANEL_V2`)을 쓰는 곳은 `internal/webui/panel/playwright.config.ts`의 `webServer.env`와 `internal/webui/panel/README.md`의 서빙 설명·데모 명령입니다. 기본값을 바꿀 때 같이 고칩니다.
-5. **(5단계) Pages와 데모 tar.** GitHub Pages 배포와 릴리스의 데모 tar가 v2 결과(`index.html`, `theme.js`, `assets/`)를 올리게 합니다. 6단계까지는 `panelv2/`에서 가져옵니다. 해시 라우팅이라 서버 대체 라우트는 필요 없습니다.
-6. **(5단계) 문서.** `docs/panel.md`·`docs/panel.ko.md`를 새 화면 구성과 주소로 고칩니다: 작업 탭, 러너 로그 탭, API 토큰 화면, 설정 가드의 바뀐 동작, 예전 주소 표(§2.4), 지원 브라우저(§9 Q7), v1로 돌아가는 방법. `docs/development.md`의 패널 빌드, README의 패널 설명(설치·첫 작업 앵커는 유지)도 고칩니다. 릴리스 노트에는 화면 변경과 예전 주소 동작을 적습니다. `internal/webui/panel/README.md`의 출력 경로는 6단계에서 고칩니다.
-7. **(5단계) `api/openapi.yaml`.** 패널이 쓰는 응답 필드와 맞는지 확인합니다. 특히 `expires_at`·`occurred_at`이 Unix 초이고, `/api/migrate/preview`의 `files[].jobs`가 `null`일 수 있습니다.
-8. ~~§1 전체 점검과 남은 ⏳ 항목~~: [§7.7](#77-5단계-프런트엔드-확인-결과)에서 끝냈습니다.
-9. ~~Stratum 제안 정리~~: [§8.1](#81-stratum-제안-목록)에 있습니다.
+#### 6단계 체크리스트
+
+- [ ] v1 소스(`internal/webui/panelweb/`의 HTML, CSS, JS, `views/`, `demo/`)를 삭제합니다. Vite `outDir`를 `../panelweb`으로 바꾸고 다시 빌드한 뒤 `panelv2/`를 삭제합니다. `.gitattributes`와 패널 크기 검사 경로도 옮깁니다.
+- [ ] `internal/webui/assets.go`에서 `PanelV2()`와 `//go:embed panelv2`를 삭제합니다. `panel.go`는 `Panel()`으로 v2 자산만 서빙합니다. 라이브 모드의 `demo-*` 차단과 기존 보안 헤더를 유지하고 v1 정적 라우트 및 OpenAPI 항목을 제거합니다. v2의 예전 URL 리디렉션은 유지합니다.
+- [ ] `RUNQUILL_PANEL_V2` 파싱과 시작 경고, `compose.panel.yaml`의 환경 변수, Playwright의 `webServer.env` 설정을 제거합니다. Go 테스트에서 v1·스위치 검사를 제거하고 첫 작업 증거, 기본 라우트 및 임베드 참조 검사를 v2로 실행합니다.
+- [ ] Go 번역 테스트에서 v1 `i18n.js` 읽기를 제거합니다. v2에서 더 이상 쓰지 않는 v1 화면 문구만 정리하고 `ko.json`과 `server-patterns.json`에서 필요한 서버 문구를 계속 검사합니다.
+- [ ] CI 최신성 검사, Pages 복사, 릴리스 데모 tar의 경로를 `panelweb/`으로 변경합니다. 빌드 일치, Go 검사, 세 브라우저 e2e, 하위 경로의 Pages 샘플과 릴리스 데모를 확인합니다.
+- [ ] 패널 소스 README, `AGENTS.md`, 개발·운영·패널 안내(영어·한국어)의 출력 경로와 v1 선택 안내를 갱신하고 릴리스 노트에 v1 제거를 기록합니다.
 
 ### 7.7 5단계 프런트엔드 확인 결과
 

@@ -198,15 +198,25 @@ func readPanelCompleted(ctx context.Context, q *queue, now time.Time, pools work
 	return recent, firstClean, rows.Err()
 }
 
-func panelHTTPServer(panel *panelState, access *panelAccess) *http.Server {
-	return &http.Server{
-		Handler: panelHandler(panel, access), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 8 * time.Second,
-		WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10,
+func panelHTTPServer(panel *panelState, access *panelAccess) (*http.Server, error) {
+	v2 := true
+	if value := strings.TrimSpace(os.Getenv("RUNQUILL_PANEL_V2")); value != "" {
+		var err error
+		v2, err = strconv.ParseBool(value)
+		if err != nil {
+			return nil, errors.New("RUNQUILL_PANEL_V2 must be true or false")
+		}
 	}
+	if !v2 {
+		slog.Warn("RUNQUILL_PANEL_V2 selects deprecated panel v1; the opt-out will be removed in the next release")
+	}
+	return &http.Server{
+		Handler: panelHandler(panel, access, v2), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 8 * time.Second,
+		WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10,
+	}, nil
 }
 
-func panelHandler(panel *panelState, access *panelAccess) http.Handler {
-	v2 := os.Getenv("RUNQUILL_PANEL_V2") == "1"
+func panelHandler(panel *panelState, access *panelAccess, v2 bool) http.Handler {
 	assets := webui.Panel()
 	if v2 {
 		assets = webui.PanelV2()
@@ -300,11 +310,14 @@ func panelHandler(panel *panelState, access *panelAccess) http.Handler {
 }
 
 func runPanelDemo(ctx context.Context, port uint) error {
+	server, err := panelHTTPServer(nil, nil)
+	if err != nil {
+		return err
+	}
 	listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.FormatUint(uint64(port), 10)))
 	if err != nil {
 		return err
 	}
-	server := panelHTTPServer(nil, nil)
 	fmt.Printf("Runquill panel demo at http://%s\n", listener.Addr())
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(listener) }()

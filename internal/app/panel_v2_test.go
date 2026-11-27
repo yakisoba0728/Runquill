@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -13,7 +14,10 @@ import (
 )
 
 func TestPanelV2Routes(t *testing.T) {
-	t.Setenv("RUNQUILL_PANEL_V2", "1")
+	t.Setenv("RUNQUILL_PANEL_V2", "")
+	if err := os.Unsetenv("RUNQUILL_PANEL_V2"); err != nil {
+		t.Fatal(err)
+	}
 	q, err := openQueue(filepath.Join(t.TempDir(), "queue.sqlite3"))
 	if err != nil {
 		t.Fatal(err)
@@ -32,14 +36,19 @@ func TestPanelV2Routes(t *testing.T) {
 	for _, mode := range []string{"demo", "live"} {
 		t.Run(mode, func(t *testing.T) {
 			demo := mode == "demo"
-			handler := panelHTTPServer(nil, nil).Handler
+			var panel *panelState
+			var auth *panelAccess
 			if !demo {
-				handler = panelHTTPServer(newPanel(config{}), access).Handler
+				panel, auth = newPanel(config{}), access
+			}
+			server, err := panelHTTPServer(panel, auth)
+			if err != nil {
+				t.Fatal(err)
 			}
 			get := func(path string, status int) *httptest.ResponseRecorder {
 				t.Helper()
 				rec := httptest.NewRecorder()
-				handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, access.cfg.origin+path, nil))
+				server.Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, access.cfg.origin+path, nil))
 				if rec.Code != status {
 					t.Errorf("%s: got HTTP %d, want %d", path, rec.Code, status)
 				}
@@ -79,6 +88,34 @@ func TestPanelV2Routes(t *testing.T) {
 				get("/api/me", 401)
 			}
 		})
+	}
+}
+
+func TestPanelVersionEnv(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  int
+	}{
+		{"", http.StatusNotFound},
+		{"1", http.StatusNotFound},
+		{" false ", http.StatusOK},
+	} {
+		t.Run(tc.value, func(t *testing.T) {
+			t.Setenv("RUNQUILL_PANEL_V2", tc.value)
+			server, err := panelHTTPServer(nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rec := httptest.NewRecorder()
+			server.Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://127.0.0.1/app.js", nil))
+			if rec.Code != tc.want {
+				t.Errorf("GET /app.js: got HTTP %d, want %d", rec.Code, tc.want)
+			}
+		})
+	}
+	t.Setenv("RUNQUILL_PANEL_V2", "invalid")
+	if _, err := panelHTTPServer(nil, nil); err == nil || err.Error() != "RUNQUILL_PANEL_V2 must be true or false" {
+		t.Fatalf("invalid panel version: got error %v", err)
 	}
 }
 

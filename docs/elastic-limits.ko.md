@@ -14,7 +14,7 @@
 | `observe` | 러너를 측정하고 내릴 결정을 기록하지만 컨테이너는 바꾸지 않습니다. |
 | `apply` | 결정을 기록하고 `docker update`로 적용합니다. |
 
-`observe`로 시작해서 패널의 **호스트와 풀** 화면, `GET /api/elastic`, MCP `elastic_decisions` 도구에서 결정을 검토하세요.
+`observe`로 시작해서 패널의 **호스트** 화면, `GET /api/elastic`, MCP `elastic_decisions` 도구에서 결정을 검토하세요.
 
 ## 설정
 

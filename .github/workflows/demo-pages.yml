@@ -28,11 +28,12 @@ jobs:
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
       - name: Stage the sample panel
         run: |
-          grep -Fq 'data-mode="demo"' internal/webui/panelweb/index.html
-          # The panel is ES modules: top-level files, views/ and demo/ fixtures.
           mkdir _site
-          cp -R internal/webui/panelweb/. _site/
-          test -f _site/app.js && test -f _site/views/overview.js && test -f _site/demo/jobs.js
+          cp -R internal/webui/panelv2/. _site/
+          grep -Fq 'data-mode="demo"' _site/index.html
+          test -f _site/theme.js
+          test -d _site/assets
+          ls _site/assets/demo-*.js
           cp LICENSE _site/
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:

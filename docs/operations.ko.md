@@ -75,7 +75,7 @@ RUNQUILL_MANAGER_IMAGE=runquill-manager:local docker compose -f compose.yaml -f 
 
 릴리스로 설치한 경우 이미지 이름을 재정의하지 않고 같은 Compose 파일에 `--no-build`를 사용합니다. 멀티 서버 설정에서는 `-f compose.ssh.yaml`도 전달합니다. 바이너리를 직접 실행하는 경우 `RUNQUILL_PANEL_ADDR=127.0.0.1:8081`을 설정합니다. 원격 루프백 접속에는 SSH 터널을 이용하세요. 팀이 공유할 때는 `RUNQUILL_PANEL_URL`에 HTTPS 주소를 지정하고, HTTPS 역프록시에서 원래 Host 헤더를 유지해 패널의 8081 포트로 전달합니다. 공개 웹훅은 별도로 8080 포트로 전달합니다. 같은 호스트 이름에서 경로 규칙으로 분리하는 방법은 [Cloudflare Tunnel 가이드](cloudflare-tunnel.ko.md)를 참고하세요.
 
-**패널 v2 개발 프리뷰.** 매니저 환경에 `RUNQUILL_PANEL_V2=1`을 설정하고 매니저를 재시작합니다. Compose 패널 오버레이를 사용한다면 `.env`에 이 값을 추가하고 Compose를 다시 실행합니다. 소스 체크아웃에서 샘플 데이터로 확인하려면 `RUNQUILL_PANEL_V2=1 go run . panel --demo`를 실행하세요. 프리뷰에서는 개요 화면을 사용할 수 있으며 나머지 v2 화면은 개발 중입니다. 기본값은 패널 v1입니다.
+**패널 버전.** `RUNQUILL_PANEL_V2`가 없거나 비어 있으면 패널 v2가 기본입니다. 이번 릴리스에서 v1을 쓰려면 매니저 환경에 `RUNQUILL_PANEL_V2=0` 또는 `false`를 설정하고 재시작하세요. Compose 패널 오버레이를 쓴다면 `.env`에 값을 추가하고 Compose를 다시 실행합니다. 패널이 켜져 있을 때 올바르지 않은 불리언 값을 지정하면 매니저가 시작되지 않습니다. v1을 선택하는 옵션은 사용 중단이 예고되었으며 다음 릴리스에서 제거됩니다. 소스 체크아웃에서 샘플 데이터로 v2를 보려면 `go run . panel --demo`를 실행하세요.
 
 | 역할 | 패널 권한 |
 | --- | --- |
@@ -109,7 +109,7 @@ Operator와 Admin은 러너 없이 대기 중인 작업을 패널이나 `jobs:wr
 
 ## 러너 로그
 
-Operator와 Admin은 **로그** 화면에서 작업을 맡은 러너의 컨테이너 출력을 보거나 이어서 받을 수 있습니다. GitHub 단계 로그가 아니라 러너 프로세스의 로그입니다. `local`과 `ssh://` 호스트의 러너만 지원하며 API 토큰으로는 볼 수 없습니다. 실제 운영 환경에서는 아직 검증하지 않았습니다. [자세히](panel.ko.md#러너-로그)
+Operator와 Admin은 **러너** 화면에서 러너를 선택한 뒤 **로그** 탭에서 작업을 맡은 러너의 컨테이너 출력을 보거나 이어서 받을 수 있습니다. GitHub 단계 로그가 아니라 러너 프로세스의 로그입니다. `local`과 `ssh://` 호스트의 러너만 지원하며 API 토큰으로는 볼 수 없습니다. 실제 운영 환경에서는 아직 검증하지 않았습니다. [자세히](panel.ko.md#러너-로그)
 
 ## 원격 CLI
 

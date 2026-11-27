@@ -14,13 +14,14 @@ RUNQUILL_PANEL_DEV_TARGET=http://127.0.0.1:8081 npm run dev   # proxies /api, /s
 npm run typecheck && npm test
 npm run build        # writes ../panelv2/, commit the result
 npm run size         # gzip budget, design §6.8
-npm run e2e          # Playwright against `go run . panel --demo` (Chromium; needs Go and a build; stop any server on port 18181 first)
-npx playwright test --project firefox --project webkit   # the other engines, by hand
+npx playwright install  # on Ubuntu, add --with-deps
+npx playwright test     # Chromium, Firefox and WebKit against the Go demo server
+npm run e2e             # Chromium only
 ```
 
-The e2e tests use the committed `panelv2/` build that the Go server embeds, so run `npm run build` first. `@playwright/test` is pinned to the release whose browsers match the Playwright cache; `npx playwright install chromium` fetches them otherwise. Live-mode tests keep the server's page and CSP but answer `/api/*` and `/snapshot` themselves (`e2e/live.ts`): a real manager session needs a GitHub sign-in.
+The e2e tests use the committed `panelv2/` build that the Go server embeds, so run `npm run build` first. CI runs all three engines with the pinned Playwright release and caches their binaries. Stop any existing server on port 18181 before testing. Live-mode tests keep the server's page and CSP but answer `/api/*` and `/snapshot` themselves (`e2e/live.ts`): a real manager session needs a GitHub sign-in.
 
-The build is byte-identical across runs and across macOS arm64, Linux arm64 and Linux amd64 with the same lockfile and Node version. `go build` never needs Node, because the output is committed. From the repository root, run `RUNQUILL_PANEL_V2=1 go run . panel --demo` to try the embedded preview. `.gitattributes` marks the directory as generated.
+The build is byte-identical across runs and across macOS arm64, Linux arm64 and Linux amd64 with the same lockfile and Node version. `go build` never needs Node, because the output is committed. From the repository root, run `go run . panel --demo` to try the embedded sample panel. `.gitattributes` marks the directory as generated.
 
 ## Output
 
@@ -40,7 +41,7 @@ The `$initial` group in `vite.config.ts` keeps the entry whole (design §7.7). E
 
 ## What the server must serve
 
-These routes apply when `RUNQUILL_PANEL_V2=1`. Otherwise the server keeps the v1 routes unchanged.
+The manager and demo serve these v2 routes by default. The deprecated `RUNQUILL_PANEL_V2=0` (or `false`) opt-out selects v1 for one release.
 
 | Route | Answer |
 | --- | --- |

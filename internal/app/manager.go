@@ -105,7 +105,10 @@ func run(ctx context.Context) error {
 		panel.elastic = elastic
 		panel.backend, panel.operations = runners.kind, ops
 		panel.snapshot.Polling = state.interval > 0
-		panelServer = panelHTTPServer(panel, access)
+		panelServer, err = panelHTTPServer(panel, access)
+		if err != nil {
+			return err
+		}
 		panelListener, err = net.Listen("tcp", addr)
 		if err != nil {
 			return fmt.Errorf("listen for panel: %w", err)

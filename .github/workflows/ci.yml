@@ -93,6 +93,17 @@ jobs:
             exit 1
           fi
       - run: npm run size
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+      - uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('internal/webui/panel/node_modules/playwright-core/browsers.json') }}
+      - run: npx playwright install --with-deps
+      - run: npx playwright test
 
   docker-upgrade:
     if: ${{ !inputs.checks-only && github.repository == 'yakisoba0728/Runquill' }}

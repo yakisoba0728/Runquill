@@ -89,10 +89,8 @@ func TestOpenAPIRoutesAreServed(t *testing.T) {
 	access := panelAccessForTest(t, q)
 	panel := newPanel(config{})
 	panel.operations = &operations{}
-	t.Setenv("RUNQUILL_PANEL_V2", "")
-	live, demo := panelHandler(panel, access), panelHandler(nil, nil)
-	t.Setenv("RUNQUILL_PANEL_V2", "1")
-	liveV2, demoV2 := panelHandler(panel, access), panelHandler(nil, nil)
+	live, demo := panelHandler(panel, access, false), panelHandler(nil, nil, false)
+	liveV2, demoV2 := panelHandler(panel, access, true), panelHandler(nil, nil, true)
 	served := func(handler http.Handler, origin, method, path string) bool {
 		path = regexp.MustCompile(`\{[^}]+\}`).ReplaceAllString(path, "1")
 		res := httptest.NewRecorder()

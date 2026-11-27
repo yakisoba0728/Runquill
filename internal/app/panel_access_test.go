@@ -46,7 +46,7 @@ func TestGitHubPanelLoginRolesAndTokens(t *testing.T) {
 	access := panelAccessForTest(t, q)
 	panel := newPanel(config{})
 	panel.snapshot.Fleet = &statusReport{Hosts: []statusHost{{Name: "local"}}}
-	handler := panelHandler(panel, access)
+	handler := panelHandler(panel, access, true)
 	request := func(method, path, body, origin, bearer string, cookies ...*http.Cookie) *httptest.ResponseRecorder {
 		t.Helper()
 		req := httptest.NewRequest(method, access.cfg.origin+path, strings.NewReader(body))
@@ -231,7 +231,7 @@ func TestPanelSignInSurvivesAnonymousFloodAndRejectsForeignCookies(t *testing.T)
 	}
 	t.Cleanup(q.close)
 	access := panelAccessForTest(t, q)
-	handler := panelHandler(newPanel(config{}), access)
+	handler := panelHandler(newPanel(config{}), access, true)
 	calls := 0
 	access.oauth.Transport = panelTransport(func(r *http.Request) (*http.Response, error) {
 		calls++

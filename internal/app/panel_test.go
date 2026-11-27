@@ -21,14 +21,18 @@ import (
 )
 
 func TestPanelServerBoundsRequestBodyRead(t *testing.T) {
-	server := panelHTTPServer(nil, nil)
+	t.Setenv("RUNQUILL_PANEL_V2", "")
+	server, err := panelHTTPServer(nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if server.ReadTimeout <= server.ReadHeaderTimeout || server.ReadTimeout >= server.WriteTimeout {
 		t.Fatalf("request read timeout %v must allow body reads after headers and leave time to respond", server.ReadTimeout)
 	}
 }
 
 func TestPanelRoutesAndFirstJobEvidence(t *testing.T) {
-	t.Setenv("RUNQUILL_PANEL_V2", "")
+	t.Setenv("RUNQUILL_PANEL_V2", "0")
 	ctx := t.Context()
 	q, err := openQueue(filepath.Join(t.TempDir(), "queue.sqlite3"))
 	if err != nil {
@@ -51,7 +55,11 @@ func TestPanelRoutesAndFirstJobEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	live := panelHandler(p, access)
+	server, err := panelHTTPServer(p, access)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := server.Handler
 	request := httptest.NewRequest(http.MethodGet, "http://localhost:8081/snapshot", nil)
 	request.AddCookie(&http.Cookie{Name: access.cookieName("session"), Value: key})
 	live.ServeHTTP(rec, request)
@@ -81,7 +89,11 @@ func TestPanelRoutesAndFirstJobEvidence(t *testing.T) {
 		t.Fatalf("first job cleanup: %+v", got)
 	}
 
-	demo := panelHandler(nil, nil)
+	server, err = panelHTTPServer(nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	demo := server.Handler
 	for _, tc := range []struct {
 		h                 http.Handler
 		method, url, body string
@@ -284,7 +296,10 @@ func TestPanelServerMessagesHaveTranslations(t *testing.T) {
 	// for handlers, the route layer only where the rest of the file is
 	// configuration or command-line output.
 	files := map[string]func(fn *ast.FuncDecl) bool{
-		"panel.go":            nil,
+		// panelHTTPServer only reports configuration errors at startup.
+		"panel.go": func(fn *ast.FuncDecl) bool {
+			return fn == nil || fn.Name.Name != "panelHTTPServer"
+		},
 		"panel_controls.go":   nil,
 		"panel_settings.go":   nil,
 		"panel_operations.go": nil,
@@ -524,7 +539,7 @@ func TestPanelBackupOutlivesServerWriteTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := panelHandler(newPanel(config{}), access)
+	handler := panelHandler(newPanel(config{}), access, true)
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Stands in for a queue large enough to outlast the server write timeout.
 		time.Sleep(300 * time.Millisecond)

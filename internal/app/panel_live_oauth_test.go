@@ -53,7 +53,7 @@ func TestLiveGitHubPanelRoles(t *testing.T) {
 	}
 	panel := newPanel(config{})
 	panel.snapshot.Fleet = &statusReport{Hosts: []statusHost{{Name: "fixture"}}}
-	handler := panelHandler(panel, access)
+	handler := panelHandler(panel, access, true)
 	cookies := make(chan *http.Cookie, 2)
 	server := &http.Server{
 		ReadHeaderTimeout: 5 * time.Second,

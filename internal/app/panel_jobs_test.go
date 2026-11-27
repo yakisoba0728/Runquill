@@ -34,7 +34,7 @@ func newPanelFixture(t *testing.T) *panelFixture {
 	if _, err := q.Exec(`INSERT INTO panel_users(github_id, role) VALUES (102, 'viewer'), (103, 'operator')`); err != nil {
 		t.Fatal(err)
 	}
-	f := &panelFixture{t: t, q: q, access: access, handler: panelHandler(newPanel(config{}), access), cookies: map[string]*http.Cookie{}}
+	f := &panelFixture{t: t, q: q, access: access, handler: panelHandler(newPanel(config{}), access, true), cookies: map[string]*http.Cookie{}}
 	for name, id := range map[string]int64{"admin": 101, "viewer": 102, "operator": 103} {
 		key, err := access.startSession(t.Context(), panelIdentity{GitHubID: id, Login: "fleet-" + name})
 		if err != nil {

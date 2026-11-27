@@ -14,7 +14,7 @@ Elastic limits work only on the manager's `local` Docker host, for runners whose
 | `observe` | Samples runners and records the decisions it would make, without changing any container. |
 | `apply` | Records the decisions and applies them with `docker update`. |
 
-Start with `observe` and review the decisions on the panel's **Hosts & pools** screen, in `GET /api/elastic`, or through the MCP `elastic_decisions` tool.
+Start with `observe` and review the decisions on the panel's **Hosts** screen, in `GET /api/elastic`, or through the MCP `elastic_decisions` tool.
 
 ## Settings
 

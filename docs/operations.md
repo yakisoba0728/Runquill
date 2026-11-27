@@ -75,7 +75,7 @@ RUNQUILL_MANAGER_IMAGE=runquill-manager:local docker compose -f compose.yaml -f 
 
 For release installs, omit the image override and use `--no-build` with the same Compose files. For multi-host Compose installs, include `-f compose.ssh.yaml`. If the manager runs directly, also set `RUNQUILL_PANEL_ADDR=127.0.0.1:8081`. Use an SSH tunnel for remote loopback access. For a shared panel, set `RUNQUILL_PANEL_URL` to an HTTPS origin and forward it to port 8081 through an HTTPS reverse proxy that preserves the public Host header. Route the public webhook separately to port 8080. The [Cloudflare Tunnel guide](cloudflare-tunnel.md) shows how to share a hostname using a path rule.
 
-**Panel v2 development preview.** Set `RUNQUILL_PANEL_V2=1` in the manager environment and restart the manager. With the Compose panel overlay, set it in `.env` and rerun Compose. To try it with sample data from a source checkout, run `RUNQUILL_PANEL_V2=1 go run . panel --demo`. The preview implements Overview. Other v2 screens are still under development. Panel v1 is the default.
+**Panel version.** Panel v2 is the default when `RUNQUILL_PANEL_V2` is unset or empty. To select v1 for this release, set `RUNQUILL_PANEL_V2=0` (or `false`) in the manager environment and restart. With the Compose panel overlay, set it in `.env` and rerun Compose. With the panel enabled, an invalid boolean value stops the manager at startup. The v1 opt-out is deprecated and will be removed in the next release. To try v2 with sample data from a source checkout, run `go run . panel --demo`.
 
 | Role | Panel access |
 | --- | --- |
@@ -109,7 +109,7 @@ The manager also records each job's sampled CPU and memory peaks and whether its
 
 ## Runner logs
 
-Operators and administrators can read or follow the container output of a runner that holds a job, from the **Logs** screen. These are the runner process logs, not GitHub step logs. Only runners on the `local` host and `ssh://` hosts are supported, and API tokens cannot read them. Log streaming has not yet been exercised on a real fleet. [Details](panel.md#runner-logs)
+Operators and administrators can read or follow the container output of a runner that holds a job, from a runner’s **Logs** tab under **Runners**. These are the runner process logs, not GitHub step logs. Only runners on the `local` host and `ssh://` hosts are supported, and API tokens cannot read them. Log streaming has not yet been exercised on a real fleet. [Details](panel.md#runner-logs)
 
 ## Remote CLI
 

@@ -15,7 +15,7 @@ servers:
         description: The RUNQUILL_PANEL_URL origin (HTTPS, or HTTP on loopback).
 tags:
   - name: assets
-    description: Panel v1 is the default. The development preview enabled by RUNQUILL_PANEL_V2=1 uses /assets/{file} and shares / and /theme.js with v1.
+    description: Panel v2 uses /assets/{file} by default. The deprecated RUNQUILL_PANEL_V2=0 opt-out selects the legacy assets. Both versions share / and /theme.js.
   - name: auth
   - name: fleet
   - name: jobs
@@ -166,7 +166,7 @@ components:
         expires_at:
           type: integer
           format: int64
-          description: Unix seconds.
+          description: Token expiration as Unix seconds.
     TokenScope:
       type: string
       enum: ['fleet:read', 'hosts:write', 'jobs:write']
@@ -217,7 +217,7 @@ components:
         occurred_at:
           type: integer
           format: int64
-          description: Unix seconds.
+          description: Audit event time as Unix seconds.
     HistoryJob:
       type: object
       required: [id, repository, runner_label, outcome]
@@ -1143,6 +1143,7 @@ components:
           description: Why the whole file is left alone.
         jobs:
           type: [array, 'null']
+          description: Null when no job outcomes were collected (for example when a file is too large to read).
           items:
             $ref: '#/components/schemas/MigrationJob'
     MigrationPreview:
@@ -1332,6 +1333,7 @@ paths:
     get:
       operationId: getPanelCSS
       tags: [assets]
+      deprecated: true
       summary: Panel stylesheet.
       x-runquill-permission: public
       security: []
@@ -1352,7 +1354,7 @@ paths:
     get:
       operationId: getPanelV2Asset
       tags: [assets]
-      summary: A bundled stylesheet or script for the panel v2 development preview.
+      summary: A bundled stylesheet or script for panel v2.
       x-runquill-permission: public
       security: []
       parameters:
@@ -1368,11 +1370,12 @@ paths:
         '400':
           description: Use a panel file name.
         '404':
-          description: The asset is missing, the preview is off, or a demo chunk was requested from the live panel.
+          description: The asset is missing, panel v1 was selected, or a demo chunk was requested from the live panel.
   /app.js:
     get:
       operationId: getPanelAppJS
       tags: [assets]
+      deprecated: true
       summary: The panel shell with sign-in, navigation, routing and live updates.
       x-runquill-permission: public
       security: []
@@ -1383,6 +1386,7 @@ paths:
     get:
       operationId: getPanelApiJS
       tags: [assets]
+      deprecated: true
       summary: Panel API client module.
       x-runquill-permission: public
       security: []
@@ -1393,6 +1397,7 @@ paths:
     get:
       operationId: getPanelUIJS
       tags: [assets]
+      deprecated: true
       summary: Shared panel interface helpers.
       x-runquill-permission: public
       security: []
@@ -1403,6 +1408,7 @@ paths:
     get:
       operationId: getPanelFleetJS
       tags: [assets]
+      deprecated: true
       summary: Fleet snapshot helpers shared by panel screens.
       x-runquill-permission: public
       security: []
@@ -1413,6 +1419,7 @@ paths:
     get:
       operationId: getI18nJS
       tags: [assets]
+      deprecated: true
       summary: Korean and English panel text.
       x-runquill-permission: public
       security: []
@@ -1423,6 +1430,7 @@ paths:
     get:
       operationId: getDemoJS
       tags: [assets]
+      deprecated: true
       summary: Example fleet snapshots, served only by runquill panel --demo.
       x-runquill-permission: public
       security: []
@@ -1433,6 +1441,7 @@ paths:
     get:
       operationId: getPanelView
       tags: [assets]
+      deprecated: true
       summary: One panel screen as an ES module (views/<id>.js).
       x-runquill-permission: public
       security: []
@@ -1454,6 +1463,7 @@ paths:
     get:
       operationId: getPanelDemoData
       tags: [assets]
+      deprecated: true
       summary: Sample responses for one panel screen, served only by runquill panel --demo.
       x-runquill-permission: public
       security: []
