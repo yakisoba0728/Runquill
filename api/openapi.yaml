@@ -1561,7 +1561,7 @@ paths:
             default: 0
       responses:
         '200':
-          description: Up to 100 enrolled members ordered by GitHub ID.
+          description: Up to 100 enrolled members ordered by GitHub ID. A response with fewer than 100 members means there are no more members.
           content:
             application/json:
               schema:
@@ -2726,11 +2726,10 @@ paths:
       operationId: callMCP
       tags: [mcp]
       summary: Read-only Model Context Protocol endpoint for agents. API tokens with the fleet:read scope only; browser sessions are always refused.
-      description: 'Accepts one JSON-RPC message per request (body at most 64 KiB) and answers application/json; there is no event stream and no session, so GET and DELETE answer 405. Protocol revision 2026-07-28 is served statelessly: each request carries _meta io.modelcontextprotocol/protocolVersion and io.modelcontextprotocol/clientCapabilities, the MCP-Protocol-Version and Mcp-Method headers, and Mcp-Name for tools/call. Clients that start with initialize get revision 2025-11-25 and must send MCP-Protocol-Version on later requests. Tools are fleet_status, list_jobs, get_job, list_hosts, usage_summary and elastic_decisions. At most 4 requests run at once and each is limited to 5 seconds. A present Origin header must equal the panel origin. The security list names sessionCookie only because the permission is fleet:read; a request without an Authorization header, cookie or not, gets 401.'
+      description: 'Accepts one JSON-RPC message per request (body at most 64 KiB) and answers application/json; there is no event stream and no session, so GET and DELETE answer 405. Protocol revision 2026-07-28 is served statelessly: each request carries _meta io.modelcontextprotocol/protocolVersion and io.modelcontextprotocol/clientCapabilities, the MCP-Protocol-Version and Mcp-Method headers, and Mcp-Name for tools/call. Clients that start with initialize get revision 2025-11-25 and must send MCP-Protocol-Version on later requests. Tools are fleet_status, list_jobs, get_job, list_hosts, usage_summary, elastic_decisions, job_rightsizing and pool_rightsizing. At most 4 requests run at once and each is limited to 5 seconds. A present Origin header must equal the panel origin.'
       x-runquill-permission: fleet:read
       security:
         - bearerToken: []
-        - sessionCookie: []
       parameters:
         - name: MCP-Protocol-Version
           in: header

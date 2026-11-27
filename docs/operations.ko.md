@@ -135,7 +135,7 @@ docker compose exec manager runquill status
 
 `runquill doctor --json`은 점검 결과를 `{"checks":[{"name":"configuration","ok":false,"error":"set RUNQUILL_OWNER"}],"passed":false}` 형식의 JSON 문서 하나로 출력합니다. 통과한 항목에는 `error`가 없습니다. 하나라도 실패하면 사람이 읽는 출력과 같이 종료 코드 1로 끝납니다. 사람이 읽는 출력은 실패가 있으면 마지막 줄에 이 문서의 [증상별 점검](#증상별-점검) 링크를 안내합니다.
 
-`doctor`는 레지스트리 미러 설정, 각 Docker 풀의 캐시 사용 여부와 호스트당 웜 러너 수, 그리고 캐시를 사용하는 접근 가능한 로컬 및 SSH 호스트의 캐시 볼륨 수를 표시합니다.
+`doctor`는 레지스트리 미러 설정, 각 Docker 풀의 캐시 사용 여부와 호스트당 웜 러너 목표 수, 그리고 캐시를 사용하는 접근 가능한 로컬 및 SSH 호스트의 캐시 볼륨 수를 표시합니다.
 
 GitHub에서 작업이 대기 중이라면 `docker compose exec manager runquill diagnose OWNER/REPO`로 원인을 확인할 수 있습니다. 저장소 범위의 읽기 전용 토큰으로 App의 접근 권한을 확인하고, 마지막 저장소 폴링 결과, 잘못된 라벨, 재시도 이유, 워커 슬롯 부족을 함께 보여줍니다.
 

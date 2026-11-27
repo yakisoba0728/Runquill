@@ -169,6 +169,7 @@ function renderDetail(job, target) {
 }
 
 function closeDetail() {
+  if (!parts) return;
   const id = parts.selected;
   leave();
   parts.selected = null;
