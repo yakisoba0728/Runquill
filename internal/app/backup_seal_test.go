@@ -51,7 +51,9 @@ func TestSealedBackupRestoresEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer q.close()
-	if _, err := q.Exec("INSERT INTO jobs (job_id, repository, repository_id, installation_id, route, phase, changed_at) VALUES (7, 'owner/repo', 8, 9, 'runquill-12-1-sealed', 0, 123)"); err != nil {
+	// Span multiple sealed chunks so late authentication failure happens after plaintext has been written.
+	failure := strings.Repeat("x", 128<<10)
+	if _, err := q.Exec("INSERT INTO jobs (job_id, repository, repository_id, installation_id, route, phase, changed_at, failure) VALUES (7, 'owner/repo', 8, 9, 'runquill-12-1-sealed', 0, 123, ?)", failure); err != nil {
 		t.Fatal(err)
 	}
 	passFile := filepath.Join(dir, "passphrase")
@@ -72,7 +74,10 @@ func TestSealedBackupRestoresEndToEnd(t *testing.T) {
 	if info, err := os.Stat(sealed); err != nil || info.Mode().Perm() != 0600 {
 		t.Fatalf("sealed backup: %v, %v", info, err)
 	}
-	data, _ := os.ReadFile(sealed)
+	data, err := os.ReadFile(sealed)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !bytes.HasPrefix(data, []byte(backupseal.Magic)) || bytes.Contains(data, []byte("owner/repo")) {
 		t.Fatal("backup is not sealed")
 	}
@@ -90,11 +95,16 @@ func TestSealedBackupRestoresEndToEnd(t *testing.T) {
 		t.Fatalf("wrong passphrase: %v", err)
 	}
 	damaged := filepath.Join(dir, "damaged.sealed")
-	os.WriteFile(damaged, data[:len(data)-1], 0600)
+	if err := os.WriteFile(damaged, data[:len(data)-1], 0600); err != nil {
+		t.Fatal(err)
+	}
 	if err := runQueueBackupWithDB(t, target, "restore", "--from", damaged, "--passphrase-file", passFile); !errors.Is(err, backupseal.ErrAuthentication) {
 		t.Fatalf("truncated backup: %v", err)
 	}
-	entries, _ := os.ReadDir(dir)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, entry := range entries {
 		if entry.Name() == "recovered.sqlite3" || strings.HasPrefix(entry.Name(), ".runquill-") {
 			t.Fatalf("failed restore left %s", entry.Name())
@@ -115,6 +125,9 @@ func TestSealedBackupRestoresEndToEnd(t *testing.T) {
 	jobs, err := restored.jobs(ctx, "ORDER BY sequence")
 	if err != nil || len(jobs) != 1 || jobs[0].id != 7 {
 		t.Fatalf("restored jobs %+v, %v", jobs, err)
+	}
+	if jobs[0].failure != failure {
+		t.Fatalf("restored job failure length %d, want %d", len(jobs[0].failure), len(failure))
 	}
 }
 

@@ -135,7 +135,7 @@ func TestBackupOnlineAndRestoreToFencedQueue(t *testing.T) {
 	}
 }
 
-func TestQueueCopiesRejectBadInputsAndExistingDestinations(t *testing.T) {
+func TestBackupCopiesRejectBadInputsAndExistingDestinations(t *testing.T) {
 	ctx := t.Context()
 	t.Setenv("RUNQUILL_OWNER", "owner")
 	t.Setenv("RUNQUILL_APP_ID", "120")
@@ -192,6 +192,19 @@ func TestQueueCopiesRejectBadInputsAndExistingDestinations(t *testing.T) {
 	}
 	if successes != 1 {
 		t.Fatalf("expected one successful concurrent backup, got %d", successes)
+	}
+	for _, path := range []string{target, stale} {
+		if err := restoreQueue(ctx, io.Discard, archive, path); err == nil || !strings.Contains(err.Error(), "already exists") {
+			t.Fatalf("restore accepted an occupied destination %s: %v", path, err)
+		}
+	}
+	for _, path := range []string{target, stale + "-wal"} {
+		if content, err := os.ReadFile(path); err != nil || string(content) != untouched {
+			t.Fatalf("restore changed %s: %q, %v", path, content, err)
+		}
+	}
+	if _, err := os.Lstat(stale); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("restore published beside a stale journal: %v", err)
 	}
 	if err := restoreQueue(ctx, io.Discard, archive, filepath.Join(dir, "restored.sqlite3")); err != nil {
 		t.Fatalf("concurrent backup produced invalid archive: %v", err)
