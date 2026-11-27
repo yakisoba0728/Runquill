@@ -3,6 +3,8 @@
 // the rest of src except types, or shared code would be pulled into the demo chunk.
 import type { Job, Snapshot } from "../types";
 
+export { answer } from "./fixtures";
+
 export const scenarios = ["first", "missed", "offline"] as const;
 export type Scenario = (typeof scenarios)[number];
 
@@ -95,9 +97,11 @@ export function sample(name: Scenario) {
   const snapshot: Snapshot = {
     webhook: true, polling: true, last_webhook: match, last_poll: at(3), sampled_at: at(0),
     first_job_seen: firstSeen, first_job_clean: firstClean,
+    recent: firstClean ? [{ ...cleaned, pool: "default", url: "https://github.com/garden-lab/first-workflow/actions/runs/17990/job/4817" }] : [],
     runner_inventory: jobs.filter((job) => job.runner).map((job) => ({
       name: job.runner!, job_id: job.id, host: job.runner_host, pool: job.pool,
-      runtime_state: ({ RUNNING: "running", CLEANUP: "exited" } as Record<string, string>)[job.status],
+      runtime_state: ({ RUNNING: "running", CLEANUP: "exited" } as Record<string, string>)[job.status!],
+      runner_os: job.runner_os, runner_image: job.runner_image,
     })),
     fleet: {
       slot_limit: 4, repository_scope: "selected", hosts, jobs,

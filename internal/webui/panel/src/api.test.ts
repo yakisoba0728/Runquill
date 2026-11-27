@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, onUnauthorized, request } from "./api";
+import { answerSamples, ApiError, onUnauthorized, request } from "./api";
 import { setCatalogue } from "./i18n";
 
 afterEach(() => {
@@ -42,5 +42,19 @@ describe("api", () => {
     await expect(request("./api/me")).resolves.toEqual({ login: "octo", role: "admin" });
     vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 204 })));
     await expect(request("./api/logout", { method: "POST" })).resolves.toBeNull();
+  });
+
+  it("answers sample GETs from fixtures and refuses everything else", async () => {
+    const network = vi.fn();
+    vi.stubGlobal("fetch", network);
+    answerSamples((path, query) => (path === "/api/jobs" ? { path, limit: query.get("limit") } : undefined));
+    try {
+      await expect(request("./api/jobs?limit=25")).resolves.toEqual({ path: "/api/jobs", limit: "25" });
+      await expect(request("./api/jobs/1/retry", { method: "POST" })).rejects.toMatchObject({ status: 0, message: "Not available in the sample panel." });
+      await expect(request("./api/team")).rejects.toBeInstanceOf(ApiError);
+      expect(network).not.toHaveBeenCalled();
+    } finally {
+      answerSamples(null);
+    }
   });
 });

@@ -3,7 +3,7 @@
 import "@yakihyuk0728/stratum-ui/stratum.css";
 import "./panel.css";
 import { createRoot } from "react-dom/client";
-import { onUnauthorized, request, type ApiError } from "./api";
+import { answerSamples, onUnauthorized, request, type ApiError } from "./api";
 import { preferredLanguage, setLanguage } from "./i18n";
 import { live } from "./live";
 import { Shell } from "./Shell";
@@ -20,7 +20,8 @@ function signedOut(reason: string, focus: boolean) {
 async function start() {
   await setLanguage(preferredLanguage());
   if (document.body.dataset.mode === "demo") {
-    const { sample } = await import("./demo");
+    const { answer, sample } = await import("./demo");
+    answerSamples(answer);
     live.sample(sample("first").snapshot);
     root.render(<Shell user={null} sample={sample} />);
     return;

@@ -1,6 +1,6 @@
 # Runquill panel v2 (source)
 
-The rebuilt operations panel: React 19, TypeScript and [Stratum](https://www.npmjs.com/package/@yakihyuk0728/stratum-ui) `0.1.1`, built with Vite. The design and its phases are in [docs/design/panel-v2.md](../../../docs/design/panel-v2.md). Phase 1 covers the shell, sign-in, live updates, routing, translations, the command palette and the Overview screen. The other screens show a placeholder.
+The rebuilt operations panel: React 19, TypeScript and [Stratum](https://www.npmjs.com/package/@yakihyuk0728/stratum-ui) `0.1.1`, built with Vite. The design and its phases are in [docs/design/panel-v2.md](../../../docs/design/panel-v2.md). Phase 1 covers the shell, sign-in, live updates, routing, translations, the command palette and the Overview screen. Phase 2 adds the read-only Jobs, Runners, Hosts and Usage screens. The administration screens and API tokens still show a placeholder.
 
 ## Build
 
@@ -50,6 +50,7 @@ Keep the same headers as v1. That includes the CSP `default-src 'self'; img-src 
 - `src/live.ts`: the SSE/polling state machine from v1, as a store for `useSyncExternalStore`.
 - `src/router.ts`, `src/routes.ts`: hash routes, v1 address rewrites and the screen table.
 - `src/i18n/`: `ko.json` and `server-patterns.json`, converted once from v1 `panelweb/i18n.js`. The keys are the English text. Add a translation for every new English string. A test checks the literals in `src`. While v1 lives, server messages need a translation in both places.
-- `src/components/`: local stand-ins for parts Stratum does not have yet (design §8).
+- `src/request.ts`: `useRequest` for screen REST loads, with optional polling. `src/commands.ts`: palette commands a screen registers.
+- `src/components/`: local stand-ins for parts Stratum does not have yet (design §8). `index.tsx` is in the entry chunk; parts only screens use (`StageBar`, `ResourceMeters`, `BarChart`) have their own files.
 - `src/screens/<id>/`: one lazy chunk per screen.
-- `src/demo/`: sample scenarios, built into `demo-*` only.
+- `src/demo/`: sample scenarios and the GET fixtures (`fixtures.ts`), built into `demo-*` only. `main.tsx` registers `answer` with `answerSamples` in `api.ts`, so the sample panel never reaches a server.

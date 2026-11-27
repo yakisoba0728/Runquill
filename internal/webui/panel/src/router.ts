@@ -26,6 +26,24 @@ export function parse(hash: string): Route | null {
 
 const enc = encodeURIComponent;
 
+/** The address of a route: #/screen/id/sub?params, empty params left out. */
+export function format(route: Route): string {
+  const path = [route.screen, route.id, route.sub].filter((part) => part !== undefined && part !== "").map((part) => enc(part!));
+  const params = new URLSearchParams([...route.params].filter(([, value]) => value !== ""));
+  const query = params.toString();
+  return "#/" + path.join("/") + (query ? "?" + query : "");
+}
+
+/** route with params changed: a null or "" value removes the param. */
+export function withParams(route: Route, patch: Record<string, string | null | undefined>): Route {
+  const params = new URLSearchParams(route.params);
+  for (const [key, value] of Object.entries(patch)) {
+    if (value == null || value === "") params.delete(key);
+    else params.set(key, value);
+  }
+  return { ...route, params };
+}
+
 /** The new address for a v1 address, or null. */
 export function legacy(route: Route, admin: boolean): string | null {
   const { screen, id, params } = route;
@@ -58,6 +76,7 @@ const listeners = new Set<() => void>();
 const emit = () => listeners.forEach((fn) => fn());
 let focusPending = false;
 let visits = 0;
+let shown = parse(location.hash)?.screen;
 
 function subscribe(fn: () => void) {
   listeners.add(fn);
@@ -68,8 +87,17 @@ function subscribe(fn: () => void) {
   };
 }
 
+/** True when a move from one address to another changes the screen (opening a detail or a filter does not). */
+export function changesScreen(from: string | undefined, to: string) {
+  const next = parse(to)?.screen;
+  return next !== undefined && next !== from;
+}
+
+// The page heading takes focus only when the screen changes, so opening or closing a SplitView detail keeps the
+// focus the SplitView gives it.
 function onHashChange() {
-  focusPending = true;
+  if (changesScreen(shown, location.hash)) focusPending = true;
+  shown = parse(location.hash)?.screen ?? shown;
   visits++;
   emit();
 }
@@ -82,12 +110,21 @@ export const useVisit = () => useSyncExternalStore(subscribe, () => visits);
 export function navigate(hash: string, { replace = false } = {}) {
   if (replace) {
     history.replaceState(history.state, "", hash);
+    shown = parse(hash)?.screen ?? shown;
     emit();
   } else if (location.hash === hash) {
-    onHashChange();
+    focusPending = true;
+    visits++;
+    emit();
   } else {
     location.hash = hash;
   }
+}
+
+/** Changes the current address's params without a history entry (filters, tabs). */
+export function setParams(patch: Record<string, string | null | undefined>) {
+  const route = parse(location.hash);
+  if (route) navigate(format(withParams(route, patch)), { replace: true });
 }
 
 /** For the page heading: true once after a navigation, so the new screen takes focus (not on first load). */

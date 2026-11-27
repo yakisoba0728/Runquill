@@ -51,8 +51,9 @@ export function Steps({ steps }: { steps: { title: ReactNode; done: boolean; not
   );
 }
 
-export function StatusBadge({ status }: { status: string }) {
-  return <Badge tone={statusTone(status)} dot>{statusLabel(status)}</Badge>;
+/** A status code as a coloured badge; label replaces the code's own name (already translated). */
+export function StatusBadge({ status, label }: { status: string; label?: string }) {
+  return <Badge tone={statusTone(status)} dot>{label ?? statusLabel(status)}</Badge>;
 }
 
 /** G16: "3s ago", ticking on the shared clock. */
@@ -68,7 +69,9 @@ export function UpdatedAgo({ at }: { at: string }) {
 }
 
 /** Every screen's header: sets the document title and takes focus after a navigation (not on first load). */
-export function Page({ title, description, actions, children }: { title: string; description?: ReactNode; actions?: ReactNode; children?: ReactNode }) {
+export function Page({ title, description, actions, tabs, children }: {
+  title: string; description?: ReactNode; actions?: ReactNode; tabs?: ReactNode; children?: ReactNode;
+}) {
   const visit = useVisit();
   const header = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -84,7 +87,7 @@ export function Page({ title, description, actions, children }: { title: string;
   }, [visit]);
   return (
     <>
-      <PageHeader ref={header} title={title} description={description} actions={actions} />
+      <PageHeader ref={header} title={title} description={description} actions={actions} tabs={tabs} />
       <div className="page-content">{children}</div>
     </>
   );

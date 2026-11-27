@@ -1040,5 +1040,19 @@
   "Collapse sidebar": "사이드바 접기",
   "Expand sidebar": "사이드바 펼치기",
   "Recent": "최근",
-  "Notifications": "알림"
+  "Notifications": "알림",
+  "Back to the list": "목록으로",
+  "Previous item": "이전 항목",
+  "Next item": "다음 항목",
+  "Detail pane width": "상세 칸 너비",
+  "Clear search": "검색어 지우기",
+  "Job #{id} is not in the queue or the 7-day job history.": "작업 #{id}은(는) 대기열과 7일 작업 기록에 없습니다.",
+  "Try again": "다시 시도",
+  "History": "기록",
+  "Show running jobs": "실행 중인 작업 보기",
+  "Show job history": "작업 기록 보기",
+  "Clear filters": "필터 지우기",
+  "The live queue and the 7-day job history": "실시간 대기열과 7일 작업 기록",
+  "Slots": "슬롯",
+  "No runners on this host.": "이 호스트에 러너가 없습니다."
 }

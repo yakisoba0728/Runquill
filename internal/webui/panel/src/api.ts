@@ -1,6 +1,8 @@
 // Panel API client, ported from panelweb/api.js. Same-origin fetches, so the browser sends the session cookie and the
 // Origin header the server checks. Errors carry the HTTP status and a message already passed through serverText.
-// shortcut: request only; download, stream and the sample-panel createApi arrive with the screens that use them (phases 2-4).
+// In the sample panel, GETs are answered by the fixtures in src/demo (registered by main.tsx) and everything else is
+// refused, so nothing leaves the browser (v1 createApi).
+// shortcut: request only; download and stream arrive with the screens that use them (phases 3-4).
 import { serverText } from "./i18n";
 
 let unauthorized = () => {};
@@ -53,6 +55,25 @@ function unreachable(error: unknown, signal?: AbortSignal) {
     : "Could not reach the manager. Check the connection.");
 }
 
+/** Answers a sample-panel GET: the path from /api/ on and its query; undefined when there is no fixture, null for 404. */
+export type SampleAnswer = (path: string, query: URLSearchParams) => unknown;
+let sample: SampleAnswer | null = null;
+
+export function answerSamples(answer: SampleAnswer | null) {
+  sample = answer;
+}
+
+/** The sample panel: no server, no writes, no polling. */
+export const isSample = () => !!sample;
+
+function sampleRequest<T>(path: string, method: string): Promise<T> {
+  const url = new URL(path, location.href);
+  const data = method === "GET" ? sample!(url.pathname.replace(/^.*?(\/api\/)/, "/api/"), url.searchParams) : undefined;
+  if (data === undefined) return Promise.reject(new ApiError(0, "Not available in the sample panel."));
+  if (data === null) return Promise.reject(new ApiError(404, "Not found."));
+  return Promise.resolve(structuredClone(data) as T);
+}
+
 interface RequestOptions {
   method?: string;
   data?: unknown;
@@ -62,6 +83,7 @@ interface RequestOptions {
 
 /** Sends JSON when data is given; resolves to the decoded body, or null for 204. */
 export async function request<T>(path: string, { method = "GET", data, timeout = 7000, signal }: RequestOptions = {}): Promise<T> {
+  if (sample) return sampleRequest<T>(path, method);
   const deadline = AbortSignal.timeout(timeout);
   let response: Response;
   try {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parse, resolve } from "./router";
+import { changesScreen, format, parse, resolve, withParams } from "./router";
 
 const all = ["overview", "jobs", "runners", "hosts", "usage", "tokens", "settings", "team", "audit", "backups", "migrate"];
 const viewer = ["overview", "jobs", "runners", "hosts", "usage", "tokens"];
@@ -46,5 +46,19 @@ describe("router", () => {
     expect(resolve("#/nope", viewer, false)?.redirect).toBe("#/overview");
     expect(resolve("#/settings", viewer, false)?.redirect).toBe("#/overview");
     expect(resolve("", viewer, false)?.redirect).toBe("#/overview");
+  });
+
+  it("formats a route and patches its params", () => {
+    const route = parse("#/hosts/agent%3A%2F%2Fedge-1?tab=pools")!;
+    expect(format(route)).toBe("#/hosts/agent%3A%2F%2Fedge-1?tab=pools");
+    expect(format(withParams(route, { tab: null, q: "a b" }))).toBe("#/hosts/agent%3A%2F%2Fedge-1?q=a+b");
+    expect(format(withParams(parse("#/jobs?q=x")!, { q: "" }))).toBe("#/jobs");
+  });
+
+  it("moves focus to the heading only when the screen changes", () => {
+    expect(changesScreen("jobs", "#/jobs/4828")).toBe(false);
+    expect(changesScreen("jobs", "#/jobs?tab=history")).toBe(false);
+    expect(changesScreen("overview", "#/jobs/4828")).toBe(true);
+    expect(changesScreen("jobs", "#main")).toBe(false);
   });
 });

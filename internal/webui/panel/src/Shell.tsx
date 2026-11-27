@@ -6,6 +6,7 @@ import {
 import { Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { request, type ApiError } from "./api";
 import { attention } from "./attention";
+import { useCurrentCommands } from "./commands";
 import { Notice, Page, ScreenBoundary, UpdatedAgo } from "./components";
 import type { Sample, Scenario } from "./demo";
 import { ConfirmHost } from "./dialogs";
@@ -174,13 +175,18 @@ export function Shell({ user, sample }: { user: User | null; sample?: Sample }) 
     return () => document.removeEventListener("keydown", onKey);
   }, []);
 
+  const screenCommands = useCurrentCommands();
   const items = useMemo(() => {
     // Each entry also matches its English wording, so "hosts" finds 호스트 in the Korean panel.
     const english = (text: string, values: Record<string, string> = {}) => text.replace(/\{([a-z]+)\}/g, (token, key) => values[key] ?? token);
-    const list: CommandItem[] = visible.map((s) => ({
+    // The screen's own commands first, under its name.
+    const list: CommandItem[] = screenCommands.map((c) => ({
+      id: "screen-command:" + c.id, group: t(screen.title), label: t(c.label, c.values), keywords: [english(c.label, c.values)], onSelect: c.run,
+    }));
+    list.push(...visible.map((s) => ({
       id: "screen:" + s.id, group: t("Screen"), label: t("Go to {screen}", { screen: t(s.title) }),
       keywords: [english("Go to {screen}", { screen: s.title })], onSelect: () => navigate("#/" + s.id),
-    }));
+    })));
     const command = (id: string, group: string, label: string, onSelect: () => void) =>
       list.push({ id, group: t(group), label: t(label), keywords: [label], onSelect });
     command("language", "Language", other === "en" ? "Switch to English" : "Switch to Korean", () => location.assign(languageURL(other)));
@@ -202,7 +208,7 @@ export function Shell({ user, sample }: { user: User | null; sample?: Sample }) 
         .map((h) => ({ id: "host:" + h.name, group: t("Host"), label: h.name, onSelect: () => navigate("#/hosts/" + encodeURIComponent(h.name)) })),
     ];
     return [...list, ...jumps.slice(0, 50)];
-  }, [visible, snapshot, demo, other]);
+  }, [visible, snapshot, demo, other, screenCommands, screen]);
 
   const groups = (["Operations", "Administration"] as const).map((group) => [group, visible.filter((s) => s.group === group)] as const)
     .filter(([, list]) => list.length);
@@ -275,7 +281,7 @@ export function Shell({ user, sample }: { user: User | null; sample?: Sample }) 
         {sample && <DemoBand sample={sample} />}
         <Notices />
         <ScreenBoundary key={screen.id}>
-          <Suspense fallback={null}>{Content ? <Content /> : <Placeholder screen={screen} />}</Suspense>
+          <Suspense fallback={null}>{Content ? <Content route={route} /> : <Placeholder screen={screen} />}</Suspense>
         </ScreenBoundary>
       </AppShell>
       <CommandPalette items={items} open={palette} onOpenChange={setPalette} {...labels.palette} />

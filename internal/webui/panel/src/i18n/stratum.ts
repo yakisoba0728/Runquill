@@ -18,4 +18,7 @@ export const stratum = () => ({
   toaster: { label: t("Notifications"), closeLabel: t("Close") },
   confirm: { cancelLabel: t("Cancel") },
   table: { empty: t("No entries.") },
+  // Only the labels a pane without unsaved changes shows; the settings screen (phase 4) adds the rest.
+  split: { close: t("Close"), back: t("Back to the list"), prev: t("Previous item"), next: t("Next item"), resize: t("Detail pane width") },
+  search: { clearLabel: t("Clear search") },
 });

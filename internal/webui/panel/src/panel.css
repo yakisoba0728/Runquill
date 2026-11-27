@@ -13,7 +13,7 @@ body {
 a:not([class]) { color: var(--color-accent); }
 code { font-family: var(--font-mono); font-size: 0.92em; }
 h2 { font-size: var(--text-base); font-weight: 600; margin: 0 0 12px; }
-h2[tabindex]:focus { outline: none; }
+h2[tabindex]:focus, .page-title[tabindex="-1"]:focus { outline: none; }
 
 .skip-link {
   position: fixed;
@@ -28,7 +28,7 @@ h2[tabindex]:focus { outline: none; }
 }
 .skip-link:focus { translate: none; }
 
-.page-content { display: grid; gap: 16px; align-content: start; }
+.page-content { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-content: start; }
 
 /* G6 Notice */
 .notice {
@@ -63,7 +63,7 @@ h2[tabindex]:focus { outline: none; }
   background: var(--color-surface);
   min-width: 0;
 }
-.block-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.block-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; }
 .pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; align-items: start; }
 .links { display: flex; flex-wrap: wrap; gap: 16px; margin: 12px 0 0; }
 
@@ -114,6 +114,62 @@ h2[tabindex]:focus { outline: none; }
 .attention-detail { color: var(--color-text-hint); font-size: var(--text-sm); overflow-wrap: anywhere; }
 .host-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 
+/* Lists with a detail pane (jobs, runners, hosts). The SplitView needs a bounded height on a wide screen; on a phone
+   the pane is a full-screen sheet and the list scrolls with the page. */
+.page-split { height: max(28rem, calc(100dvh - 12rem)); border: 1px solid var(--color-line); border-radius: var(--radius-lg); overflow: hidden; background: var(--color-surface); }
+.page-split > .splitview-list { overflow-y: auto; }
+.tab-content { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; padding: 12px; align-content: start; min-width: 0; }
+.toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: 8px 12px; }
+.toolbar > * { min-width: 0; flex: 0 1 200px; }
+.toolbar > .toolbar-grow { flex: 1 1 240px; }
+.toolbar > .btn { flex: none; }
+.toolbar > .toolbar-wide { flex: 0 1 auto; max-width: 100%; overflow-x: auto; }
+.block-flat { display: grid; gap: 12px; min-width: 0; align-content: start; }
+.block-flat h3 { margin: 8px 0 0; font-size: var(--text-sm); font-weight: 600; }
+.usage-panel { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; padding-top: 16px; min-width: 0; }
+.table-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.block-sub { display: block; color: var(--color-text-hint); font-size: var(--text-xs); overflow-wrap: anywhere; }
+/* Stratum rows have one fixed height; tables whose cells carry sub-lines take a taller one. */
+.data-table.rows-2 { --data-table-row: 58px; }
+.data-table.rows-3 { --data-table-row: 76px; }
+.data-table .block-sub { overflow: hidden; text-overflow: ellipsis; }
+.summary-line { margin: 0; color: var(--color-text-hint); font-size: var(--text-sm); }
+.pane-sections { display: grid; gap: 20px; }
+.pane-sections h3 { margin: 0 0 8px; font-size: var(--text-sm); font-weight: 600; }
+.pane-lead { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.pane-list { margin: 0; padding-left: 18px; }
+
+/* G2 StageBar */
+.stage-timing { display: grid; gap: 8px; }
+.stage-bar { width: 100%; height: 12px; display: block; border-radius: 3px; }
+.stage-bar rect, .stage-swatch { fill: var(--stage); background: var(--stage); }
+[data-stage] { --stage: var(--color-text-hint); }
+[data-stage="discovery"] { --stage: var(--color-accent); }
+[data-stage="queue"] { --stage: var(--color-warning); }
+[data-stage="jit"] { --stage: color-mix(in srgb, var(--color-warning), var(--color-danger)); }
+[data-stage="runtime"] { --stage: color-mix(in srgb, var(--color-accent), var(--color-success)); }
+[data-stage="startup"] { --stage: color-mix(in srgb, var(--color-accent), var(--color-text-hint)); }
+[data-stage="execution"] { --stage: var(--color-success); }
+.stage-legend { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px 16px; margin: 0; }
+.stage-legend > div { display: flex; justify-content: space-between; gap: 8px; font-size: var(--text-sm); }
+.stage-legend dt { display: flex; align-items: center; gap: 6px; color: var(--color-text-hint); }
+.stage-legend dd { margin: 0; }
+.stage-legend [data-unobserved] { opacity: 0.6; }
+.stage-swatch { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+
+/* Job resources */
+.resources { display: grid; gap: 8px; }
+.resources p { margin: 0; }
+.resource-list dd { display: grid; gap: 4px; }
+
+/* G2 BarChart */
+.bar-chart { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 8px; }
+.bar-chart svg { width: 100%; height: 160px; display: block; }
+.bar-chart rect { fill: var(--color-accent); }
+.bar-chart-axis { stroke: var(--color-line); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.bar-chart-scale { display: flex; flex-direction: column; justify-content: space-between; text-align: end; }
+.bar-chart-caption { grid-column: 2; display: flex; justify-content: space-between; gap: 8px; }
+
 /* Shell footer */
 .live-status { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 6px 14px; }
 .live-age { color: var(--color-text-hint); font-size: var(--text-xs); }
@@ -145,5 +201,7 @@ h2[tabindex]:focus { outline: none; }
   .notices { padding: 12px 16px 0; }
   .demo-band { padding: 10px 16px; }
   .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .page-split { height: auto; border: 0; border-radius: 0; background: none; overflow: visible; }
+  .tab-content { padding: 12px 0; }
   .signin-box { padding: 24px 16px; }
 }
