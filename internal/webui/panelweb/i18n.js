@@ -972,6 +972,7 @@ const words = {
   "From {n} samples.": "측정 {n}회 기준입니다.",
   "Loading job #{id}…": "작업 #{id}을(를) 불러오는 중…",
   "Close": "닫기",
+  "Close commands": "명령 팔레트 닫기",
   "Close job #{id}": "작업 #{id} 닫기",
   "Details of job {id}": "작업 {id} 상세",
   "Runquill keeps finished jobs for seven days. Job logs stay on GitHub. Select a job ID for its stage timing and resources.": "Runquill은 끝난 작업을 7일 동안 보관합니다. 작업 로그는 GitHub에 남습니다. 작업 ID를 선택하면 단계별 소요 시간과 리소스를 볼 수 있습니다.",

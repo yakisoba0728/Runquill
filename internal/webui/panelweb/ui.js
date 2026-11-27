@@ -228,7 +228,7 @@ export function createTable({ label, columns, key, empty = "No entries.", rowCla
     let restore = null;
     if (active && body.contains(active)) {
       const row = active.closest("tr");
-      restore = { key: row?.dataset.key, index: active === row ? -1 : [...row.querySelectorAll(controls)].indexOf(active) };
+      restore = { key: row.dataset.key, index: [...row.querySelectorAll(controls)].indexOf(active), label: active.getAttribute("aria-label") };
     }
     const target = highlighted?.();
     const previous = built;
@@ -266,9 +266,15 @@ export function createTable({ label, columns, key, empty = "No entries.", rowCla
     for (const node of [...body.children]) if (!nodes.includes(node)) node.remove();
     nodes.forEach((node, index) => { if (body.children[index] !== node) body.insertBefore(node, body.children[index] || null); });
     if (restore?.key && !body.contains(document.activeElement)) {
-      const row = [...body.rows].find((candidate) => candidate.dataset.key === restore.key);
-      const next = restore.index < 0 ? row : row?.querySelectorAll(controls)[restore.index];
-      if (next?.matches("[tabindex], " + controls)) next.focus({ preventScroll: true });
+      const row = built.get(restore.key)?.node;
+      const candidates = row ? [...row.querySelectorAll(controls)] : [];
+      const next = restore.label ? candidates.find((control) => control.getAttribute("aria-label") === restore.label)
+        : candidates[restore.index];
+      next?.focus({ preventScroll: true });
+      if (!body.contains(document.activeElement)) {
+        if (row) row.tabIndex = -1;
+        (row || element).focus({ preventScroll: true });
+      }
     }
   }
   // focus moves keyboard focus to a highlighted row and scrolls it into view.
@@ -371,13 +377,24 @@ export function confirmAction(message, confirmLabel = "Confirm") {
   document.getElementById("confirm-text").textContent = message;
   document.getElementById("confirm-ok").textContent = tr(confirmLabel);
   const opener = document.activeElement;
+  const table = opener?.closest(".table-wrap");
+  const detail = opener?.closest(".detail");
+  const rowKey = opener?.closest("tr")?.dataset.key;
+  const label = opener?.getAttribute("aria-label");
   dialog.showModal();
   document.getElementById("confirm-cancel").focus();
   return new Promise((resolve) => {
     dialogResolve = (answer) => {
       dialogResolve = null;
       if (dialog.open) dialog.close();
-      opener?.focus?.({ preventScroll: true });
+      if (opener?.isConnected) opener.focus({ preventScroll: true });
+      if (opener === document.body || document.activeElement !== opener) {
+        const row = rowKey && [...(table?.querySelectorAll("tbody tr") || [])].find((node) => node.dataset.key === rowKey);
+        const replacement = label && [...((row || detail)?.querySelectorAll("[aria-label]") || [])]
+          .find((node) => node.getAttribute("aria-label") === label);
+        (replacement || detail?.querySelector("h2") || table || document.querySelector("[data-view-heading]"))
+          ?.focus({ preventScroll: true });
+      }
       resolve(answer);
     };
   });
