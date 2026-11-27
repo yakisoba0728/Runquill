@@ -112,6 +112,58 @@ func TestRemoveOrphansOnlyRemovesProvablyIdleRunners(t *testing.T) {
 	}
 }
 
+func TestGCOrphanRemovalRespectsStaleLeasesAndGrace(t *testing.T) {
+	const name = "runquill-9-0123456789ab"
+	for _, tt := range []struct {
+		name   string
+		leased bool
+		owner  string
+		age    time.Duration
+		want   string
+	}{
+		{"old local lease", true, "local", time.Hour, "Removed 0 orphaned runners; skipped 0."},
+		{"old legacy lease", true, "", time.Hour, "Removed 0 orphaned runners; skipped 0."},
+		{"old lease on a different host", true, "other", time.Hour, "lease recorded on other"},
+		{"unleased just inside grace", false, "", defaultOrphanGrace - time.Second, "inside the 10m0s grace period"},
+		{"unleased at grace boundary", false, "", defaultOrphanGrace, "Removed local " + name},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			q := testQueue(t)
+			ctx := t.Context()
+			now := time.Unix(1_800_000_000, 0)
+			if tt.leased {
+				j := recordTestJob(t, q, 9, "runquill-1-1-ci", now.Add(-tt.age))
+				if _, err := q.ExecContext(ctx, `UPDATE jobs SET phase = ?, runner_name = ?, runner_host = nullif(?, '')
+					WHERE job_id = ?`, completed, name, tt.owner, j.id); err != nil {
+					t.Fatal(err)
+				}
+			}
+			host := &testOrphanHost{runners: []runnerContainer{{
+				name: name, id: "container-id", state: "exited", owned: true, created: now.Add(-tt.age),
+			}}}
+			var out bytes.Buffer
+			loadAPI := func() (*github, error) {
+				t.Fatal("unexpected GitHub lookup")
+				return nil, nil
+			}
+			if err := removeOrphans(ctx, &out, q.DB, []orphanHost{host}, loadAPI, defaultOrphanGrace, now); err != nil {
+				t.Fatal(err)
+			}
+			var wantRemoved []string
+			if !tt.leased && tt.age >= defaultOrphanGrace {
+				wantRemoved = []string{"container-id"}
+			}
+			if !slices.Equal(host.removed, wantRemoved) || !strings.Contains(out.String(), tt.want) {
+				t.Fatalf("removed %v, want %v and output containing %q:\n%s", host.removed, wantRemoved, tt.want, out.String())
+			}
+			leases, err := readRunnerLeases(ctx, q.DB)
+			if owner, leased := leases[name]; err != nil || leased != tt.leased || owner != tt.owner {
+				t.Fatalf("GC changed lease: owner %q, tracked %v, error %v", owner, leased, err)
+			}
+		})
+	}
+}
+
 func TestParseRunnerInspect(t *testing.T) {
 	id := strings.Repeat("ab", 32)
 	runners, err := parseRunnerInspect("/runquill-1-0123456789ab|" + id + "|1||2026-11-19T00:01:02.123456789Z|exited\n")

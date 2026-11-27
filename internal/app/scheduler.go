@@ -480,10 +480,11 @@ func (s *scheduler) reconcileFleet(ctx context.Context, active []job, snapshots 
 				j.runnerHost = seen
 			}
 			owners[j.runnerName] = j.runnerHost
-			if j.retryAt > now.Unix() || (seen != "" && j.runnerHost != seen) {
+			host := observations[j.runnerHost]
+			_, seenOnOwner := host.Containers[j.runnerName]
+			if j.retryAt > now.Unix() || (!seenOnOwner && seen != "" && j.runnerHost != seen) {
 				continue
 			}
-			host := observations[j.runnerHost]
 			if host.Containers == nil && (j.runnerHost != "" || !allObserved) {
 				continue
 			}
