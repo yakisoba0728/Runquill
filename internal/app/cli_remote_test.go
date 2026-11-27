@@ -109,6 +109,49 @@ func runRemote(t *testing.T, args ...string) (handled bool, code int, stdout, st
 	return handled, code, out.String(), errOut.String()
 }
 
+func TestRemoteCLIReportsHTTPFailures(t *testing.T) {
+	for _, test := range []struct {
+		name, path, method string
+		args               []string
+		status             int
+		location           string
+		contentType, body  string
+		message            string
+	}{
+		{"redirect", "/api/jobs/42/retry", http.MethodPost, []string{"jobs", "retry", "42"}, http.StatusFound, "/snapshot",
+			"text/plain", "", "the panel answered HTTP 302"},
+		{"unauthorized", "/snapshot", http.MethodGet, []string{"runners", "list", "--json"}, http.StatusUnauthorized, "",
+			"text/plain", "Sign in to Runquill.\n", "the panel answered HTTP 401: Sign in to Runquill."},
+		{"unavailable", "/api/jobs/42/retry", http.MethodPost, []string{"jobs", "retry", "42"}, http.StatusServiceUnavailable, "",
+			"application/json", `{"error":"Try again shortly."}`, "the panel answered HTTP 503: Try again shortly."},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != test.method || r.URL.Path != test.path {
+					t.Errorf("request = %s %s, want %s %s", r.Method, r.URL.Path, test.method, test.path)
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
+				if test.location != "" {
+					w.Header().Set("Location", test.location)
+				}
+				w.Header().Set("Content-Type", test.contentType)
+				w.WriteHeader(test.status)
+				fmt.Fprint(w, test.body)
+			}))
+			t.Cleanup(server.Close)
+			t.Setenv("RUNQUILL_URL", server.URL)
+			t.Setenv("RUNQUILL_TOKEN", testAPIToken)
+			handled, code, stdout, stderr := runRemote(t, test.args...)
+			wantStderr := "runquill " + strings.Join(test.args[:2], " ") + ": " + test.message + "\n"
+			if !handled || code != 1 || stdout != "" || stderr != wantStderr {
+				t.Errorf("handled = %v, exit = %d, stdout = %q, stderr = %q, want exit 1 and %q on stderr",
+					handled, code, stdout, stderr, wantStderr)
+			}
+		})
+	}
+}
+
 // rows splits table output into whitespace-separated fields per line.
 func rows(output string) [][]string {
 	var result [][]string
