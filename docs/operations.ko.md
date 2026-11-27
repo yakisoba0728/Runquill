@@ -48,7 +48,7 @@ curl -fsS -o /dev/null -w '%{http_code}\n' https://runner-ci.example.com/
 
 ## 샘플 패널
 
-[GitHub Pages 데모](https://yakisoba0728.github.io/Runquill/)가 게시되면 첫 작업 정리, 웹훅 누락 후 복구, 워커 오프라인을 샘플 데이터로 체험할 수 있습니다. 로컬에서는 `"$HOME/runquill/runquill" panel --demo`를 실행하고 [127.0.0.1:8081](http://127.0.0.1:8081/)을 엽니다. 소스 체크아웃에서는 `go run . panel --demo`를 사용합니다.
+[GitHub Pages 데모](https://yakisoba0728.github.io/Runquill/)가 게시되면 첫 작업 정리, 웹훅 누락 후 복구, 워커 오프라인을 샘플 데이터로 체험할 수 있습니다. 로컬에서는 `"$HOME/runquill/runquill" panel --demo`를 실행하고 [127.0.0.1:8081](http://127.0.0.1:8081/)을 엽니다. 소스 체크아웃에서는 `go run . panel --demo`를 사용합니다. 다른 루프백 포트를 지정하려면 `--port PORT`를 붙이고, 빈 포트를 자동으로 고르려면 `--port 0`을 붙입니다.
 
 데모를 게시하려면 **Settings → Pages → Source**에서 **GitHub Actions**를 선택하고 `main`에서 [Publish sample panel](../.github/workflows/demo-pages.yml) 워크플로를 실행합니다. 워크플로는 데모의 HTML, CSS, 스크립트와 라이선스를 게시합니다. 배포 주소는 실행 결과에 표시됩니다. [GitHub Pages 설정](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site)
 
@@ -73,7 +73,7 @@ RUNQUILL_PANEL_BOOTSTRAP_ID=12345678
 RUNQUILL_MANAGER_IMAGE=runquill-manager:local docker compose -f compose.yaml -f compose.panel.yaml up -d --build
 ```
 
-릴리스로 설치한 경우 이미지 이름을 재정의하지 않고 같은 Compose 파일에 `--no-build`를 사용합니다. 멀티 서버 설정에서는 `-f compose.ssh.yaml`도 전달합니다. 바이너리를 직접 실행하는 경우 `RUNQUILL_PANEL_ADDR=127.0.0.1:8081`을 설정합니다. 원격 루프백 접속에는 SSH 터널을 이용하세요. 팀이 공유할 때는 `RUNQUILL_PANEL_URL`에 HTTPS 주소를 지정하고, HTTPS 역프록시에서 원래 Host 헤더를 유지해 패널의 8081 포트로 전달합니다. 공개 웹훅에는 별도 주소를 씁니다.
+릴리스로 설치한 경우 이미지 이름을 재정의하지 않고 같은 Compose 파일에 `--no-build`를 사용합니다. 멀티 서버 설정에서는 `-f compose.ssh.yaml`도 전달합니다. 바이너리를 직접 실행하는 경우 `RUNQUILL_PANEL_ADDR=127.0.0.1:8081`을 설정합니다. 원격 루프백 접속에는 SSH 터널을 이용하세요. 팀이 공유할 때는 `RUNQUILL_PANEL_URL`에 HTTPS 주소를 지정하고, HTTPS 역프록시에서 원래 Host 헤더를 유지해 패널의 8081 포트로 전달합니다. 공개 웹훅은 별도로 8080 포트로 전달합니다. 같은 호스트 이름에서 경로 규칙으로 분리하는 방법은 [Cloudflare Tunnel 가이드](cloudflare-tunnel.ko.md)를 참고하세요.
 
 | 역할 | 패널 권한 |
 | --- | --- |
@@ -111,11 +111,11 @@ Operator와 Admin은 **로그** 화면에서 작업을 맡은 러너의 컨테�
 
 ## 원격 CLI
 
-다른 컴퓨터에서 패널 API로 `runquill fleet status`, `jobs list`, `jobs show`, `runners list`, `hosts list`, `pools list`, `usage`, `elastic`, `hosts cordon`, `hosts uncordon`, `jobs cancel`, `jobs retry`를 실행할 수 있습니다. `RUNQUILL_URL`에 패널 주소를 지정하고 토큰은 `RUNQUILL_TOKEN`이나 `--token-file`로 전달합니다. 스크립트에서는 `--json`을 붙입니다. 명령마다 맞는 토큰 범위가 필요하며, 감사 기록은 어떤 토큰으로도 읽을 수 없으므로 `audit tail`은 항상 웹 패널을 안내합니다. [원격 CLI 가이드](remote-cli.ko.md)
+다른 컴퓨터에서 패널 API로 `runquill fleet status`, `jobs list`, `jobs show`, `runners list`, `hosts list`, `pools list`, `usage`, `usage --rightsizing`, `elastic`, `hosts cordon`, `hosts uncordon`, `jobs cancel`, `jobs retry`를 실행할 수 있습니다. `RUNQUILL_URL`에 패널 주소를 지정하고 토큰은 `RUNQUILL_TOKEN`이나 `--token-file`로 전달합니다. 스크립트에서는 `--json`을 붙입니다. 명령마다 맞는 토큰 범위가 필요하며, 감사 기록은 어떤 토큰으로도 읽을 수 없으므로 `audit tail`은 항상 웹 패널을 안내합니다. [원격 CLI 가이드](remote-cli.ko.md)
 
 ## 코딩 에이전트용 MCP
 
-`POST /mcp`는 운영 현황, 작업, 호스트, 사용량, 탄력 한도 결정을 읽기 전용 [Model Context Protocol](https://modelcontextprotocol.io/) 도구로 제공합니다. HTTP로 `fleet:read` 토큰을 보내거나, `runquill mcp`를 패널로 전달하는 로컬 stdio 서버로 실행합니다. 브라우저 세션은 항상 거부합니다. 실제 MCP 클라이언트로는 아직 검증하지 않았습니다. [MCP 가이드](mcp.ko.md)
+`POST /mcp`는 운영 현황, 작업, 호스트, 사용량, 작업 리소스 적정성, 탄력적 한도 결정을 읽기 전용 [Model Context Protocol](https://modelcontextprotocol.io/) 도구로 제공합니다. HTTP로 `fleet:read` 토큰을 보내거나, `runquill mcp`를 패널로 전달하는 로컬 stdio 서버로 실행합니다. 브라우저 세션은 항상 거부합니다. 실제 MCP 클라이언트로는 아직 검증하지 않았습니다. [MCP 가이드](mcp.ko.md)
 
 ## 상태 확인과 업그레이드
 
@@ -178,6 +178,10 @@ docker compose -f compose.yaml -f compose.panel.yaml exec -T manager runquill st
 ```
 
 ## 매니저 설정 추가
+
+매니저는 기본으로 Docker를 사용합니다(`RUNQUILL_BACKEND=docker`). [기본 K3s 매니페스트](../deploy/k3s/runquill.yaml)는 `RUNQUILL_BACKEND=kubernetes`와 `RUNQUILL_K8S_RUNNER_NAMESPACE=runquill-runners`를 설정합니다. Pod 리소스, 노드 선택, 러너 모드는 [K3s 러너 설정](../deploy/k3s/README.md#runner-settings)을 참고하세요.
+
+매니저를 직접 실행할 때 `RUNQUILL_BIND`와 `RUNQUILL_PORT`로 웹훅과 상태 확인 리스너를 설정합니다. 기본값은 각각 `127.0.0.1`과 `8080`입니다. `RUNQUILL_DB`의 기본값은 작업 디렉터리의 `runquill.sqlite3`입니다. 기본 Compose 파일은 컨테이너 안에서 `0.0.0.0`에 바인딩하고 호스트의 루프백 인터페이스에서 8080 포트를 열며, 데이터베이스 기본 경로는 `/data/runquill.sqlite3`입니다.
 
 Compose는 `compose.yaml`에 적힌 변수만 매니저에 전달합니다. `RUNQUILL_MAX_PER_REPOSITORY`, `RUNQUILL_SCHEDULER_WORKERS`, `RUNQUILL_LOG_FORMAT`, `RUNQUILL_LOG_LEVEL`, [알림](#알림-보내기) 변수, `RUNQUILL_ELASTIC*`, `RUNQUILL_JOB_RESOURCES`, `RUNQUILL_BACKUP_*`, `RUNQUILL_METRICS_*`, `RUNQUILL_IMAGE_PULL*`, `RUNQUILL_RUNNER_IMAGES`, `RUNQUILL_CLEANUP_*`, `compose.mirror.yaml` 없이 쓰는 [`RUNQUILL_REGISTRY_MIRROR`](runner-images.ko.md#docker-hub-미러), [`RUNQUILL_ALLOW_PUBLIC_REPOSITORIES`](workflows.ko.md#공개-저장소에서-작업-실행) 같은 선택 설정은 값을 `.env`에 두고 `compose.yaml` 옆에 `compose.settings.yaml` 같은 오버레이를 저장합니다. `--upgrade`는 `compose.yaml`을 교체하지만 이 파일은 그대로 둡니다.
 
