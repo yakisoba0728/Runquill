@@ -170,6 +170,8 @@ test.describe("live panel", () => {
     await page.goto("./#/runners/runquill-demo-4826/logs");
     const output = page.getByRole("region", { name: "Runner log output" });
     await expect(output).toContainText("Running job: build");
+    // The runner log is not the job log: the job's step logs are linked (v1 logs pane head).
+    await expect(page.getByRole("link", { name: /^Step logs for garden-lab\/\S+ job \d+ on GitHub$/ })).toHaveAttribute("href", /\/actions\/runs\/\d+\/job\/\d+$/);
     await expect(page.getByRole("status").filter({ hasText: "The log stream ended. The last lines may explain why." })).toBeVisible();
     expect(live.requests.some((request) => /logs\?tail=200&follow=1$/.test(request.url()))).toBe(true);
     await page.getByRole("button", { name: "Reconnect" }).click();
@@ -284,6 +286,7 @@ test.describe("live panel", () => {
     });
     await page.goto("./#/jobs?tab=history");
     await expect(page.getByRole("grid", { name: "Job history" })).toHaveAttribute("aria-busy", "true");
+    await expect(page.getByText("Runquill keeps finished jobs for seven days. Job logs stay on GitHub.")).toBeVisible();
     release();
     await expect(page.getByText("25 shown")).toBeVisible();
     await page.getByRole("button", { name: "Load older jobs" }).click();

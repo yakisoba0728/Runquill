@@ -226,6 +226,7 @@ export default function Jobs({ route }: { route: Route }) {
 
   const historyContent = tab === "history" && (
     <>
+      <p className="summary-line">{t("Runquill keeps finished jobs for seven days. Job logs stay on GitHub.")}</p>
       <HistoryFilters params={route.params} onRefresh={() => setRound((n) => n + 1)} />
       {history.error && (
         <Notice tone="danger" role="alert">

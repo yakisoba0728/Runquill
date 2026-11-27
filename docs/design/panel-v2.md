@@ -1,6 +1,6 @@
 # 패널 v2 설계: Stratum으로 다시 만들기
 
-상태: 설계 확정(2026-11-28). [열린 질문](#9-열린-질문)은 모두 권하는 답으로 정했습니다. 1~4단계를 구현했습니다([§7.3](#73-1단계-프런트엔드-확인-결과), [§7.4](#74-2단계-읽기-화면-확인-결과), [§7.5](#75-3단계-operator-동작-확인-결과), [§7.6](#76-4단계-관리-화면-확인-결과)). 남은 것은 5단계 전환입니다.
+상태: 설계 확정(2026-11-28). [열린 질문](#9-열린-질문)은 모두 권하는 답으로 정했습니다. 1~4단계를 구현했습니다([§7.3](#73-1단계-프런트엔드-확인-결과), [§7.4](#74-2단계-읽기-화면-확인-결과), [§7.5](#75-3단계-operator-동작-확인-결과), [§7.6](#76-4단계-관리-화면-확인-결과)). 5단계의 프런트엔드 작업(행 `Menu`, §1 전체 점검, Stratum 제안 목록)도 마쳤습니다([§7.7](#77-5단계-프런트엔드-확인-결과)). 남은 것은 5단계의 기본값 전환(Go·CI·문서)과 6단계 정리입니다.
 
 정해진 것: 관리자 패널을 정보 구조까지 처음부터 다시 만들고, UI는 사용자의 라이브러리 **Stratum**(`@yakihyuk0728/stratum-ui` 0.1.1, React 19 컴포넌트와 `stratum.css` 하나)으로 그립니다. React 19 + Stratum을 Vite로 빌드하고, 빌드 결과를 Go embed 디렉터리에 커밋해 `go build`와 릴리스에는 Node가 필요 없게 합니다. CI는 커밋된 번들이 소스와 같은지 확인합니다.
 
@@ -14,7 +14,7 @@
 - **목록-상세는 Stratum `SplitView`로 통일합니다.** 작업·러너·호스트를 고르면 오른쪽 칸(폰에서는 전체 화면 시트)에 상세가 열리고, 주소는 `#/jobs/4828`처럼 항목을 가리킵니다. 예전 `#/queue?job=4828` 같은 주소는 새 주소로 바꿔 엽니다([§2.4](#24-주소-체계와-예전-링크)).
 - **해시 라우팅을 유지합니다.** 서버 라우트를 늘리지 않고, GitHub Pages 샘플 패널과 이미 배포된 문서·CLI의 링크가 그대로 동작합니다.
 - **상태 관리 라이브러리를 쓰지 않습니다.** SSE 스냅샷 저장소 하나를 `useSyncExternalStore`로 읽고, REST는 작은 훅 하나로 부릅니다. 지금 `app.js`의 재연결 상태 기계는 동작을 그대로 옮깁니다([§5](#5-클라이언트-데이터-모델)).
-- **소스는 `internal/webui/panel/`, 빌드 결과는 지금과 같은 `internal/webui/panelweb/`** 입니다. `assets.go`, Pages 배포, 릴리스의 데모 tar가 같은 디렉터리를 계속 씁니다. 서버는 정적 파일 라우트만 바뀌고 CSP는 그대로 둡니다([§6](#6-빌드와-임베드)).
+- **소스는 `internal/webui/panel/`, 빌드 결과는 (6단계부터) 지금과 같은 `internal/webui/panelweb/`** 입니다. `assets.go`, Pages 배포, 릴리스의 데모 tar가 같은 디렉터리를 계속 씁니다. 서버는 정적 파일 라우트만 바뀌고 CSP는 그대로 둡니다([§6](#6-빌드와-임베드)).
 - **Stratum에 없는 것**(차트, 미터, 로그 뷰어, 설명 목록, 알림 띠, 복사 필드, 단계 표시, 영어 기본 문구)은 우선 패널 안의 작은 로컬 컴포넌트로 만들고, 범용인 것만 Stratum에 제안합니다([§8](#8-stratum에-없는-것)).
 
 ## 1. 현재 패널 기능 목록
@@ -55,16 +55,16 @@
 | --- | --- | --- |
 | **Overview** `#/overview` · 스냅샷(`fleet:read`) · 샘플 있음 | 용량(실행 중, 대기 = 준비+재시도, 가장 긴 대기, 슬롯 사용 = 사용/한도, 여유·예약·미할당), 호스트 상태(전체·준비·오프라인·사용 불가·유지 보수, K8s면 "Runtime targets"), GitHub 연결(저장소 범위, 공개 저장소 허용, App 연결 증거, 마지막 웹훅, 마지막 폴링/실패), 첫 작업 체크리스트 3단계 + 설정 안내 링크(`README#verify-your-first-job`) + 첫 작업 GitHub 링크, 대기 작업 상위 8개와 "나머지는 대기열에서" (`pw/views/overview.js`) | ✅ 1단계. **개요**. 같은 정보에 "주의 필요" 목록을 더합니다([§4.3](#43-개요)). |
 | **Queue** `#/queue`, `#/queue?job=ID` · 스냅샷 + `GET /api/jobs/{id}`(`fleet:read`) · 샘플 있음 | 대기·배정·정리됨 3개 목록, 저장소/작업 ID 검색, 풀 필터, 표(순서, 저장소, 작업, 풀+러너 OS, 상태+재시도 시각, 이유, 대기 시간, 호스트), 상세(상태, 발견 경로, 풀, 호스트, 러너, 라벨, OS, 이미지, 재시도 시각, 이유와 재시도 이유, 단계별 시간 막대, CPU·메모리, 관찰된 사건 타임라인, GitHub 링크), 상세가 선택한 작업을 따라 목록을 옮겨 다님, 사라지면 토스트 (`pw/views/queue.js:1-180`, `pw/views/jobinsight.js`) | ✅ 2단계. **작업** 탭 "대기", "실행 중", "정리됨" + 작업 상세 칸([§4.4](#44-작업)). |
-| 〃 재시도·취소 · `jobs:write`(operator) | `POST /api/jobs/{id}/retry`(재시도 예정 작업만), `POST /api/jobs/{id}/cancel`, 둘 다 확인 후, 끝나면 새로 고침 (`pw/fleet.js:25-55`) | ✅ 3단계. 작업 상세 칸 아래(`PaneFooter`)의 "지금 재시도"·"작업 취소"와 칸이 열려 있을 때의 팔레트 명령. ⏳ 대기 탭 행의 `Menu`는 5단계로 넘깁니다([§7.5](#75-3단계-operator-동작-확인-결과), [§7.6](#76-4단계-관리-화면-확인-결과)). |
+| 〃 재시도·취소 · `jobs:write`(operator) | `POST /api/jobs/{id}/retry`(재시도 예정 작업만), `POST /api/jobs/{id}/cancel`, 둘 다 확인 후, 끝나면 새로 고침 (`pw/fleet.js:25-55`) | ✅ 3단계. 작업 상세 칸 아래(`PaneFooter`)의 "지금 재시도"·"작업 취소"와 칸이 열려 있을 때의 팔레트 명령. ✅ 5단계. 대기 탭 행의 `Menu`도 같은 동작입니다([§7.7](#77-5단계-프런트엔드-확인-결과)). |
 | 〃 "Missing a job?" 저장소 점검 · `admin` | `POST /api/diagnose {repository}`, 보고서 `<pre>`. admin이 아니면 `runquill diagnose OWNER/REPO` 안내만 (`pw/views/queue.js:190-206`). 샘플에서는 숨김 | ✅ 2·3단계. 안내 문구(`runquill diagnose OWNER/REPO`)는 대기 탭이 비었을 때 모든 역할에 보입니다. admin에게는 **작업** 머리글 동작과 빈 대기 탭의 "저장소 점검" 버튼, 팔레트 명령이 같은 `Dialog`(`POST`, 10초)를 엽니다. 샘플에서는 숨김. |
 | 〃 명령: 대기·배정·정리됨 보기, 필터 지우기 | `pw/views/queue.js:281-293` | ✅ 2단계. 탭 전환 명령 4개(대기·실행 중·정리됨·기록), 필터 지우기. |
 | **Jobs** `#/jobs`, `#/jobs?job=ID` · `GET /api/jobs?limit&repository&outcome&since&before`, `GET /api/jobs/{id}`(`fleet:read`) · 샘플 있음 | 7일 기록, 저장소·결과(대기/실행/완료/실패)·기간(1시간/24시간/7일) 필터, 25개씩 "이전 작업 더 보기"(`before` 커서), 새로 고침(필터와 열린 작업 유지), 표(저장소 GitHub 링크, 작업 ID+라벨, 결과+이유+재시도 시각, 풀+OS, 호스트, 대기·시작·종료 시각, 대기 시간), 상세(결과, 풀, 호스트, 라벨, OS, 시각, 단계 시간, 리소스), 대기 작업 재시도·취소(operator) (`pw/views/jobs.js`) | ✅ 2·3단계. **작업** 탭 "기록". 같은 상세 칸. 대기 작업의 재시도·취소는 칸 아래(행 버튼 대신). |
 | 〃 명령: 필터 지우기, 더 보기 | `pw/views/jobs.js:218-225` | ✅ 2단계. 같음. |
 | **Runners** `#/runners`, `#/runners?runner=NAME` · 스냅샷 · 샘플 있음 | 관찰 수와 관찰되지 않은 임대 수, 표(러너, 호스트, 풀, 런타임 상태, 준비 시각, 이미지+OS, GitHub 작업 또는 "추적되지 않은 러너"), 로그 링크(operator, local·ssh만), 사라지면 토스트 (`pw/views/runners.js`) | ✅ 2·3단계. **러너** 목록 + 러너 상세 칸. operator 이상(과 샘플)에게 "로그" 열의 "로그 보기" 링크(local·ssh만). |
-| **Logs** `#/logs`, `#/logs?runner=NAME` · `GET /api/runners/{name}/logs?tail&follow=1`(`browser` + operator, 토큰 불가) · 샘플 있음(고정 줄) | 작업 중인 러너 목록, 줄 수(100~2000), 따라가기, 줄바꿈, 일시 정지(대기 줄 수), 중지, 다시 연결, 복사, 다운로드, 지우기, 최신으로, 5000줄·줄당 4000자 제한과 버린 줄 안내, ANSI 제거, 타임스탬프 표시, 15분 따라가기 한도, 러너가 끝나면 스트림 종료, K8s·agent:// 불가 안내, 상태 문구(연결 중, 마지막 N줄, 따라가는 중, 8 MiB 한도에서 멈춤, 15분 한도, 스트림 끊김, 러너 종료), 연결 끊김·429·502·503일 때만 [다시 연결] (`pw/views/logs.js`) | ✅ 3단계. **러너** 상세 칸의 "로그" 탭(`#/runners/NAME/logs`). 별도 메뉴 항목은 없앱니다([§2.1](#21-설계-원칙과-바뀌는-점)). ⏳ 폰에서 도구를 `Menu` 하나로 접는 것은 5단계로 넘깁니다([§7.5](#75-3단계-operator-동작-확인-결과), [§7.6](#76-4단계-관리-화면-확인-결과)). |
+| **Logs** `#/logs`, `#/logs?runner=NAME` · `GET /api/runners/{name}/logs?tail&follow=1`(`browser` + operator, 토큰 불가) · 샘플 있음(고정 줄) | 작업 중인 러너 목록, 줄 수(100~2000), 따라가기, 줄바꿈, 일시 정지(대기 줄 수), 중지, 다시 연결, 복사, 다운로드, 지우기, 최신으로, 5000줄·줄당 4000자 제한과 버린 줄 안내, ANSI 제거, 타임스탬프 표시, 15분 따라가기 한도, 러너가 끝나면 스트림 종료, K8s·agent:// 불가 안내, 상태 문구(연결 중, 마지막 N줄, 따라가는 중, 8 MiB 한도에서 멈춤, 15분 한도, 스트림 끊김, 러너 종료), 연결 끊김·429·502·503일 때만 [다시 연결] (`pw/views/logs.js`) | ✅ 3단계. **러너** 상세 칸의 "로그" 탭(`#/runners/NAME/logs`). 별도 메뉴 항목은 없앱니다([§2.1](#21-설계-원칙과-바뀌는-점)). ✅ 5단계. 폰 폭(≤520px)에서는 동작 버튼을 `Menu` 하나로 접습니다([§7.7](#77-5단계-프런트엔드-확인-결과)). |
 | 〃 명령: 러너별 로그 보기, 일시 정지/재개, 다시 연결, 중지, 다운로드 | `pw/views/logs.js:400-413` | ✅ 3단계. 같은 명령(러너별 로그 보기는 러너 화면 어디서나, 나머지는 로그 탭이 열려 있을 때). |
 | **Hosts & pools** `#/hosts`, `#/hosts?host=NAME` · 스냅샷 · 샘플 있음 | 호스트 표(이름+오류, 풀, 상태+이미지 상태+마지막 응답+웜 러너, 슬롯 한도·사용·예약·가능), 풀 표(준비 호스트, 사용, 예약, 가능, 한도, 웜 러너, 사용률 막대), 사라지면 토스트 (`pw/views/hosts.js:85-175`) | ✅ 2단계. **호스트** 탭 "호스트"·"풀" + 호스트 상세 칸. |
-| 〃 배정 중지/재개 · `hosts:write`(operator) | `POST /api/hosts/cordon {host, cordoned}`, 명령 "{host}에서 배정 중지/재개" | ✅ 3단계. 호스트 상세 칸 아래 동작과 팔레트 명령(확인 없음, v1과 같음). ⏳ 행 `Menu`는 5단계로 넘깁니다([§7.5](#75-3단계-operator-동작-확인-결과), [§7.6](#76-4단계-관리-화면-확인-결과)). |
+| 〃 배정 중지/재개 · `hosts:write`(operator) | `POST /api/hosts/cordon {host, cordoned}`, 명령 "{host}에서 배정 중지/재개" | ✅ 3단계. 호스트 상세 칸 아래 동작과 팔레트 명령(확인 없음, v1과 같음). ✅ 5단계. 호스트 행의 `Menu`(배정 중지/재개, admin의 워커 등록)도 있습니다([§7.7](#77-5단계-프런트엔드-확인-결과)). |
 | 〃 워커 등록 · `admin` | `agent://` 호스트에 `POST /api/hosts/{name}/enrollment`, 일회성 등록 명령과 재시작 명령, 복사, 만료 시각, 숨기기 (`pw/views/hosts.js:34-82`) | ✅ 3단계. 호스트 상세 칸의 "워커 등록"(`Dialog` 안 복사 필드). |
 | 〃 서버 리소스 · `GET /api/hosts/resources[?disk=1]`(`fleet:read`) | 용량, 슬롯, 예약 CPU·메모리, 러너 사용량, 디스크(요청 시 측정, 측정 중이면 5초마다 다시 묻기, 10분 보관 안내), agent·K8s "Not available", 30초 갱신 (`pw/views/hosts.js:290-400`) | ✅ 2단계(디스크 측정은 `GET`이라 포함). **호스트** 탭 "리소스" + 호스트 상세 칸 요약. |
 | 〃 탄력 한도 · `GET /api/elastic`(`fleet:read`) | 모드(off/observe/apply), 주기, 호스트별 여유·빌려준 CPU·메모리·잡아 둔 슬롯, 최근 결정(시각, 러너, 자원, 변화, 이유, 적용 여부·오류), 꺼져 있으면 설정 안내, 보고서 주기로 갱신 (`pw/views/hosts.js:180-288`) | ✅ 2단계. **호스트** 탭 "탄력 한도". |
@@ -79,9 +79,9 @@
 | 〃 API 토큰 · `browser`(모든 역할, 세션만) | `GET /api/tokens`, `POST /api/tokens {name, scope, days}`, `DELETE /api/tokens/{id}`: 범위 3개(viewer는 `fleet:read`만 선택 가능), 1~90일, 비밀값 한 번 표시와 복사, 폐기 확인 (`pw/views/team.js:24-90`) | ✅ 4단계. **API 토큰** 화면(모든 역할, 사용자 메뉴). |
 | **Settings** `#/settings` · `GET`/`PUT /api/settings`(`admin`, `panel.operations`가 있을 때만 등록) · 샘플 없음 | 전체 슬롯 한도, 폴링 주기(웹훅 상태 안내), 기본 러너 이미지, Docker 워커(주소, 워커별 한도, agent:// 읽기 전용), 워커 풀(이름, CPU, 메모리, 웜 러너, 웜 교체 분, 이미지, 허용 OS, 워커 주소, 저장소 제한, 권한 있는 DinD, 공유 빌드 캐시), 러너 이미지 카탈로그 읽기 전용, `revision` 충돌, 편집기에 없는 풀 필드 보존(`max_per_repository` 등), `privileged`가 없으면 기본값 유지, 풀 이름 중복 거부, 저장 안 한 변경이 있으면 떠나기·다시 불러오기·탭 닫기 전에 확인, 백업 화면 링크 (`pw/views/settings.js`) | ✅ 4단계. **설정** 화면([§4.7](#47-설정), [§3.6](#36-설정과-저장-안-한-변경)). 떠나기는 `SaveBar` 가드(흔들림 + "버리고 이동")입니다. `cache_writes`·`max_per_repository` 같은 편집기에 없는 풀 필드는 그대로 저장됩니다. |
 
-표시: ✅는 구현한 단계, ⏳는 5단계로 넘긴 것과 이유입니다. 4단계 뒤로 표시가 없는 행은 없습니다(1단계의 셸·개요·로그인은 §1.1과 [§7.3](#73-1단계-프런트엔드-확인-결과), 로그인 실패 이유는 [§7.6](#76-4단계-관리-화면-확인-결과)의 e2e로 확인).
+표시: ✅는 구현한 단계입니다. 5단계 뒤로 ⏳ 행은 없습니다. 표시가 없는 행도 없습니다(1단계의 셸·개요·로그인은 §1.1과 [§7.3](#73-1단계-프런트엔드-확인-결과), 로그인 실패 이유는 [§7.6](#76-4단계-관리-화면-확인-결과)의 e2e로 확인).
 
-확인 수준: 셸, Overview, Queue, Jobs, Runners, Hosts, Settings, Team, Audit는 파일 전체를 읽고 적었습니다. Logs, Usage, Backups, Migrate는 함수·요청·문구 단위로 확인했습니다. 구현 단계의 §1 점검(§7.1 5단계)은 파일 단위로 다시 합니다.
+확인 수준: 셸, Overview, Queue, Jobs, Runners, Hosts, Settings, Team, Audit는 파일 전체를 읽고 적었습니다. Logs, Usage, Backups, Migrate는 함수·요청·문구 단위로 확인했습니다. 5단계에서 v1 파일마다 다시 점검했고, 결과와 의도한 차이는 [§7.7](#77-5단계-프런트엔드-확인-결과)에 있습니다.
 
 ### 1.3 화면이 쓰지 않는 서버 라우트
 
@@ -758,7 +758,7 @@ function usePoll<T>(path: string | null, interval: (data?: T, error?: ApiError) 
 
 ## 6. 빌드와 임베드
 
-이 절은 전환이 끝난 뒤의 모습입니다. 개발 중(§7.1의 1~5단계)에는 출력 디렉터리와 embed가 다릅니다([§7.1](#71-단계) "겹치는 동안의 값").
+이 절은 6단계 정리가 끝난 뒤의 모습입니다. 그 전(§7.1의 1~5단계)에는 출력 디렉터리와 embed가 다릅니다([§7.1](#71-단계) "겹치는 동안의 값").
 
 ### 6.1 위치
 
@@ -1030,23 +1030,26 @@ React·ReactDOM과 Stratum JS의 압축 크기는 구현하면서 빌드 결과�
 | 2 읽기 화면 | 작업(4탭, 상세), 러너(정보), 호스트(4탭, 상세), 사용량(2탭) | 해당 화면의 §1 행이 모두 체크 |
 | 3 operator 동작 | 재시도·취소, 배정 중지·재개, 로그 탭, 워커 등록, 저장소 점검(admin, 2단계에서 미룸) | 〃 |
 | 4 관리 화면 | 설정(`SaveBar`, 가드), 팀, API 토큰, 감사, 백업, 이전 | 〃 |
-| 5 전환 | §1 전체 점검, 문서(영어·한국어) 갱신, `openapi.yaml`, Pages·CI 검사 수정, v2 결과를 `panelweb/`으로 옮기고 기본값으로 | 릴리스 노트에 화면 변경과 예전 주소 동작 |
-| 6 정리 | 다음 마이너 릴리스에서 v1 소스와 `RUNQUILL_PANEL_V2` 제거 | |
+| 5 전환 | 프런트엔드: §1 전체 점검, 남은 행 `Menu`, Stratum 제안 정리([§7.7](#77-5단계-프런트엔드-확인-결과)). Go·CI: v2를 기본 패널로 서빙하고 v1은 한 릴리스 동안 선택해서 켜는 패널로 남김, 문서(영어·한국어) 갱신, `openapi.yaml`, Pages·데모 tar를 v2로, CI에 e2e | 릴리스 노트에 화면 변경, 예전 주소 동작, v1로 돌아가는 방법 |
+| 6 정리 | 다음 마이너 릴리스에서 v1 소스 삭제, v2 결과를 `panelweb/`으로 옮김, 선택 스위치 제거 | |
 
-**겹치는 동안의 값**(1~5단계, Q2를 권하는 대로 정했을 때):
+**5단계와 6단계의 나눔**(2026-11-28 결정). [§9 Q2](#9-열린-질문)대로 5단계는 v2를 **기본값**으로 만들고, v1은 한 릴리스 동안 선택해서 켤 수 있게 남깁니다. v1 소스 삭제, 빌드 결과를 `panelweb/`으로 옮기기, 선택 스위치 제거는 6단계입니다. 그래서 5단계 동안에도 빌드 결과는 `panelv2/`에 있고, v1 파일과 v1 번역도 그대로 있습니다. v1을 고르는 방법(환경 변수 이름 등)은 Go 단계가 정합니다.
 
-| 항목 | 겹치는 동안 | 전환 후(§6) |
-| --- | --- | --- |
-| Vite `outDir` | `../panelv2` | `../panelweb` |
-| embed | `assets.go`에 `//go:embed panelv2`와 `PanelV2()`를 더함 | `panelweb`만, `PanelV2()` 제거 |
-| 서빙 | `RUNQUILL_PANEL_V2=1`이면 라이브·`panel --demo` 모두 v2, 아니면 v1 | v2 |
-| CI 최신성 검사 경로 | `internal/webui/panelv2` | `internal/webui/panelweb` |
-| GitHub Pages, 릴리스 데모 tar | v1 | v2 |
-| 서버 정적 라우트 | v1 라우트 유지, v2일 때만 `/theme.js`·`/assets/{file}` | §6.4 |
+**단계별 값**(Q2를 권하는 대로 정했을 때):
 
-`emptyOutDir`가 v1 디렉터리를 지우지 않도록 1단계 설정은 처음부터 `panelv2`를 가리킵니다.
+| 항목 | 1~4단계 | 5단계(v2 기본, v1 선택) | 6단계 뒤(§6) |
+| --- | --- | --- | --- |
+| Vite `outDir` | `../panelv2` | `../panelv2` | `../panelweb` |
+| embed | `assets.go`에 `//go:embed panelv2`와 `PanelV2()`를 더함 | 같음 | `panelweb`만, `PanelV2()` 제거 |
+| 서빙 | `RUNQUILL_PANEL_V2=1`이면 라이브·`panel --demo` 모두 v2, 아니면 v1 | 기본은 v2, v1을 고르면 v1 | v2 |
+| CI 최신성 검사 경로 | `internal/webui/panelv2` | `internal/webui/panelv2` | `internal/webui/panelweb` |
+| GitHub Pages, 릴리스 데모 tar | v1 | v2(`panelv2/`) | v2(`panelweb/`) |
+| 서버 정적 라우트 | v1 라우트 유지, v2일 때만 `/theme.js`·`/assets/{file}` | v2 라우트가 기본, v1을 고르면 v1 라우트 | §6.4 |
+| Go 번역 테스트 | v1 `i18n.js`와 v2 JSON | 같음 | v2 JSON만 |
 
-겹치는 동안(1~5단계) Go의 번역 테스트는 v1 `i18n.js`와 v2 JSON을 둘 다 검사합니다. 서버에 새 문장을 더하는 변경은 두 곳에 번역을 넣어야 합니다.
+`emptyOutDir`가 v1 디렉터리를 지우지 않도록 1단계 설정은 처음부터 `panelv2`를 가리킵니다. 6단계에서 v1 소스를 지운 뒤에 `outDir`를 `panelweb`으로 바꿉니다.
+
+v1이 남아 있는 동안(1~5단계) Go의 번역 테스트는 v1 `i18n.js`와 v2 JSON을 둘 다 검사합니다. 서버에 새 문장을 더하는 변경은 두 곳에 번역을 넣어야 합니다.
 
 ### 7.2 테스트
 
@@ -1243,6 +1246,7 @@ lockfile에는 Linux용 `@rolldown/binding-linux-*`와 `lightningcss-linux-*`가
   - 첫 화면은 3.9 KB 늘어 132.8 KB입니다. `demo-*`는 여전히 정적 import에 없습니다.
   - Go 쪽 "임베드된 파일 참조" 검사는 따옴표 종류와 상관없이 `./(panel|chunk|demo)-…`를 찾으므로 영향이 없습니다.
   - 1단계 기록의 "진입 청크는 정적 import가 없습니다"는 더 이상 맞지 않습니다.
+  - 5단계에서 Vite 설정 한 줄(`$initial` 그룹)로 해결했습니다. 진입 청크는 다시 정적 import가 없습니다([§7.7](#77-5단계-프런트엔드-확인-결과)).
 - **팔레트에서 연 확인의 포커스.** 팔레트 명령이 연 `ConfirmDialog`를 닫으면, 원래 포커스를 돌려받을 팔레트 입력란이 이미 없거나 닫히는 중입니다. Firefox에서는 닫히는 `<dialog>` 안에 남아 있습니다. 그래서 포커스가 `<body>`로 떨어졌습니다.
   - `confirm()`에 `returnFocus`를 더했습니다. 닫은 뒤 포커스가 `<body>`나 닫힌 `<dialog>` 안에 있으면 그 요소(칸 아래 같은 버튼)로 옮깁니다.
   - 배정 중지 팔레트 명령은 대화상자가 없어 포커스를 옮기지 않습니다.
@@ -1259,7 +1263,7 @@ lockfile에는 Linux용 `@rolldown/binding-linux-*`와 `lightningcss-linux-*`가
 
 - 눈으로 본 확인(스크린샷)은 Chromium만 했습니다. Firefox와 WebKit은 e2e 스위트만 돌렸습니다.
 - 로그 출력 영역의 키보드 확인은 프로그램으로 포커스를 준 것까지입니다. 화살표·Page Up/Down 스크롤은 손으로 확인하지 않았습니다.
-- 진입 청크가 공유 청크 2개를 정적으로 부르게 된 Rolldown의 정확한 규칙은 찾지 않았습니다.
+- 진입 청크가 공유 청크 2개를 정적으로 부르게 된 Rolldown의 정확한 규칙은 찾지 않았습니다(5단계에서 설정으로 해결, [§7.7](#77-5단계-프런트엔드-확인-결과)).
 - 15분 따라가기 한도와 8 MiB 한도 문구, 러너가 끝나 스트림이 닫히는 경우는 실제 서버로 확인하지 않았습니다. 문구 분기는 v1 코드를 그대로 옮겼습니다.
 - 스크린 리더로 낭독을 듣지는 않았습니다. 역할과 이름만 e2e로 확인했습니다.
 
@@ -1349,21 +1353,97 @@ lockfile에는 Linux용 `@rolldown/binding-linux-*`와 `lightningcss-linux-*`가
 - 눈으로 본 확인은 Chromium만 했습니다. 스크린 리더로 듣지는 않았습니다.
 - 확인 뒤 포커스 복귀는 워커 제거만 e2e로 봤습니다. 풀 제거, 토큰 폐기, 역할 변경, 사용 중지는 같은 `confirm({ returnFocus })` 경로입니다.
 
-**5단계에 넘기는 것.**
+**5단계와 6단계에 넘기는 것.**
 
-v2를 기본값으로 만들기 위해 5단계가 할 일입니다(§6, §7.1 "겹치는 동안의 값" 표).
+처음에는 아래를 모두 5단계에 두었습니다. [§7.1](#71-단계)의 나눔에 따라 1~3은 6단계로 옮겼고, 8·9는 [§7.7](#77-5단계-프런트엔드-확인-결과)에서 끝냈습니다.
 
-1. **출력 옮기기.** `vite.config.ts`의 `outDir`를 `../panelweb`으로 바꿉니다. v1 소스(`panelweb/*.js`, `views/`, `demo/`, `i18n.js`, CSS)는 `emptyOutDir` 전에 지우거나, 6단계까지 둘 경우 다른 곳으로 옮깁니다. `panelv2/`는 지웁니다. `.gitattributes`의 생성 표시와 README의 경로도 바꿉니다.
-2. **서빙 전환.** `internal/webui/assets.go`에서 `//go:embed panelv2`와 `PanelV2()`를 지우고 `panelweb`만 남깁니다. `internal/app/panel.go`에서 `RUNQUILL_PANEL_V2` 분기를 없애고 §6.4의 정적 라우트(`/`, `/theme.js`, `/assets/{file}`, 라이브에서 `demo-*` 404)만 남깁니다. v1의 `/views/*.js`·`/demo/*.js` 라우트도 지웁니다. `TestPanelRoutesAndFirstJobEvidence`와 임베드 참조 검사도 같이 바꿉니다.
-3. **번역 테스트.** Go의 `panelTranslations`에서 v1 `i18n.js` 읽기를 지우고 v2 JSON만 검사합니다. 서버 문장의 번역은 한 곳(`ko.json`, `server-patterns.json`)에만 넣습니다.
-4. **CI.** 최신성 검사 경로를 `internal/webui/panelweb`으로 바꿉니다(§6.5). `panel` 작업에 `npx playwright install --with-deps chromium`과 `npm run e2e`를 더합니다(Go가 필요함). 서버 라우트를 쓰는 다른 검사도 확인합니다.
-5. **Pages와 데모 tar.** GitHub Pages 배포와 릴리스의 데모 tar가 새 `panelweb/`(`index.html`, `theme.js`, `assets/`)를 올리는지 확인합니다. 해시 라우팅이라 서버 대체 라우트는 필요 없습니다.
-6. **문서.** `docs/panel.md`·`docs/panel.ko.md`를 새 화면 구성과 주소로 고칩니다: 작업 탭, 러너 로그 탭, API 토큰 화면, 설정 가드의 바뀐 동작, 예전 주소 표(§2.4), 지원 브라우저(§9 Q7). `docs/development.md`의 패널 빌드, README의 패널 설명(설치·첫 작업 앵커는 유지), `internal/webui/panel/README.md`의 출력 경로도 고칩니다. 릴리스 노트에는 화면 변경과 예전 주소 동작을 적습니다.
-7. **`api/openapi.yaml`.** 패널이 쓰는 응답 필드와 맞는지 확인합니다. 특히 `expires_at`·`occurred_at`이 Unix 초이고, `/api/migrate/preview`의 `files[].jobs`가 `null`일 수 있습니다.
-8. **§1 전체 점검**(파일 단위)과 남은 ⏳ 항목:
-   - 대기 탭 행과 호스트 행의 `Menu`. `DataTable`의 `onRowAction`과 셀 안 버튼의 충돌을 확인한 뒤 넣거나, Stratum 행 동작 열을 기다린다고 기록합니다.
-   - 폰 로그 도구 `Menu`.
-9. **Stratum 제안 정리**(§8과 §7.4~7.6): `TagInput`의 blur 추가, `NumberInput`·`DatePicker` 문구 prop, `DataTable` 행 높이와 현재 행, 행 동작 열.
+1. **(6단계) 출력 옮기기.** `vite.config.ts`의 `outDir`를 `../panelweb`으로 바꿉니다. 그 전에 v1 소스(`panelweb/*.js`, `views/`, `demo/`, `i18n.js`, CSS)를 지웁니다. `panelv2/`는 지웁니다. `.gitattributes`의 생성 표시와 README의 경로도 바꿉니다.
+2. **(6단계) 서빙 정리.** `internal/webui/assets.go`에서 `//go:embed panelv2`와 `PanelV2()`를 지우고 `panelweb`만 남깁니다. `internal/app/panel.go`에서 v1을 고르는 분기를 없애고 §6.4의 정적 라우트(`/`, `/theme.js`, `/assets/{file}`, 라이브에서 `demo-*` 404)만 남깁니다. v1의 `/views/*.js`·`/demo/*.js` 라우트도 지웁니다. `TestPanelRoutesAndFirstJobEvidence`와 임베드 참조 검사도 같이 바꿉니다.
+3. **(6단계) 번역 테스트.** Go의 `panelTranslations`에서 v1 `i18n.js` 읽기를 지우고 v2 JSON만 검사합니다. 서버 문장의 번역은 한 곳(`ko.json`, `server-patterns.json`)에만 넣습니다.
+4. **(5단계) 기본값 전환과 CI.** v2를 기본으로 서빙하고, v1은 한 릴리스 동안 고를 수 있게 남깁니다. 최신성 검사 경로는 6단계까지 `internal/webui/panelv2`입니다(§6.5). `panel` 작업에 `npx playwright install --with-deps chromium`과 `npm run e2e`를 더합니다(Go가 필요함). 서버 라우트를 쓰는 다른 검사도 확인합니다.
+5. **(5단계) Pages와 데모 tar.** GitHub Pages 배포와 릴리스의 데모 tar가 v2 결과(`index.html`, `theme.js`, `assets/`)를 올리게 합니다. 6단계까지는 `panelv2/`에서 가져옵니다. 해시 라우팅이라 서버 대체 라우트는 필요 없습니다.
+6. **(5단계) 문서.** `docs/panel.md`·`docs/panel.ko.md`를 새 화면 구성과 주소로 고칩니다: 작업 탭, 러너 로그 탭, API 토큰 화면, 설정 가드의 바뀐 동작, 예전 주소 표(§2.4), 지원 브라우저(§9 Q7), v1로 돌아가는 방법. `docs/development.md`의 패널 빌드, README의 패널 설명(설치·첫 작업 앵커는 유지)도 고칩니다. 릴리스 노트에는 화면 변경과 예전 주소 동작을 적습니다. `internal/webui/panel/README.md`의 출력 경로는 6단계에서 고칩니다.
+7. **(5단계) `api/openapi.yaml`.** 패널이 쓰는 응답 필드와 맞는지 확인합니다. 특히 `expires_at`·`occurred_at`이 Unix 초이고, `/api/migrate/preview`의 `files[].jobs`가 `null`일 수 있습니다.
+8. ~~§1 전체 점검과 남은 ⏳ 항목~~: [§7.7](#77-5단계-프런트엔드-확인-결과)에서 끝냈습니다.
+9. ~~Stratum 제안 정리~~: [§8.1](#81-stratum-제안-목록)에 있습니다.
+
+### 7.7 5단계 프런트엔드 확인 결과
+
+2026-11-28. 5단계 가운데 프런트엔드 몫입니다. Go 코드, CI, 서빙 스위치는 바꾸지 않았습니다. 그것은 Go·CI 단계의 몫입니다([§7.6](#76-4단계-관리-화면-확인-결과) "5단계와 6단계에 넘기는 것" 4~7).
+
+**만든 것.**
+
+- **행 `Menu`**(`src/components/RowMenu.tsx`). 칸 아래(`PaneFooter`)·팔레트와 같은 동작, 같은 역할 제한, 같은 확인과 토스트입니다.
+  - 대기 탭(operator 이상): "지금 재시도"(재시도 예정일 때만), "작업 취소"(위험 확인). 확인·요청·토스트는 `JobDetail.tsx`의 `jobActions`·`askJobAction`·`applyJobAction` 하나를 칸과 같이 씁니다. 실행 중·정리됨·기록 탭에는 없습니다. v1도 러너 없이 기다리는 작업에만 동작이 있었습니다.
+  - 호스트 표(operator 이상): "배정 중지/재개"(확인 없음, v1과 같음). admin에게는 `agent://` 호스트에 "워커 등록"도 있습니다. 등록 대화상자는 화면에 하나(`useEnrollment`)만 두고 칸 버튼과 메뉴가 같이 씁니다.
+  - viewer와 샘플 패널에는 열 자체가 없습니다(`can()`). 열 머리글은 낭독 전용("Actions"/"관리")이고 폭은 56px입니다. 폰에서는 표를 가로로 스크롤한 끝에 있고, 메뉴는 Stratum의 아래 시트로 열립니다.
+- **`DataTable`과의 충돌 처리.** Stratum 0.1.1에는 행 동작 열이 없어 셀 안에 `Menu`를 넣었습니다([§8.1](#81-stratum-제안-목록) S5).
+  - 클릭: 메뉴 popover는 행 안에 그려집니다. `DataTable`은 버튼·링크가 아닌 곳의 클릭을 행 클릭(`onRowAction`)으로 받습니다. 그래서 메뉴의 여백이나 폰 시트를 누르면 칸이 열렸습니다. 셀에서 클릭 전파를 멈춥니다. 키(Enter, 화살표)는 `DataTable`이 행 자신에서 온 것만 보므로 충돌하지 않습니다.
+  - 탭 순서: 행들은 탭 정지 하나(roving)입니다. 메뉴 버튼은 모두 `tabIndex=-1`로 시작하고, 표의 `onFocus`(`rowMenuTabs`)가 포커스를 받은 행의 버튼만 탭 순서에 넣습니다. 표가 더하는 탭 정지는 행과 그 행의 메뉴 버튼 둘뿐입니다. Tab은 버튼으로, Shift+Tab은 행으로 갑니다. 스냅샷 갱신 뒤와 현재 행이 빠진 뒤에도 그대로입니다(e2e).
+  - 칸이 열린 채: `SplitView`는 열린 popover 안의 Esc와 J/K를 무시하고, 셸의 `/`는 `[role=menu]` 안을 무시합니다. 그래서 Esc는 메뉴만 닫고 칸은 남습니다. 메뉴 안의 글자는 메뉴의 typeahead입니다(e2e).
+  - 동작 뒤 포커스: `Menu.Item`은 메뉴를 닫고 트리거로 포커스를 돌린 뒤 실행합니다. 확인 대화상자는 그 트리거로 돌아갑니다. 취소가 성공하면 행이 빠지며 `inert`가 되어 포커스를 잃습니다. 그래서 `refocus`가 `[inert]` 안의 포커스도 잃은 것으로 보게 했고, 포커스는 표의 현재 행(없으면 선택된 탭)으로 갑니다. 그 작업의 칸이 열려 있었으면 칸을 닫습니다.
+- **폰 로그 도구 `Menu`.** 폭 520px 이하(Stratum `Menu`가 아래 시트가 되는 폭)에서 두 번째 도구 줄을 "Actions"/"관리" 메뉴 하나로 접습니다. 접히는 것은 일시 정지/재개, 중지, 다시 연결, 복사, 다운로드, 지우기이고, 표시 조건은 버튼과 같습니다(중지는 따라가는 중에만, 다시 연결은 그때만). 줄 수·따라가기·줄바꿈은 그대로 둡니다(Stratum `Menu`에는 체크 항목이 없음). 둘 중 하나만 CSS로 보이고, 숨은 쪽은 `display: none`이라 접근성 트리에도 없습니다. 시트 안에서 Esc는 메뉴만 닫습니다(e2e). 기준 폭을 SplitView 시트(900px)가 아니라 520px로 잡은 것은, 그 사이 폭에서는 버튼 6개가 한두 줄에 들어가기 때문입니다.
+- **첫 화면 +4 KB 조사와 수정.** [§7.5](#75-3단계-operator-동작-확인-결과)에서 진입 청크가 공유 청크를 정적으로 부르게 된 원인입니다.
+  - 원인: Rolldown 1.3의 자동 분할은 진입과 화면 청크가 함께 쓰는 모듈(React, 셸, `format`·`fleet`·`router`, Stratum 내부)을 공통 청크로 빼고, 진입이 그 청크를 정적으로 import합니다. 첫 화면에 받는 모듈은 같습니다. 다만 청크 경계 때문에 gzip 문맥이 끊기고 import·export 목록이 붙습니다.
+  - 수정: `codeSplitting.groups`에 `{ name: "initial", tags: ["$initial"], priority: -1 }`을 더했습니다. 진입이 정적으로 닿는 모듈만 잡는 그룹이고, 설치된 Rolldown은 이 그룹을 진입 청크에 합칩니다. 진입은 다시 정적 import가 없고, 화면 청크가 진입을 import합니다(1단계와 같은 모양).
+  - 결과: 첫 화면 133.8 KB → 130.8 KB. `demo-*` 분리와 샘플 표식 검사는 그대로입니다.
+  - 그룹이 진입에 합쳐지는 것은 설치된 Rolldown의 동작입니다. Vite나 Rolldown을 올린 뒤 첫 화면이 다시 늘면 이 그룹부터 봅니다.
+  - 비교한 다른 설정: `experimentalInlineCommonChunks`와 `strictExecutionOrder`는 진입을 44바이트짜리 껍데기로 만들고 코드를 공통 청크로 옮겼습니다. `size.mjs`는 진입의 import를 한 단계만 따라가므로 그 숫자(118~121 KB)는 실제 첫 화면이 아닙니다.
+
+**§1 점검 방법.** 먼저 기계적으로 비교하고, 그 목록을 들고 v1 파일을 하나씩 읽었습니다.
+
+1. 문구: `ko.json` 키 가운데 `src`가 쓰지 않는 것 282개에서 Go 서버 문장을 빼면 76개입니다. 하나씩 v1에서 어디에 쓰였는지 찾았습니다.
+2. API: v1과 v2의 메서드, 경로, 쿼리, 본문 키, 제한 시간(기본 7초, 저장소 점검·설정 저장·팀 추가 10초, 이전 95초, 백업 검증 30분+10초, 스냅샷 5초)이 같습니다. v2에만 있는 것은 러너 로그 `stream`과 `/api/events`(v1 `app.js`에도 있음)입니다.
+3. 역할: v1 `routes`의 `role`·`demo`와 `ctx.can`을 `routes.ts`와 `can()`에 맞춰 봤습니다. 같습니다. v1 `#/team`은 모든 역할에 토큰을 보였으므로 admin이 아니면 `#/tokens`로 바꿔 엽니다(`router.ts`).
+4. 팔레트 명령: v1 화면별 `commands()` 전부가 `useScreenCommands`에 있습니다. "Show assigned jobs"만 "Show running jobs"로 바뀌었습니다.
+5. 샘플 fixture: v1 `demo/*.js`의 GET 경로 9개(`jobs`, `jobs/{id}`, `hosts/resources`, `elastic`, `usage`, `usage/rightsizing`, `backups/status`, `migrate/status`, `migrate/preview`)와 러너 로그가 `fixtures.ts`에 있습니다.
+6. 예전 주소: v1이 받던 `?job=`, `?runner=`, `?host=`, `#/queue`, `#/logs`는 `router.ts`의 `legacy`가 모두 새 주소로 바꿉니다(단위 테스트).
+
+**§1 점검 결과**(v1 파일마다).
+
+| v1 파일 | 확인한 것 | 고친 것 | 의도한 차이 |
+| --- | --- | --- | --- |
+| `index.html`, `theme.js`, `i18n.js` | 건너뛰기 링크, 로그인 화면, 언어 링크와 `runquill-language`, 테마 키 2개, 번역과 서버 문장 | — | `ko.json`은 v1 `words`를 그대로 옮겨서, v2가 쓰지 않는 v1 화면 문장이 남아 있습니다(위 76개 중 서버 문장이 아닌 것). v1 `i18n.js`를 지우는 6단계에서 같이 정리합니다. |
+| `app.js` | 라우트 표, 역할·샘플 표시, 사이드바 개수, 연결 상태 기계, 상단 알림, 팔레트, 로그인·세션·로그아웃, 실패 이유 5개, 샘플 시나리오 | — | 팔레트의 "입력했을 때만" 항목과 결과 수 안내는 G7. 상단 언어·테마 상자는 사용자 메뉴로(§1.4). |
+| `ui.js` | 숫자·기간·바이트·시각·상대 시간 형식, 상태 이름과 색, 확인, 토스트, 복사, 표 | — | 날짜 칸에 마우스를 올렸을 때 보이던 전체 날짜(`title`)가 없습니다. 타임라인은 `<time dateTime>`입니다. 토스트 닫기 같은 부품 문구는 Stratum의 것입니다. |
+| `api.js` | 오류 해석(문장·JSON), 401 콜백, 시간 초과·네트워크 문구, 샘플 거부, `download` | — | — |
+| `fleet.js` | `runnerState`, `runnerRows`, `jobActionButtons`(대상, 확인 문구, 토스트), `summary` | — | — |
+| `demo.js`, `demo/*.js` | 시나리오 3개, 시나리오가 여는 주소, GET fixture | — | — |
+| `views/overview.js` | 용량, 호스트, GitHub 연결, 첫 작업 단계, 대기 작업 상위 8개 | — | "주의 필요" 목록이 더해졌습니다(§4.3). |
+| `views/queue.js` | 3목록과 개수, 검색(앞의 `#` 무시), 풀 필터, 표 열, 상세, 재시도·취소, 저장소 점검(10초), 명령 | — | 순서 열은 대기 탭에만 있습니다. 딥 링크한 작업이 사라질 때의 토스트 대신 칸이 기록 응답으로 이어집니다(§7.4). 저장소 점검 안내는 빈 대기 탭에, admin 폼은 머리글 버튼의 대화상자에 있습니다(§1). |
+| `views/jobs.js` | 필터 3개, 25개씩 `before`, 새로 고침, 표 열, 상세, 명령 | **"완료된 작업은 7일 동안 보관합니다. 작업 로그는 GitHub에 남습니다." 안내가 없었습니다.** 기록 탭 위에 둡니다(e2e). | 기록 행의 재시도·취소 버튼은 칸 아래로 옮겼습니다(§1). "필터 지우기" 명령은 필터가 있을 때만 나옵니다. |
+| `views/jobinsight.js` | 단계 막대와 범례, 리소스 미터, 메모리 종료 | — | — |
+| `views/runners.js` | 요약, 표 열, "로그 보기"(operator·샘플, local·ssh만) | — | 사라진 러너의 토스트 대신 칸에 문장이 나옵니다. |
+| `views/logs.js` | 줄 수, 따라가기, 줄바꿈, 일시 정지, 중지, 다시 연결 조건, 복사, 다운로드, 지우기, 상한과 상태 문구, 명령 | **로그 칸 머리에 있던 작업과 "GitHub의 단계 로그" 링크가 없었습니다.** 로그 탭 위에 "저장소 #ID · 호스트 · GitHub의 단계 로그"를 둡니다(e2e). | 별도 화면과 러너 고르는 표 대신 러너 칸의 탭입니다(§1.4). viewer는 안내 문장 대신 탭이 없습니다. |
+| `views/hosts.js` | 호스트·풀 표, 배정 중지/재개, 워커 등록, 리소스(디스크 측정, 30초·5초), 탄력 한도 | — | 사라진 호스트의 토스트 대신 칸에 문장이 나옵니다. |
+| `views/usage.js` | 범위(프리셋, 직접 입력, 400일), 묶음, 저장소, 지표, 합계, 차트, 표, 적정 크기, 명령 | — | 범위 선택 상자 대신 `SegmentedControl`, 날짜는 네이티브 입력(§7.4). |
+| `views/settings.js` | 필드 전부, 본문 조립 규칙, `revision`, 다시 불러오기 확인, 탭 닫기 경고, 백업 링크 | — | 떠나기 확인 대신 `SaveBar` 가드(§1.4). `TagInput`·`NumberInput` 대신 텍스트·숫자 입력(§7.6). |
+| `views/team.js` | 추가(숫자 ID와 로그인), 역할 변경, 사용 중지, 페이지, 토큰 범위·기간·한 번 표시·폐기 | — | 팀과 API 토큰을 나눴습니다(§1.4). |
+| `views/audit.js` | 동작 필터 10개, 행위자, 50개씩, 새로 고침, 표 열 | — | 필터가 주소에 남습니다. 영어 페이지에서 동작 코드를 한 번만 보입니다(§7.6). |
+| `views/backups.js` | 일정, 마지막 실행, 켜는 방법, 검증(30분), 다운로드와 진행률, 샘플 문구 | — | — |
+| `views/migrate.js` | 권한, 매핑 검증, 미리보기(95초), diff, PR 열기, `stale`·`branch_exists`, 샘플 | — | 매핑 표 머리글("Jobs that run on", "Moves to") 대신 칸마다 이름("Runs-on labels, mapping {n}"). 단계 머리띠 대신 블록 제목(§7.6). |
+
+**확인한 것.**
+
+- `npm run typecheck`, `npm test`(81개), `npm run build`(두 번 빌드해 `diff -r` 같음, Docker의 Linux arm64 빌드와도 같음), `npm run size`, `go test ./...`.
+- **Playwright e2e**(`npx playwright test`, 38개 × Chromium·Firefox·WebKit = 113개 통과, WebKit에서 1개 건너뜀, §7.6과 같음). 새 파일 `e2e/menus.e2e.ts`(5개):
+  - 대기 행: Tab이 현재 행의 메뉴 버튼에만 닿고 Shift+Tab으로 돌아옴, ↓ 뒤 다른 행의 버튼, 키보드로 연 메뉴의 항목(재시도 예정이면 둘), End와 Enter로 취소 → 위험 확인 → `POST` 하나 → 토스트, 행이 빠진 뒤 포커스는 표의 현재 행, 칸은 열리지 않음.
+  - 칸이 열린 채 다른 행의 메뉴: 메뉴 여백 클릭이 행 클릭이 아님, 메뉴 안 `j`가 칸 이동이 아님, Esc는 메뉴만 닫고 포커스는 트리거로.
+  - viewer: 대기 탭과 호스트 표에 메뉴 없음.
+  - 호스트 행: 배정 중지 → 본문 `{host, cordoned}` → 토스트 → 포커스는 트리거, 다시 열면 "배정 재개". admin의 워커 등록 대화상자(포커스 진입, 닫으면 트리거로).
+  - 폰 폭(390×844): 로그 도구 버튼이 숨고 메뉴 하나, Esc는 메뉴만(시트 유지), 지우기, 다운로드 파일 이름.
+  - 매 테스트에서 CSP 위반과 콘솔 오류가 0건입니다.
+- **눈으로 본 것.** Go 데모 서버(실제 CSP)를 라이브 모드로 가로채 Chromium으로 봤습니다. 영어·한국어 × 밝게·어둡게로 칸이 열린 대기 행 메뉴, 호스트 행 메뉴(admin, `agent://`), 폰 폭의 로그 메뉴 시트와 호스트 행 메뉴 시트를 확인했습니다. 페이지 가로 넘침이 없고, 영어 페이지에 한글이 없습니다(스크립트로 확인).
+
+**크기.** 첫 화면 130.8 KB / 150 KB(§7.6 뒤 133.8 KB), CSS 28.7 KB / 35 KB, 가장 큰 지연 청크는 한국어 카탈로그 25.7 KB / 30 KB(새 문장 없음), `panelv2/` 전체 752.9 KB / 1200 KB.
+
+**새 문장.** 없습니다. 메뉴 이름은 기존 "Actions"와 "{action} for job {id}", "{action} on {host}"이고, 되살린 안내는 v1 문장입니다.
+
+**확인하지 않은 것.**
+
+- Linux amd64 빌드는 이번에 돌리지 않았습니다. Linux arm64(Docker `node:26.13.1-bookworm-slim`, `npm ci` 뒤)는 macOS 결과와 같았습니다.
+- 눈으로 본 확인은 Chromium만 했습니다. Firefox와 WebKit은 e2e만 돌렸습니다. 스크린 리더로 듣지는 않았습니다.
+- 행 메뉴의 "지금 재시도"와 호스트 메뉴의 실패(403) 경로는 칸 버튼과 같은 함수라 e2e를 따로 두지 않았습니다.
 
 ## 8. Stratum에 없는 것
 
@@ -1389,6 +1469,27 @@ Stratum의 컴포넌트 표(README "컴포넌트")와 `st/` 소스를 기준으�
 | G16 | 흐르는 상대 시간("3초 전") | `format.relative` + 1초 타이머 | **로컬** `useNow` + `format.ts` | 패널 고유 문구 |
 
 Stratum이 이미 덮는 것(새로 만들지 않음): 앱 틀과 폰 서랍(`AppShell`, `Nav`), 목록-상세와 미저장 확인(`SplitView`), 표(`DataTable`), 저장 바와 변경 수(`SaveBar`, `useFormDirty`), 확인(`ConfirmDialog`), 대화상자(`Dialog`), 메뉴(`Menu`), 탭(`Tabs`, `SegmentedControl`), 폼 부품(`Field`, `Input`, `NumberInput`, `SearchInput`, `Select`, `Checkbox`, `Switch`, `TagInput`, `Fieldset`, `FormSection`), 날짜 범위(`DateRangePicker`), 토스트(`toast`, `Toaster`), 팔레트(`CommandPalette`), 상태 표시(`Badge`), 로딩(`Skeleton`, `Spinner`, `Progress`), 빈 상태(`EmptyState`), 접기(`Accordion`, `Disclosure`), 아바타(`Avatar`).
+
+### 8.1 Stratum 제안 목록
+
+1~5단계를 만들며 실제로 부딪힌 것만 모았습니다. 위 G 표와 [§7.4](#74-2단계-읽기-화면-확인-결과)~[§7.7](#77-5단계-프런트엔드-확인-결과)에서 나온 것입니다. Stratum 저장소에 따로 제안하고, 들어가면 패널의 대체물을 지웁니다. 우선순위는 위에서부터입니다.
+
+| # | 겪은 문제 | 겪은 곳 | 제안하는 API |
+| --- | --- | --- | --- |
+| S1 | `TagInput`은 Enter나 쉼표를 누르지 않은 입력을 blur나 폼 제출 때 칩으로 만들지 않습니다. 그래서 마지막에 친 값이 조용히 빠진 채 저장됩니다. | 설정의 허용 OS·워커 주소·허용 저장소, 이전 매핑의 라벨. 모두 텍스트 입력으로 대신함(§7.6) | `commitOnBlur`(기본 켬): blur와 감싼 폼의 `submit` 때 남은 입력을 칩으로 추가. 추가가 검사에 걸리면 `aria-invalid`와 입력 유지 |
+| S2 | 부품 문구의 기본값이 한국어이고 전역으로 바꿀 방법이 없습니다. `DateRangePicker`는 달력의 `prevLabel`/`nextLabel`을 넘기지 않아 prop으로도 영어가 되지 않습니다. | `NumberInput`(증감 버튼, 범위 문구), `DatePicker`·`DateRangePicker`(달력), `TagInput`(칩 제거), `DataTable`(`empty`, `selectAllLabel`), `SplitView`·`ConfirmDialog`·`SearchInput` 문구를 모든 사용처에서 넘김(`src/i18n/stratum.ts`). 사용량 날짜는 네이티브 입력으로 대신함(§7.4) | 문구 공급자 `<StratumMessages value={…}>` 하나(G8)와 영어 문구 객체 `en` 내보내기. 그 전에라도 `DatePicker`·`DateRangePicker`가 달력 문구 prop(`prevLabel`, `nextLabel`, 요일·월 이름은 `Intl`)을 받아 넘기게 |
+| S3 | `DataTable`의 행 높이가 `--data-table-row` 하나로 고정이라 보조 줄이 있는 셀이 잘립니다. | 작업·호스트·리소스·탄력 한도·사용량 표. `rows-2`·`rows-3` 클래스로 높임(§7.4) | `rowHeight?: number`(또는 `"auto"`로 셀 내용에 맞춤) |
+| S4 | `DataTable`의 현재 행이 내부 상태뿐이라 상세 칸에 연 항목과 목록의 현재 행을 맞출 수 없습니다(G13). | 딥 링크로 연 작업·러너·호스트, `SplitView`의 J/K 이동 뒤 목록 위치 | `currentRowId`/`onCurrentRowChange`(제어형). 바뀌면 행을 보이게 스크롤 |
+| S5 | 행 동작 열이 없습니다. 셀 안에 `Menu`를 넣으면 popover 여백 클릭이 `onRowAction`이 되고, 셀 안 버튼마다 탭 정지가 생깁니다. | 대기 탭·호스트 표의 행 `Menu`. 셀에서 클릭 전파를 막고, DOM의 `tabIndex`를 직접 바꿔 대신함(§7.7) | `rowActions?: (row) => ReactNode` 열. `DataTable`이 그 열의 클릭을 행 동작에서 빼고, 현재 행의 동작만 탭 순서에 두거나 행에서 →로 들어가게(그리드 패턴) |
+| S6 | `CommandPalette`가 빈 검색에서 모든 항목을 보이고 결과 수 상한과 Page Up/Down이 없습니다(G7). | 러너·대기 작업·호스트 이동 항목. 마지막 그룹에 두고 50개로 자름 | 항목의 `searchOnly`, `limit`(넘으면 "N개 중 M개" 안내), Page Up/Down |
+| S7 | 머무는 알림 띠가 없습니다(G6). | 연결 끊김, `docker_error`, 이유, 로그인 실패, 오류 알림. 로컬 `Notice` | `Callout`(`tone`, 제목, 동작, `role` 선택) |
+| S8 | 키-값 목록이 없습니다(G5). | 작업·러너·호스트 상세, 백업, 개요. 로컬 `KeyValue` | `DescriptionList`(`<dl>`) |
+| S9 | 용량 미터가 없습니다. `Progress`는 진행률 전용입니다(G1). | 슬롯, 풀 사용률, 예약 CPU·메모리, 리소스. 로컬 `Meter` | 네이티브 `<meter>` 스타일의 `Meter`(`low`/`high`/`optimum` 톤) |
+| S10 | 대화상자를 연 요소가 닫힐 때 없으면(팔레트) 포커스가 `<body>`로 떨어집니다. | 팔레트로 연 확인·저장소 점검. 로컬 `refocus`와 `confirm({ returnFocus })`(§7.5) | `Dialog`·`ConfirmDialog`의 `returnFocus` prop(연 요소가 없거나 닫힌 `<dialog>` 안이면 그 요소로) |
+| S11 | 닫힌 `Accordion` 패널은 `visibility: hidden`이라 제출 때 `Field`가 잘못된 칸에 포커스를 주지 못합니다. | 설정의 접힌 풀(§7.6) | `invalid` 이벤트가 오면 그 칸을 담은 패널을 열고, 보이게 된 뒤 포커스 |
+| S12 | `SaveBar`는 마운트할 때 감싼 폼의 `submit`에 한 번만 붙습니다. | 설정. 폼과 바를 불러온 뒤 함께 그려 대신함(§7.6) | 폼을 `form` prop(또는 ref)으로 받거나, 폼이 바뀌면 다시 붙음 |
+| S13 | `AppShell`에 본문으로 건너뛰기 링크가 없습니다(G15). | 셸. 로컬 한 줄 | `AppShell`의 `skipLink` 문구 prop |
+| S14 | `Menu`에 체크 항목이 없습니다. | 폰 로그 메뉴. 따라가기·줄바꿈은 메뉴 밖 `Switch`로 둠(§7.7) | `Menu.CheckboxItem`(`aria-checked`) |
 
 ## 9. 열린 질문
 

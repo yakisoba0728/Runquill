@@ -13,6 +13,7 @@ import { stratum } from "../../i18n/stratum";
 import { useLive } from "../../live";
 import { format, navigate, type Route } from "../../router";
 import { can } from "../../session";
+import type { Job } from "../../types";
 import { RunnerLogs, unreadable } from "./RunnerLogs";
 
 const labels = stratum();
@@ -52,6 +53,18 @@ const logsColumn: Column<RunnerRow> = {
   key: "logs", header: t("Logs"), width: 110, cell: (runner) => unreadable(runner) ? null
     : <a href={logsHref(runner.name)} aria-label={t("View logs for {runner}", { runner: runner.name })}>{t("View logs")}</a>,
 };
+
+/** Which job the log belongs to, and where its step logs are (v1 logs pane head): the runner log is not the job log. */
+function StepLogs({ job, host }: { job: Job; host?: string }) {
+  return (
+    <p className="summary-line">
+      {job.repository + " #" + job.id + " · " + (host || "—") + " · "}
+      {isGitHubJobURL(job.url)
+        ? <a href={job.url} target="_blank" rel="noopener noreferrer" aria-label={t("Step logs for {repo} job {id} on GitHub", { repo: job.repository, id: job.id })}>{t("Step logs on GitHub")}</a>
+        : t("Step logs are on GitHub.")}
+    </p>
+  );
+}
 
 function RunnerPane({ name, runner, tab, open }: { name: string; runner?: RunnerRow; tab: "details" | "logs"; open: boolean }) {
   // Logs keep their last lines once the runner has gone, so the tab stays for a runner that had them.
@@ -100,7 +113,7 @@ function RunnerPane({ name, runner, tab, open }: { name: string; runner?: Runner
           <Tabs.Panel value="details">{shownTab === "details" && body}</Tabs.Panel>
           <Tabs.Panel value="logs">
             {shownTab === "logs" && (reason ? <Notice role="status"><p>{t(reason)}</p></Notice>
-              : <RunnerLogs name={name} active={open} gone={!runner} />)}
+              : <>{runner?.job && <StepLogs job={runner.job} host={runner.host} />}<RunnerLogs name={name} active={open} gone={!runner} /></>)}
           </Tabs.Panel>
         </Tabs.Panels>
       </SplitView.PaneBody>
