@@ -65,6 +65,12 @@ if [ "$url" = https://tailscale.com/install.sh ]; then cp "$STUB_TEMPLATES/tails
 if [ -n "$out" ] && [ "$out" != /dev/null ] && [ ! -d "$STUB_STATE/release" ]; then echo stub-download >"$out"; fi'
 stub mv 'if [ "$#" -eq 3 ] && [ "${2##*/}" = backup ] && [ "$3" = .previous ]; then exit 1; fi
 exec "$STUB_TEMPLATES/../real/mv" "$@"'
+stub mkdir '"$STUB_TEMPLATES/../real/mkdir" "$@" || exit "$?"
+if [ "$*" = .runquill-upgrade ]; then
+    kill -TERM "$(cat "$STUB_STATE/installer-pid")"
+else
+    printf "%s\n" "$PPID" >"$STUB_STATE/installer-pid"
+fi'
 stub gpg 'printf "pub:-:4096:1:X:::::\nfpr:::::::::%s:\nsub:-:4096:1:Y:::::\nfpr:::::::::%s:\n" "${STUB_FPR:-9DC858229FC7DD38854AE2D88D81803C0EBFCD88}" D3306A018370199E527AE7997EA0A9C3F273FCD8'
 stub sudo 'if [ -n "${STUB_SUDO_BROKEN:-}" ]; then exit 1; fi
 if [ "$1" = -n ]; then [ -z "${STUB_SUDO_PASSWORD:-}" ]; exit; fi
@@ -472,9 +478,10 @@ check 'group already in db: re-exec' has_log 'sg docker -c'
 check 'group already in db: no change' lacks_log 'usermod'
 
 host docker up dbgroup enabled compose systemd
-newline='\n+'
+newline='
+'
 run -- --prepare-only --dir "trailing${newline}"
-check 'group re-exec keeps a trailing newline in an argument' has_log "arg[trailing${newline}]"
+check 'group re-exec keeps a trailing newline in an argument' grep -Fxq 'arg[trailing' "$case_dir/state/log"
 
 host docker up dbgroup enabled compose systemd
 run STUB_SG_NOOP=1 -- --prepare-only
@@ -573,6 +580,15 @@ check 'upgrade: backup publish failure leaves current files intact' grep -qx 'ol
 check 'upgrade: backup publish failure preserves .env' cmp "$case_dir/original.env" "$installed/.env"
 check 'upgrade: backup publish failure removes staging' no_matches "$installed"/.runquill-install.*
 check 'upgrade: backup publish failure releases the lock' test ! -e "$installed/.runquill-upgrade"
+
+host
+release
+existing_install
+cp "$work/templates/mkdir" "$case_dir/bin/"
+run -- --upgrade --version v0.3.2
+check 'upgrade: interruption while locking exits' exit_is 130
+check 'upgrade: interruption while locking removes staging' no_matches "$installed"/.runquill-install.*
+check 'upgrade: interruption while locking releases the lock' test ! -e "$installed/.runquill-upgrade"
 
 script_bin=$(command -v script 2>/dev/null || true)
 if [ -n "$script_bin" ] && "$script_bin" -qec true /dev/null >/dev/null 2>&1; then

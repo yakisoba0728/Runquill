@@ -641,7 +641,7 @@ preflight_docker() {
 
 applied=
 apply_step=
-prep_tmp= ts_tmp= scratch= upgrade_lock=
+prep_tmp='' ts_tmp='' scratch='' upgrade_lock=''
 temp_root=${TMPDIR:-/tmp}
 case $temp_root in /*) ;; *) temp_root=$(pwd)/$temp_root ;; esac
 note_done() { add_line applied "  $1"; }
@@ -1051,8 +1051,15 @@ curl --proto '=https' --proto-redir '=https' --connect-timeout 10 --retry 2 --fa
 chmod 700 "$scratch/$binary"
 if [ "$upgrade" = true ]; then
     # Only release assets are replaced; .env, keys, data and anything else stay as they are.
-    mkdir .runquill-upgrade || fail 'Could not lock this install for upgrade (.runquill-upgrade). Check for another installer.'
-    upgrade_lock=.runquill-upgrade
+    # Give cleanup ownership before honoring a signal received during mkdir.
+    lock_interrupted=false
+    trap 'lock_interrupted=true' INT TERM
+    if (trap '' INT TERM; mkdir .runquill-upgrade); then
+        upgrade_lock=.runquill-upgrade
+    fi
+    trap 'exit 130' INT TERM
+    [ "$lock_interrupted" = false ] || exit 130
+    [ -n "$upgrade_lock" ] || fail 'Could not lock this install for upgrade (.runquill-upgrade). Check for another installer.'
     changed=
     for name in runquill $files; do
         asset=$name
