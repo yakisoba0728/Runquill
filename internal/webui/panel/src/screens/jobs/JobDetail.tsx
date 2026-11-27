@@ -26,9 +26,9 @@ export const outcomeStatus = (job: HistoryJob) => (job.outcome === "waiting" ? (
 export const historyReason = (job: HistoryJob) =>
   serverText(job.failure || job.diagnostic?.message || (job.outcome === "waiting" ? job.retry_reason : "") || "");
 
-type Action = "retry" | "cancel";
+export type Action = "retry" | "cancel";
 
-const actionText: Record<Action, { label: string; command: string; question: string; done: string }> = {
+export const actionText: Record<Action, { label: string; command: string; question: string; done: string }> = {
   retry: {
     label: "Retry now", command: "Retry job #{id} now", done: "The job will be retried on the next scheduler pass.",
     question: "Retry job #{id} now? Runquill tries to start a runner on its next pass.",
@@ -41,27 +41,37 @@ const actionText: Record<Action, { label: string; command: string; question: str
 
 /**
  * Retry and cancel for operators (v1 jobActionButtons): only for a job waiting without a runner, retry only while it
- * has a retry delay. Each asks first; onDone runs after the server applied the change. The palette offers the same
- * while the pane is open.
+ * has a retry delay. The pane footer, the palette and the waiting tab's row menu offer the same.
  */
+export function jobActions(live?: Job, history?: HistoryJob): Action[] {
+  const waiting = live ? pendingJob(live) && !live.runner : history?.outcome === "waiting";
+  return !can("operator") || !waiting ? [] : (live ?? history)?.retry_at ? ["retry", "cancel"] : ["cancel"];
+}
+
+/** Asks first (cancel as a danger); returnFocus takes focus after the dialog when its opener is gone. */
+export const askJobAction = (kind: Action, id: number, returnFocus?: HTMLElement | null) => confirm({
+  title: t("Job #{id}", { id }), description: t(actionText[kind].question, { id }), confirmLabel: t(actionText[kind].label),
+  danger: kind === "cancel", returnFocus,
+});
+
+/** Sends the action; true once the server applied it (a failure is a toast). */
+export async function applyJobAction(kind: Action, id: number) {
+  if ((await post("./api/jobs/" + id + "/" + kind)) === undefined) return false;
+  toast(t(actionText[kind].done), { tone: "success" });
+  return true;
+}
+
+/** The pane footer's buttons; onDone runs after the server applied the change. */
 function JobActions({ id, live, history, open, onDone }: {
   id: number; live?: Job; history?: HistoryJob; open: boolean; onDone: () => void;
 }) {
-  const waiting = live ? pendingJob(live) && !live.runner : history?.outcome === "waiting";
-  const kinds: Action[] = !can("operator") || !waiting ? [] : (live ?? history)?.retry_at ? ["retry", "cancel"] : ["cancel"];
+  const kinds = jobActions(live, history);
   const [busy, run] = useBusy<Action>();
   const buttons = useRef<Partial<Record<Action, HTMLButtonElement | null>>>({});
   const act = async (kind: Action) => {
-    const text = actionText[kind];
-    const yes = await confirm({
-      title: t("Job #{id}", { id }), description: t(text.question, { id }), confirmLabel: t(text.label), danger: kind === "cancel",
-      returnFocus: buttons.current[kind],
-    });
-    if (!yes) return;
+    if (!(await askJobAction(kind, id, buttons.current[kind]))) return;
     await run(kind, async () => {
-      if ((await post("./api/jobs/" + id + "/" + kind)) === undefined) return;
-      toast(t(text.done), { tone: "success" });
-      onDone();
+      if (await applyJobAction(kind, id)) onDone();
     });
   };
   const latest = useRef(act);

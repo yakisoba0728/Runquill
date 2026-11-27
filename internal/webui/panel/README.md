@@ -28,14 +28,15 @@ The build is byte-identical across runs and across macOS arm64, Linux arm64 and 
 internal/webui/panelv2/
   index.html                  <body data-mode="demo">; one <script src> per file, no inline script or style
   theme.js                    public/theme.js as is: applies the saved theme before the first paint
-  assets/panel-<hash>.js      entry: shell, sign-in, live store, router (loads the screens with import(`./…`))
+  assets/panel-<hash>.js      entry: shell, sign-in, live store, router and everything they import statically; no
+                              static imports of its own (loads the screens with import(`./…`))
   assets/panel-<hash>.css     stratum.css + src/panel.css
-  assets/chunk-<hash>.js      lazy: each screen, the Korean catalogue, the server message templates; a few are shared
-                              chunks the entry imports statically (the bundler's choice, design §7.5)
+  assets/chunk-<hash>.js      lazy: each screen, the Korean catalogue, the server message templates, and code only
+                              screens share
   assets/demo-<hash>.js       lazy, sample panel only: everything under src/demo/
 ```
 
-Every file in `assets/` matches `^(panel|chunk|demo)-[A-Za-z0-9_-]+\.(js|css)$`, and no name starts with `_` or `.` (a directory `go:embed` drops those). The sample fixtures are grouped into `demo-*` by module path (`src/demo/`). Code in `src/demo/` imports only types from the rest of `src`, so no shared code ends up in that chunk.
+The `$initial` group in `vite.config.ts` keeps the entry whole (design §7.7). Every file in `assets/` matches `^(panel|chunk|demo)-[A-Za-z0-9_-]+\.(js|css)$`, and no name starts with `_` or `.` (a directory `go:embed` drops those). The sample fixtures are grouped into `demo-*` by module path (`src/demo/`). Code in `src/demo/` imports only types from the rest of `src`, so no shared code ends up in that chunk.
 
 ## What the server must serve
 
@@ -58,6 +59,6 @@ Keep the same headers as v1. That includes the CSP `default-src 'self'; img-src 
 - `src/request.ts`: `useRequest` for screen REST loads, with optional polling. `src/commands.ts`: palette commands a screen (and its open pane) registers.
 - `src/session.ts`: `can(role)`, always false in the sample panel. `src/actions.ts`: `send()`/`post()` for writes (failures, 403 included, as a toast), `useBusy()` for a button's pending state and `saveFile()`. `src/dialogs.tsx`: `confirm()`.
 - `src/router.ts` also holds the leave guard (`useLeaveGuard`): the settings screen blocks leaving with unsaved changes and its SaveBar offers "Discard and leave".
-- `src/components/`: local stand-ins for parts Stratum does not have yet (design §8). `index.tsx` is in the entry chunk; parts only screens use (`StageBar`, `ResourceMeters`, `BarChart`, `CopyField`) have their own files. The log viewer is `src/screens/runners/RunnerLogs.tsx`.
+- `src/components/`: local stand-ins for parts Stratum does not have yet (design §8). `index.tsx` is in the entry chunk; parts only screens use (`StageBar`, `ResourceMeters`, `BarChart`, `CopyField`, `RowMenu`) have their own files. `RowMenu` is the row action menu of the waiting tab and the hosts table (Stratum has no row action column yet). The log viewer is `src/screens/runners/RunnerLogs.tsx`.
 - `src/screens/<id>/`: one lazy chunk per screen. Rules worth testing on their own live beside the screen (`settings/draft.ts`, `migrate/mapping.ts`).
 - `src/demo/`: sample scenarios and the GET fixtures (`fixtures.ts`, runner logs included), built into `demo-*` only. `main.tsx` registers `answer` with `answerSamples` in `api.ts`, so the sample panel never reaches a server.

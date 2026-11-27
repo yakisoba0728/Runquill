@@ -25,8 +25,11 @@ export default defineConfig({
       output: {
         // Fixed prefixes: go:embed drops names starting with _ or ., and the live server refuses demo-*.
         entryFileNames: "assets/panel-[hash].js",
-        // Everything under src/demo/ (fixtures, scenarios) goes to demo-* only, by module path.
-        codeSplitting: { groups: [{ name: "demo", test: /[\\/]src[\\/]demo[\\/]/ }] },
+        // Everything under src/demo/ (fixtures, scenarios) goes to demo-* only, by module path. Everything the entry
+        // imports statically ($initial) stays in the entry: without that group Rolldown 1.3 moves the modules the entry
+        // shares with screen chunks (React, the shell, Stratum internals) into common chunks the entry imports, which cost
+        // 3 KB gzip on the first screen (design §7.7). The screens import the entry, as Rollup builds do.
+        codeSplitting: { groups: [{ name: "demo", test: /[\\/]src[\\/]demo[\\/]/ }, { name: "initial", tags: ["$initial"], priority: -1 }] },
         chunkFileNames: (chunk) => (chunk.name === "demo" ? "assets/demo-[hash].js" : "assets/chunk-[hash].js"),
         assetFileNames: "assets/panel-[hash][extname]",
       },

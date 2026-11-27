@@ -16,13 +16,13 @@ type Asked = Question & { answer: (yes: boolean) => void };
 let ask: ((question: Asked) => void) | null = null;
 
 /**
- * After a dialog closes: when focus went nowhere because the element that opened it is gone or in a closed dialog still
- * sliding out (the command palette), put it on fallback instead.
+ * After a dialog closes or a row action: when focus went nowhere because the element that had it is gone, in a closed
+ * dialog still sliding out (the command palette) or in a table row leaving (inert), put it on fallback instead.
  */
 export function refocus(fallback: HTMLElement | null | undefined) {
   requestAnimationFrame(() => {
     const active = document.activeElement;
-    if (!active || active === document.body || active.closest("dialog:not([open])")) fallback?.focus();
+    if (!active || active === document.body || active.closest("dialog:not([open]), [inert]")) fallback?.focus();
   });
 }
 

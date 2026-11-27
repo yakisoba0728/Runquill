@@ -2,8 +2,8 @@
 // with a session; the sample panel answers fixed lines). Ported from v1 views/logs.js. The response is plain text: a
 // tail, or with follow a chunked stream that ends at the server's limits. Lines are untrusted: written as text only,
 // escape sequences removed (logLines.ts). New lines collect and are appended once per frame, outside React, because a
-// follow can add thousands; at most 5,000 stay.
-import { Button, Select, Switch, toast } from "@yakihyuk0728/stratum-ui";
+// follow can add thousands; at most 5,000 stay. At phone width the action buttons fold into one Menu (panel.css).
+import { Button, Menu, Select, Switch, toast } from "@yakihyuk0728/stratum-ui";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { saveFile } from "../../actions";
 import { isSample, stream, type ApiError } from "../../api";
@@ -223,8 +223,18 @@ export function RunnerLogs({ name, active, gone }: { name: string; active: boole
           options={tails.map((value) => ({ value, label: t(tailNames[value]) }))} />
         <Switch size="sm" label={t("Follow")} checked={follow && !sample} disabled={sample} onCheckedChange={setFollow} />
         <Switch size="sm" label={t("Wrap lines")} checked={wrap} onCheckedChange={setWrap} />
+        <span className="log-menu">
+          <Menu align="end" trigger={<Button variant="secondary" size="sm">{t("Actions")}<Menu.Chevron /></Button>}>
+            <Menu.Item onSelect={() => pause(!paused)}>{t(paused ? "Resume" : "Pause")}</Menu.Item>
+            {streaming && <Menu.Item onSelect={stopFollowing}>{t("Stop")}</Menu.Item>}
+            {reconnect && <Menu.Item onSelect={() => setRound((n) => n + 1)}>{t("Reconnect")}</Menu.Item>}
+            <Menu.Item onSelect={() => void copy()}>{t("Copy")}</Menu.Item>
+            <Menu.Item onSelect={download}>{t("Download")}</Menu.Item>
+            <Menu.Item onSelect={clear}>{t("Clear")}</Menu.Item>
+          </Menu>
+        </span>
       </div>
-      <div className="toolbar log-toolbar">
+      <div className="toolbar log-toolbar log-actions">
         <Button variant="secondary" size="sm" aria-pressed={paused} onClick={() => pause(!paused)}>{t(paused ? "Resume" : "Pause")}</Button>
         {streaming && <Button variant="secondary" size="sm" onClick={stopFollowing}>{t("Stop")}</Button>}
         {reconnect && <Button variant="secondary" size="sm" onClick={() => setRound((n) => n + 1)}>{t("Reconnect")}</Button>}

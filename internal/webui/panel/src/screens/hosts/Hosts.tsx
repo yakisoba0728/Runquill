@@ -1,10 +1,10 @@
 // Hosts (design §3.5, §4.6): worker hosts (or Kubernetes targets), the same capacity per pool, server resources and
 // elastic limits, with a host detail pane. Ported from panelweb/views/hosts.js. Resources and elastic limits poll only
 // while their tab is shown.
-// Operators pause and resume assignments (pane footer and palette, no confirmation as in v1); admins enroll an
-// outbound agent:// worker.
+// Operators pause and resume assignments (pane footer, row menu and palette, no confirmation as in v1); admins enroll
+// an outbound agent:// worker (pane footer and row menu).
 import {
-  Badge, Button, DataTable, Dialog, EmptyState, Skeleton, SplitView, Tabs, toast, useSplitViewNavigation, type Column,
+  Badge, Button, DataTable, Dialog, EmptyState, Menu, Skeleton, SplitView, Tabs, toast, useSplitViewNavigation, type Column,
 } from "@yakihyuk0728/stratum-ui";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { post, useBusy } from "../../actions";
@@ -12,6 +12,7 @@ import type { ApiError } from "../../api";
 import { useScreenCommands, type ScreenCommand } from "../../commands";
 import { Ago, KeyValue, Meter, Notice, Page, StatusBadge } from "../../components";
 import { CopyField } from "../../components/CopyField";
+import { RowMenu, rowMenuTabs } from "../../components/RowMenu";
 import { availableSlots, poolName, pools, runnerRows, workerState, type PoolRow } from "../../fleet";
 import { bytes, cpus, date, duration, mib, number, timeOfDay } from "../../format";
 import { fill, serverText, t } from "../../i18n";
@@ -43,7 +44,7 @@ function HostState({ host }: { host: Host }) {
   );
 }
 
-const hostColumns: Column<Host>[] = [
+const hostColumns = (menu?: (host: Host) => ReactNode): Column<Host>[] => [
   { key: "name", header: t("Host"), sticky: true, width: 200, cell: (host) => (
     <>{host.name}{host.error && <span className="block-sub">{serverText(host.error)}</span>}</>
   ) },
@@ -53,6 +54,7 @@ const hostColumns: Column<Host>[] = [
   { key: "occupied", header: t("Occupied"), align: "end", width: 100, cell: (host) => number(host.occupied_slots) },
   { key: "reserved", header: t("Reserved"), align: "end", width: 100, cell: (host) => number(host.reserved_slots) },
   { key: "available", header: t("Available"), align: "end", width: 100, cell: (host) => number(availableSlots(host)) },
+  ...(menu ? [{ key: "actions", header: <span className="sr-only">{t("Actions")}</span>, align: "end" as const, width: 56, cell: menu }] : []),
 ];
 
 const poolColumns: Column<PoolRow>[] = [
@@ -255,44 +257,48 @@ interface Enrollment {
   expires_at: string;
 }
 
-/** Admins: a one-time enrollment command for an outbound agent:// worker (v1 workerEnrollment). Shown once, never kept. */
-function Enroll({ host }: { host: Host }) {
-  const [busy, run] = useBusy<"enroll">();
-  const [result, setResult] = useState<Enrollment | null>(null);
+const canEnroll = (host: Host) => can("admin") && !!host.enrollment_available && host.name.startsWith("agent://");
+
+/**
+ * Admins: a one-time enrollment command for an outbound agent:// worker (v1 workerEnrollment), from the pane or a row
+ * menu. One dialog for the screen; the commands are shown once and dropped when it closes.
+ */
+function useEnrollment() {
+  const [busy, run] = useBusy<string>();
+  const [shown, setShown] = useState<{ host: string; result: Enrollment } | null>(null);
   const [copied, setCopied] = useState("");
-  const issue = () => run("enroll", async () => {
+  const issue = (host: Host) => run(host.name, async () => {
     const answer = await post<Enrollment>("./api/hosts/" + enc(host.name.slice("agent://".length)) + "/enrollment");
     if (answer) {
       setCopied("");
-      setResult(answer);
+      setShown({ host: host.name, result: answer });
     }
   });
-  return (
-    <>
-      <Button variant="secondary" size="sm" loading={busy === "enroll"} onClick={() => void issue()}
-        aria-label={t("{action} on {host}", { action: t("Enroll worker"), host: host.name })}>{t("Enroll worker")}</Button>
-      <Dialog open={!!result} onOpenChange={(open) => !open && setResult(null)} size="lg">
-        <Dialog.Body>
-          <Dialog.Title>{t("Enroll worker")}</Dialog.Title>
-          {result && (
-            <>
-              <Dialog.Description>{fill("Run this command on {host} before {time}.", { host: <code>{host.name}</code>, time: timeOfDay(result.expires_at) })}</Dialog.Description>
-              <CopyField label={t("Enrollment command")} value={result.command} copyLabel={t("Copy enrollment command")} report={setCopied} autoFocus />
-              <p className="text-sm">{t("After enrollment, use this command to restart the worker.")}</p>
-              <CopyField label={t("Worker start command")} value={result.start_command} copyLabel={t("Copy start command")} report={setCopied} />
-              <p className="text-sm text-text-hint" role="status">{copied}</p>
-            </>
-          )}
-        </Dialog.Body>
-        <Dialog.Actions>
-          <Button onClick={() => setResult(null)}>{t("Hide commands")}</Button>
-        </Dialog.Actions>
-      </Dialog>
-    </>
+  const dialog = (
+    <Dialog open={!!shown} onOpenChange={(open) => !open && setShown(null)} size="lg">
+      <Dialog.Body>
+        <Dialog.Title>{t("Enroll worker")}</Dialog.Title>
+        {shown && (
+          <>
+            <Dialog.Description>{fill("Run this command on {host} before {time}.", { host: <code>{shown.host}</code>, time: timeOfDay(shown.result.expires_at) })}</Dialog.Description>
+            <CopyField label={t("Enrollment command")} value={shown.result.command} copyLabel={t("Copy enrollment command")} report={setCopied} autoFocus />
+            <p className="text-sm">{t("After enrollment, use this command to restart the worker.")}</p>
+            <CopyField label={t("Worker start command")} value={shown.result.start_command} copyLabel={t("Copy start command")} report={setCopied} />
+            <p className="text-sm text-text-hint" role="status">{copied}</p>
+          </>
+        )}
+      </Dialog.Body>
+      <Dialog.Actions>
+        <Button onClick={() => setShown(null)}>{t("Hide commands")}</Button>
+      </Dialog.Actions>
+    </Dialog>
   );
+  return { busy, issue, dialog };
 }
 
-function HostPane({ name, host, cordon }: { name: string; host?: Host; cordon: ReturnType<typeof useCordon> }) {
+function HostPane({ name, host, cordon, enrollment }: {
+  name: string; host?: Host; cordon: ReturnType<typeof useCordon>; enrollment: ReturnType<typeof useEnrollment>;
+}) {
   const snapshot = useLive((s) => s.snapshot);
   const runners = useMemo(() => runnerRows(snapshot).filter((runner) => runner.host === name), [snapshot, name]);
   const resources = useRequest<ResourceReport>("./api/hosts/resources");
@@ -334,7 +340,6 @@ function HostPane({ name, host, cordon }: { name: string; host?: Host; cordon: R
       </div>
     );
   }
-  const enroll = host && can("admin") && host.enrollment_available && host.name.startsWith("agent://");
   const label = host?.cordoned ? "Resume assignments" : "Pause assignments";
   return (
     <>
@@ -344,7 +349,10 @@ function HostPane({ name, host, cordon }: { name: string; host?: Host; cordon: R
         <SplitView.PaneFooter className="pane-actions">
           <Button variant="secondary" size="sm" loading={cordon.busy === host.name} onClick={() => void cordon.cordon(host)}
             aria-label={t("{action} on {host}", { action: t(label), host: host.name })}>{t(label)}</Button>
-          {enroll && <Enroll host={host} />}
+          {canEnroll(host) && (
+            <Button variant="secondary" size="sm" loading={enrollment.busy === host.name} onClick={() => void enrollment.issue(host)}
+              aria-label={t("{action} on {host}", { action: t("Enroll worker"), host: host.name })}>{t("Enroll worker")}</Button>
+          )}
         </SplitView.PaneFooter>
       )}
     </>
@@ -366,6 +374,14 @@ export default function Hosts({ route }: { route: Route }) {
   const tabNames: Record<Tab, string> = { hosts: kubernetes ? "Runtime targets" : "Hosts", pools: "Worker pools", resources: "Server resources", elastic: "Elastic limits" };
   const empty = <EmptyState title={t("No host observations yet.")} />;
   const cordon = useCordon();
+  const enrollment = useEnrollment();
+  const operator = can("operator");
+  const hostMenu = (host: Host) => (
+    <RowMenu label={t("{action} on {host}", { action: t("Actions"), host: host.name })}>
+      <Menu.Item onSelect={() => void cordon.cordon(host)}>{t(host.cordoned ? "Resume assignments" : "Pause assignments")}</Menu.Item>
+      {canEnroll(host) && <Menu.Item onSelect={() => void enrollment.issue(host)}>{t("Enroll worker")}</Menu.Item>}
+    </RowMenu>
+  );
   const latest = useRef(cordon);
   latest.current = cordon;
   const commands = useMemo<ScreenCommand[]>(() => (can("operator") ? hosts : []).map((host) => ({
@@ -376,8 +392,8 @@ export default function Hosts({ route }: { route: Route }) {
 
   const content: Record<Tab, () => ReactNode> = {
     hosts: () => (
-      <DataTable className="rows-3" aria-label={t(tabNames.hosts)} columns={hostColumns} rows={hosts} getRowId={(host) => host.name}
-        onRowAction={(host) => open(host.name)} loading={!fleet} empty={empty} />
+      <DataTable className="rows-3" aria-label={t(tabNames.hosts)} columns={hostColumns(operator ? hostMenu : undefined)} rows={hosts}
+        getRowId={(host) => host.name} onRowAction={(host) => open(host.name)} onFocus={operator ? rowMenuTabs : undefined} loading={!fleet} empty={empty} />
     ),
     pools: () => (
       <>
@@ -406,10 +422,11 @@ export default function Hosts({ route }: { route: Route }) {
             </Tabs.Panels>
           </SplitView.List>
           <SplitView.Pane>
-            {shown.current !== null && <HostPane key={shown.current} name={shown.current} host={hosts.find((host) => host.name === shown.current)} cordon={cordon} />}
+            {shown.current !== null && <HostPane key={shown.current} name={shown.current} host={hosts.find((host) => host.name === shown.current)} cordon={cordon} enrollment={enrollment} />}
           </SplitView.Pane>
         </SplitView>
       </Page>
+      {enrollment.dialog}
     </Tabs>
   );
 }

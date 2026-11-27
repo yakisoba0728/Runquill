@@ -1,13 +1,16 @@
 // Jobs (design §3.3, §3.4, §4.4): the live queue (waiting, running, cleaned up) from the snapshot and the 7-day
 // history from GET /api/jobs, one detail pane for all four. Ported from panelweb/views/queue.js and jobs.js. Admins
-// check a repository from the header ("Missing a job?"); operators retry and cancel from the pane (JobDetail.tsx).
+// check a repository from the header ("Missing a job?"); operators retry and cancel from the pane (JobDetail.tsx) and
+// from a waiting row's menu.
 import {
-  Button, DataTable, EmptyState, Field, Input, SearchInput, Select, SplitView, Tabs, useSplitViewNavigation, type Column,
+  Button, DataTable, EmptyState, Field, Input, Menu, SearchInput, Select, SplitView, Tabs, useSplitViewNavigation, type Column,
 } from "@yakihyuk0728/stratum-ui";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useBusy } from "../../actions";
 import { request, type ApiError } from "../../api";
 import { useScreenCommands, type ScreenCommand } from "../../commands";
 import { Notice, Page, StatusBadge } from "../../components";
+import { RowMenu, rowMenuTabs } from "../../components/RowMenu";
 import { filterJobs, isGitHubJobURL, jobLists, jobReason, jobStatus, poolName } from "../../fleet";
 import { timeOfDay, date, duration, number } from "../../format";
 import { fill, t } from "../../i18n";
@@ -18,7 +21,7 @@ import type { HistoryJob, Job } from "../../types";
 import { refocus } from "../../dialogs";
 import { can } from "../../session";
 import { Diagnose } from "./Diagnose";
-import { historyReason, JobPane, outcomeStatus } from "./JobDetail";
+import { actionText, applyJobAction, askJobAction, historyReason, jobActions, JobPane, outcomeStatus, type Action } from "./JobDetail";
 import { historyQuery, holder, jobId, outcomes, pickTab, ranges, tabs, type Tab } from "./params";
 
 const labels = stratum();
@@ -31,7 +34,7 @@ const emptyText: Record<Exclude<Tab, "history">, string> = {
 const jobHref = (route: Route, id: number | null, tab: Tab | null) =>
   format(withParams({ screen: "jobs", id: id === null ? undefined : String(id), params: route.params }, { tab }));
 
-function liveColumns(tab: Tab): Column<Job>[] {
+function liveColumns(tab: Tab, menu?: (job: Job) => ReactNode): Column<Job>[] {
   return [
     { key: "repository", header: t("Repository"), sticky: true, width: 180, cell: (job) => job.repository },
     { key: "id", header: t("Job"), width: 90, cell: (job) => "#" + job.id },
@@ -46,6 +49,7 @@ function liveColumns(tab: Tab): Column<Job>[] {
     // The queue time grows each snapshot; only this cell changes, and rows keep their id.
     { key: "wait", header: t("Queue time"), align: "end", width: 110, cell: (job) => duration(job.timing?.runquill_queue_seconds) },
     { key: "host", header: t("Host"), cell: (job) => job.runner_host || "—" },
+    ...(tab === "waiting" && menu ? [{ key: "actions", header: <span className="sr-only">{t("Actions")}</span>, align: "end" as const, width: 56, cell: menu }] : []),
   ];
 }
 
@@ -117,6 +121,7 @@ export default function Jobs({ route }: { route: Route }) {
   const [round, setRound] = useState(0);
   const [diagnose, setDiagnose] = useState(false);
   const admin = can("admin");
+  const operator = can("operator");
   const diagnoseButton = useRef<HTMLButtonElement>(null);
   const history = useHistory(route.params, tab === "history", round);
 
@@ -129,6 +134,10 @@ export default function Jobs({ route }: { route: Route }) {
   const open = (next: number, replace = false) =>
     navigate(jobHref(route, next, tab === "history" || (lists && holder(lists, next) !== tab) ? tab : null), { replace });
   const close = () => navigate(jobHref(route, null, tab === "waiting" ? null : tab));
+  const openId = useRef(id);
+  openId.current = id;
+  const closeRef = useRef(close);
+  closeRef.current = close;
   const navigation = useSplitViewNavigation(ids, id, (next) => open(next, true));
   const filtered = !!(query || pool);
   const clearFilters = () => setParams({ q: null, pool: null });
@@ -146,6 +155,32 @@ export default function Jobs({ route }: { route: Route }) {
     ...(admin ? [{ id: "diagnose", label: "Check repository", run: () => setDiagnose(true) }] : []),
   ], [filtered, route, tab, id, history.next, history.loading, admin]);
   useScreenCommands(commands);
+
+  // A waiting row's menu: the pane's retry and cancel (same question, request and toast).
+  const [, runRow] = useBusy<Action>();
+  const rowAction = async (kind: Action, job: Job) => {
+    const trigger = document.activeElement as HTMLElement | null; // Menu.Item runs onSelect with focus back on the trigger
+    const table = trigger?.closest<HTMLElement>(".data-table");
+    if (!(await askJobAction(kind, job.id, trigger))) return;
+    await runRow(kind, async () => {
+      if (!(await applyJobAction(kind, job.id))) return;
+      if (openId.current === job.id) closeRef.current();
+      await liveStore.refresh();
+      setRound((n) => n + 1);
+      // The job leaves the queue with its row: keep focus in the table (its current row), else on the tab.
+      refocus(table?.querySelector<HTMLElement>('[role="row"][tabindex="0"]') ?? document.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]'));
+    });
+  };
+  const rowMenu = (job: Job) => {
+    const kinds = jobActions(job);
+    return kinds.length > 0 && (
+      <RowMenu label={t("{action} for job {id}", { action: t("Actions"), id: job.id })}>
+        {kinds.map((kind) => (
+          <Menu.Item key={kind} tone={kind === "cancel" ? "danger" : undefined} onSelect={() => void rowAction(kind, job)}>{t(actionText[kind].label)}</Menu.Item>
+        ))}
+      </RowMenu>
+    );
+  };
 
   // Keep the last pane content through the SplitView's closing slide.
   const shown = useRef(id);
@@ -173,10 +208,11 @@ export default function Jobs({ route }: { route: Route }) {
       <DataTable
         className="rows-2"
         aria-label={t(tabNames[tab])}
-        columns={liveColumns(tab)}
+        columns={liveColumns(tab, operator ? rowMenu : undefined)}
         rows={rows}
         getRowId={(job) => job.id}
         onRowAction={(job) => open(job.id)}
+        onFocus={tab === "waiting" && operator ? rowMenuTabs : undefined}
         loading={!lists}
         empty={filtered
           ? <EmptyState title={t("No jobs match these filters.")} actions={<Button variant="secondary" size="sm" onClick={clearFilters}>{t("Clear filters")}</Button>} />
