@@ -122,8 +122,21 @@ function teamBlock(ctx) {
       }, { small: true, "aria-label": tr("{action} {name}", { action: tr(member.disabled ? "Enable" : "Disable"), name: memberName(member) }) })) },
     ],
   });
-  async function load() {
-    table.update(await ctx.api.get("./api/team"));
+  let cursors = [0];
+  let nextCursor = 0;
+  const previous = button("Previous page", () => guarded(output, () => load(cursors.slice(0, -1))), { disabled: true });
+  const next = button("Next page", () => guarded(output, () => load([...cursors, nextCursor])), { disabled: true });
+  async function load(pageCursors = cursors) {
+    previous.disabled = next.disabled = true;
+    try {
+      const members = await ctx.api.get("./api/team?after=" + encodeURIComponent(pageCursors.at(-1)));
+      table.update(members);
+      cursors = pageCursors;
+      nextCursor = members.length === 100 ? members.at(-1).github_id : 0;
+    } finally {
+      previous.disabled = cursors.length === 1;
+      next.disabled = !nextCursor;
+    }
   }
   submitForm(form, output, async (data) => {
     const account = String(data.get("account")).trim();
@@ -139,7 +152,8 @@ function teamBlock(ctx) {
   });
   table.update([], "Loading…");
   void guarded(output, load).then((ok) => ok || table.update([], "Team members are unavailable."));
-  return block("Team", { note: "Enroll a teammate by GitHub login or numeric account ID." }, form, table.element, output);
+  return block("Team", { note: "Enroll a teammate by GitHub login or numeric account ID." },
+    form, table.element, h("div", { class: "actions" }, previous, next), output);
 }
 
 export default {

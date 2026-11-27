@@ -71,6 +71,34 @@ func (f *panelFixture) expect(rec *httptest.ResponseRecorder, code int) {
 	}
 }
 
+func TestPanelTeamPaginates(t *testing.T) {
+	f := newPanelFixture(t)
+	if _, err := f.q.Exec(`WITH RECURSIVE ids(id) AS (
+        VALUES (104) UNION ALL SELECT id + 1 FROM ids WHERE id < 205
+    ) INSERT INTO panel_users(github_id, role) SELECT id, 'viewer' FROM ids`); err != nil {
+		t.Fatal(err)
+	}
+	for _, page := range []struct {
+		query           string
+		count           int
+		firstID, lastID int64
+	}{
+		{"", 100, 101, 200},
+		{"?after=200", 5, 201, 205},
+	} {
+		rec := f.call("GET", "/api/team"+page.query, "", "admin", false)
+		f.expect(rec, 200)
+		var members []panelMember
+		if err := json.Unmarshal(rec.Body.Bytes(), &members); err != nil {
+			t.Fatal(err)
+		}
+		if len(members) != page.count || members[0].GitHubID != page.firstID || members[len(members)-1].GitHubID != page.lastID {
+			t.Fatalf("unexpected team page %q: %s", page.query, rec.Body)
+		}
+	}
+	f.expect(f.call("GET", "/api/team?after=-1", "", "admin", false), 400)
+}
+
 func TestPanelJobHistoryPagesAndFilters(t *testing.T) {
 	f := newPanelFixture(t)
 	ctx := t.Context()
