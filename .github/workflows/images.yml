@@ -8,7 +8,7 @@ on:
         type: boolean
         default: false
 
-# CI grants read access to source and prior runs. Releases grant package writes.
+# Inherit permissions from each caller: CI reads prior runs and releases write packages.
 env:
   DOCKER_BUILD_SUMMARY: 'false'
   DOCKER_BUILD_RECORD_UPLOAD: 'false'
@@ -93,6 +93,8 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
       - name: Exercise nested Docker
         env:
           RUNQUILL_TEST_DOCKER_IMAGE: runquill-runner:ci
