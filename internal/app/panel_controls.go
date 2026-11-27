@@ -156,8 +156,20 @@ type panelMember struct {
 	Disabled bool `json:"disabled"`
 }
 
+const panelTeamPageSize = 100
+
 func (a *panelAccess) team(w http.ResponseWriter, r *http.Request, user panelIdentity) {
-	rows, err := a.db.QueryContext(r.Context(), `SELECT github_id, login, role, disabled FROM panel_users ORDER BY github_id`)
+	var after int64
+	if cursor := r.URL.Query().Get("after"); cursor != "" {
+		var err error
+		after, err = strconv.ParseInt(cursor, 10, 64)
+		if err != nil || after < 0 {
+			http.Error(w, "Use a non-negative GitHub account ID for after.", http.StatusBadRequest)
+			return
+		}
+	}
+	rows, err := a.db.QueryContext(r.Context(), `SELECT github_id, login, role, disabled
+        FROM panel_users WHERE github_id > ? ORDER BY github_id LIMIT ?`, after, panelTeamPageSize)
 	if err != nil {
 		http.Error(w, "Could not read team members.", http.StatusServiceUnavailable)
 		return

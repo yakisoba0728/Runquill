@@ -42,7 +42,9 @@ async function load(more = false) {
   current.more.disabled = true;
   if (!more) {
     current.loaded = false;
+    current.failed = false;
     current.rows = [];
+    current.cursor = 0;
     render();
   }
   try {
@@ -58,7 +60,7 @@ async function load(more = false) {
     render();
     message(current.output, errorText(error), "failed");
   } finally {
-    current.more.disabled = false;
+    if (ticket === current.ticket) current.more.disabled = false;
   }
 }
 
@@ -67,27 +69,29 @@ function render() {
   table.update(rows, loaded ? "No jobs match these filters." : failed ? "Job history is unavailable." : "Loading job history…");
   more.hidden = !cursor;
   count.textContent = loaded ? tr("{n} shown", { n: format.number(rows.length) }) : "";
-  parts.failed = false;
 }
 
-// openDetail loads one job and shows it under the table. focus moves to its
-// heading once it arrives, for a person who chose it from the list.
-async function openDetail(id, focus = true) {
+// Keep the heading and close button in place while the details load.
+async function openDetail(id) {
   const current = parts;
   if (!current) return;
   current.selected = id;
-  current.table.update(current.rows);
+  render();
   const ticket = ++current.detailTicket;
   const { detail } = current;
   detail.hidden = false;
-  detail.replaceChildren(h("p", { class: "muted detail-loading" }, tr("Loading job #{id}…", { id })));
+  const heading = h("h2", { id: "job-history-title", tabindex: "-1" }, tr("Job #{id}", { id }));
+  const actions = h("div", { class: "actions" }, button("Close", closeDetail, { small: true, "aria-label": tr("Close job #{id}", { id }) }));
+  const head = h("div", { class: "detail-head" }, heading, actions);
+  const loading = h("p", { class: "muted detail-loading", role: "status" }, tr("Loading job #{id}…", { id }));
+  detail.replaceChildren(head, loading);
+  heading.focus();
   let job;
   try {
     job = await current.ctx.api.get("./api/jobs/" + encodeURIComponent(id));
   } catch (error) {
     if (parts !== current || ticket !== current.detailTicket || error.status === 401) return;
-    detail.replaceChildren(detailHead(id, null), h("p", { class: "detail-body error-text" }, errorText(error)));
-    if (focus) detail.querySelector("h2").focus();
+    loading.replaceWith(h("p", { class: "detail-body error-text", role: "alert" }, errorText(error)));
     return;
   }
   if (parts !== current || ticket !== current.detailTicket) return;
@@ -102,21 +106,14 @@ async function openDetail(id, focus = true) {
   facts.set("started", format.date(job.started_at));
   facts.set("finished", format.date(job.finished_at));
   const why = job.failure || job.diagnostic?.message || (job.outcome === "waiting" ? job.retry_reason : "");
-  detail.replaceChildren(detailHead(id, job),
+  actions.before(h("span", { class: "muted" }, job.repository));
+  if (isGitHubJobURL(job.url)) actions.before(externalLink(tr("Open in GitHub"), job.url));
+  loading.replaceWith(
     h("div", { class: "detail-body" },
       why ? h("p", { class: "reason" }, serverText(why)) : null,
       h("div", {}, h("h3", {}, tr("Stage timing")), timingView(job.timing || {}),
         h("h3", { class: "spaced" }, tr("Resources")), resourceView(job.resources)),
       h("div", {}, h("h3", {}, tr("Details")), facts.element)));
-  if (focus) detail.querySelector("h2").focus();
-}
-
-function detailHead(id, job) {
-  return h("div", { class: "detail-head" },
-    h("h2", { id: "job-history-title", tabindex: "-1" }, tr("Job #{id}", { id })),
-    job ? h("span", { class: "muted" }, job.repository) : null,
-    job && isGitHubJobURL(job.url) ? externalLink(tr("Open in GitHub"), job.url) : null,
-    h("div", { class: "actions" }, button("Close", closeDetail, { small: true, "aria-label": tr("Close job #{id}", { id }) })));
 }
 
 function closeDetail() {
@@ -126,9 +123,10 @@ function closeDetail() {
   parts.detailTicket++;
   parts.detail.hidden = true;
   parts.detail.replaceChildren();
-  parts.table.update(parts.rows);
+  render();
   if (location.hash.startsWith("#/jobs?")) history.replaceState(null, "", "#/jobs");
-  [...parts.table.element.querySelectorAll("tbody tr")].find((row) => row.dataset.key === String(id))?.querySelector(".cell-button")?.focus();
+  const row = [...parts.table.element.querySelectorAll("tbody tr")].find((node) => node.dataset.key === String(id));
+  (row?.querySelector(".cell-button") || parts.table.element).focus();
 }
 
 function clearFilters() {
@@ -191,7 +189,8 @@ export default {
     const more = button("Load older jobs", () => void load(true));
     const count = h("span");
     const output = statusLine();
-    const detail = h("section", { class: "detail", id: "job-history-detail", "aria-labelledby": "job-history-title", hidden: true });
+    const detail = h("section", { class: "detail", id: "job-history-detail", "aria-labelledby": "job-history-title", hidden: true,
+      on: { keydown: (event) => { if (event.key === "Escape" && !event.isComposing) closeDetail(); } } });
     root.append(
       pageHead("Jobs"),
       intro("Runquill keeps finished jobs for seven days. Job logs stay on GitHub. Select a job ID for its stage timing and resources."),

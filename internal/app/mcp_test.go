@@ -287,7 +287,7 @@ func TestMCPToolsListSchemas(t *testing.T) {
 			t.Errorf("%s has no handler", tool.Name)
 		}
 	}
-	want := []string{"fleet_status", "list_jobs", "get_job", "list_hosts", "usage_summary", "elastic_decisions", "job_rightsizing"}
+	want := []string{"fleet_status", "list_jobs", "get_job", "list_hosts", "usage_summary", "elastic_decisions", "job_rightsizing", "pool_rightsizing"}
 	if !slices.Equal(names, want) || len(mcpHandlers) != len(want) {
 		t.Fatalf("tools %v, want %v in that order", names, want)
 	}
@@ -497,6 +497,37 @@ func TestMCPToolsReadPanelData(t *testing.T) {
 	if legacy.Result["isError"] != false || legacy.Result["structuredContent"] == nil || legacy.Result["resultType"] != nil {
 		t.Fatalf("legacy call: %s", rec.Body)
 	}
+}
+
+func TestMCPPoolRightsizing(t *testing.T) {
+	f := newMCPFixture(t)
+	f.panel.operations = &operations{}
+	f.panel.operations.current.Store(&operationState{runners: runnerConfiguration{pools: workerPools{"build": workerPool{}}}})
+
+	now := time.Now()
+	recordTestJob(t, f.q, 1, "runquill-1-1-pool__build__compile", now.Add(-time.Hour))
+	recordTestJob(t, f.q, 2, "runquill-1-1-pool__build__test", now.Add(-time.Hour))
+	if _, err := f.q.Exec("UPDATE jobs SET phase = ?, changed_at = ?", completed, now.Unix()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.q.Exec(`INSERT INTO job_resources (job_id, samples, cpu_limit, memory_limit_mib, cpu_peak, memory_peak_mib, oom_killed)
+        VALUES (1, 1, 2, 1024, 1.75, 256, 1), (2, 1, 2, 1024, 1.25, 512, 0)`); err != nil {
+		t.Fatal(err)
+	}
+
+	var report rightsizingResponse
+	f.toolOK("pool_rightsizing", nil, &report)
+	if report.Group != "pool" || report.Days != 7 || len(report.Groups) != 1 {
+		t.Fatalf("pool_rightsizing: %s", mustJSON(t, report))
+	}
+	g := report.Groups[0]
+	if g.Key != "build" || g.Jobs != 2 || g.OOMKills != 1 ||
+		g.CPU == nil || g.CPU.PeakMax != 1.75 || g.CPU.Verdict != "tight" ||
+		g.Memory == nil || g.Memory.PeakMax != 512 || g.Memory.Verdict != "tight" {
+		t.Fatalf("pool aggregate: %s", mustJSON(t, g))
+	}
+	f.toolFails("pool_rightsizing", map[string]any{"days": 8}, "days must be")
+	f.toolFails("pool_rightsizing", map[string]any{"group": "job"}, `Unknown argument "group"`)
 }
 
 func TestMCPAuthOriginAndTransportErrors(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net/http"
 	"net/url"
 	"os"
 	"runtime"
@@ -206,6 +207,17 @@ func (spec remoteCommandSpec) execute(name string, args []string, stdout, stderr
 	if err != nil {
 		fmt.Fprintf(stderr, "runquill %s: %v\n", name, err)
 		return 2
+	}
+	checkRedirect := client.http.CheckRedirect
+	client.http.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if err := checkRedirect(req, via); err != nil {
+			return err
+		}
+		// A redirected GET can succeed without making the requested change.
+		if req.Method != via[0].Method {
+			return http.ErrUseLastResponse
+		}
+		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), apiClientTimeout)
 	defer cancel()

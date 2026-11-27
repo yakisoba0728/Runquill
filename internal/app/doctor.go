@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -22,6 +23,7 @@ type doctorCheck struct {
 	Name  string `json:"name"`
 	OK    bool   `json:"ok"`
 	Error string `json:"error,omitempty"`
+	Level string `json:"level,omitempty"`
 }
 
 func doctor(ctx context.Context, out io.Writer, repo string, asJSON bool) error {
@@ -32,6 +34,12 @@ func doctor(ctx context.Context, out io.Writer, repo string, asJSON bool) error 
 		// JSON mode prints only the final document.
 		out = io.Discard
 	}
+	notice := func(level, name string) {
+		fmt.Fprintf(out, "%s %s\n", strings.ToUpper(level), name)
+		checks = append(checks, doctorCheck{Name: name, OK: true, Level: level})
+	}
+	info := func(name string) { notice("info", name) }
+	warn := func(name string) { notice("warn", name) }
 	report := func(name string, err error) {
 		check := doctorCheck{Name: name, OK: err == nil}
 		if err != nil {
@@ -48,6 +56,15 @@ func doctor(ctx context.Context, out io.Writer, repo string, asJSON bool) error 
 	if cfg.allowPublic {
 		report("public repositories allowed ("+allowPublicEnv+"); workflow runs from forks are refused", nil)
 	}
+	mirror, mirrorErr := registryMirror()
+	switch {
+	case mirrorErr != nil:
+		warn(mirrorErr.Error())
+	case mirror == "":
+		info("registry mirror (RUNQUILL_REGISTRY_MIRROR): unset")
+	default:
+		info("registry mirror (RUNQUILL_REGISTRY_MIRROR): configured and valid")
+	}
 	saved, settingsErr := doctorOperationSettings(ctx, cfg)
 	if settingsErr != nil {
 		report("saved operation settings", settingsErr)
@@ -59,12 +76,13 @@ func doctor(ctx context.Context, out io.Writer, repo string, asJSON bool) error 
 		}
 		switch fleet := saved.runners.runtime.(type) {
 		case *dockerFleet:
-			checkConfiguredDockerFleet(ctx, fleet, report)
+			reportDoctorPools(saved.runners.pools, info)
+			checkConfiguredDockerFleet(ctx, fleet, report, info)
 		case *kubeRunners:
 			fleet.check(ctx, report)
 		}
 	} else if env("RUNQUILL_BACKEND", "docker") == "docker" {
-		checkDockerFleet(ctx, cfg.runnerImage, report)
+		checkDockerFleet(ctx, cfg.runnerImage, mirror, report, info, warn)
 	} else {
 		runners, err := configureRunnerRuntime(cfg.runnerImage)
 		report("runner backend", err)
@@ -163,8 +181,8 @@ func checkPanelListener(ctx context.Context, addr string, cfg panelOAuthConfig) 
 	return nil
 }
 
-func checkDockerFleet(ctx context.Context, image string, report func(string, error)) {
-	fleet, dockerErr := newDockerFleet(image, env("RUNQUILL_DOCKER_HOSTS", "local"))
+func checkDockerFleet(ctx context.Context, image, mirror string, report func(string, error), info, warn func(string)) {
+	fleet, dockerErr := loadDockerFleet(image, env("RUNQUILL_DOCKER_HOSTS", "local"), mirror)
 	if dockerErr != nil {
 		report("Docker hosts", dockerErr)
 		return
@@ -172,12 +190,29 @@ func checkDockerFleet(ctx context.Context, image string, report func(string, err
 	_, limitErr := fleet.limits(os.Getenv("RUNQUILL_DOCKER_HOST_LIMITS"))
 	report("Docker host runner limits", limitErr)
 	pools, poolErr := fleet.configurePools(os.Getenv("RUNQUILL_WORKER_POOLS"))
-	report("Docker worker pools", poolErr)
+	if _, invalid := errors.AsType[invalidWarmPoolError](poolErr); invalid {
+		warn("Docker worker pools: " + poolErr.Error())
+	} else {
+		report("Docker worker pools", poolErr)
+	}
+	if poolErr == nil {
+		reportDoctorPools(pools, info)
+	}
 	fleet.recordPrivilegeRequests(pools)
-	checkConfiguredDockerFleet(ctx, fleet, report)
+	checkConfiguredDockerFleet(ctx, fleet, report, info)
 }
 
-func checkConfiguredDockerFleet(ctx context.Context, fleet *dockerFleet, report func(string, error)) {
+func reportDoctorPools(pools workerPools, info func(string)) {
+	if len(pools) == 0 {
+		pools = workerPools{defaultWorkerPool: {}}
+	}
+	for _, name := range slices.Sorted(maps.Keys(pools)) {
+		pool := pools[name]
+		info(fmt.Sprintf("worker pool %q: cache=%t, warm=%d per host", name, pool.Cache, pool.Warm))
+	}
+}
+
+func checkConfiguredDockerFleet(ctx context.Context, fleet *dockerFleet, report func(string, error), info func(string)) {
 	for _, target := range fleet.hosts {
 		targetReport := report
 		if len(fleet.hosts) > 1 || target.host != "" {
@@ -185,6 +220,9 @@ func checkConfiguredDockerFleet(ctx context.Context, fleet *dockerFleet, report 
 		}
 		if target.agentName() != "" {
 			targetReport("worker connection and runner image", fleet.workers.snapshot(ctx, target).Err)
+			if target.cache {
+				info(fmt.Sprintf("worker pool %q cache volumes on %s: inventory unavailable", target.pool, target.label()))
+			}
 		} else {
 			checkDocker(ctx, target, fleet.images, targetReport)
 		}
@@ -192,7 +230,7 @@ func checkConfiguredDockerFleet(ctx context.Context, fleet *dockerFleet, report 
 	if len(fleet.hosts) > 1 {
 		report("distinct Docker hosts with runner images", fleet.prepare(ctx))
 	}
-	reportRunnerAssets(ctx, fleet, report)
+	reportRunnerAssets(ctx, fleet, report, info)
 }
 
 func checkDocker(ctx context.Context, target docker, images *imageReadiness, report func(string, error)) {

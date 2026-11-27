@@ -4,20 +4,110 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	core "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
+	typed "k8s.io/client-go/kubernetes/typed/core/v1"
 )
+
+type failingRunnerSecrets struct {
+	typed.SecretInterface
+	cancel context.CancelFunc
+	err    error
+}
+
+func (s failingRunnerSecrets) Create(context.Context, *core.Secret, meta.CreateOptions) (*core.Secret, error) {
+	s.cancel()
+	return nil, s.err
+}
+
+type rollbackRunnerPods struct {
+	typed.PodInterface
+	deleteErr error
+	deleted   bool
+}
+
+const rollbackRunnerUID types.UID = "fixture-pod-uid"
+
+func (p *rollbackRunnerPods) Create(_ context.Context, pod *core.Pod, _ meta.CreateOptions) (*core.Pod, error) {
+	pod.UID = rollbackRunnerUID
+	return pod, nil
+}
+
+func (p *rollbackRunnerPods) Delete(ctx context.Context, name string, opts meta.DeleteOptions) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if _, ok := ctx.Deadline(); !ok || name != "runquill-1-test" || opts.Preconditions == nil ||
+		opts.Preconditions.UID == nil || *opts.Preconditions.UID != rollbackRunnerUID {
+		return errors.New("expected bounded cleanup of the created Pod UID")
+	}
+	p.deleted = true
+	return p.deleteErr
+}
+
+func TestKubernetesRollsBackPodWhenCredentialCreationIsCanceled(t *testing.T) {
+	for name, deleteErr := range map[string]error{"removed": nil, "delete failure": errors.New("delete failed")} {
+		t.Run(name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			pods := &rollbackRunnerPods{deleteErr: deleteErr}
+			k := &kubeRunners{pods: pods, secrets: failingRunnerSecrets{cancel: cancel, err: apierrors.NewBadRequest("fixture-credential")}}
+			err := k.startOn(ctx, kubeHost, "runquill-1-test", "fixture-credential")
+			if !pods.deleted || err == nil || !strings.Contains(err.Error(), "BadRequest") ||
+				strings.Contains(err.Error(), "fixture-credential") || (deleteErr != nil && !errors.Is(err, deleteErr)) {
+				t.Fatalf("cleanup attempted=%t, error=%v", pods.deleted, err)
+			}
+		})
+	}
+}
+
+func TestKubernetesLostCredentialReplyKeepsPod(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	pods := &rollbackRunnerPods{}
+	k := &kubeRunners{pods: pods, secrets: failingRunnerSecrets{cancel: cancel, err: context.Canceled}}
+	err := k.startOn(ctx, kubeHost, "runquill-1-test", "fixture-credential")
+	if pods.deleted || err == nil {
+		t.Fatalf("ambiguous credential creation: deleted=%t, error=%v", pods.deleted, err)
+	}
+}
+
+func TestKubernetesCredentialInitContainerIsConstrained(t *testing.T) {
+	t.Setenv("RUNQUILL_K8S_RUNNER_NAMESPACE", "runner-fixture")
+	t.Setenv("RUNQUILL_K8S_JOB_CPU", "2")
+	t.Setenv("RUNQUILL_K8S_JOB_MEMORY", "4Gi")
+	for _, mode := range []string{"plain", "dind"} {
+		t.Setenv("RUNQUILL_K8S_RUNNER_MODE", mode)
+		opts, err := readKubeRunnerOptions("runner:fixture")
+		if err != nil {
+			t.Fatal(err)
+		}
+		pod := (&kubeRunners{options: opts}).runnerPod("runquill-1-test")
+		init, runner := pod.Spec.InitContainers[0], pod.Spec.Containers[0]
+		if !reflect.DeepEqual(init.Resources, opts.resources) || !reflect.DeepEqual(runner.Resources, opts.resources) {
+			t.Fatalf("%s: both containers must use configured resources, got init=%v runner=%v", mode, init.Resources, runner.Resources)
+		}
+		if init.SecurityContext.ReadOnlyRootFilesystem == nil || !*init.SecurityContext.ReadOnlyRootFilesystem ||
+			runner.SecurityContext.ReadOnlyRootFilesystem != nil {
+			t.Fatalf("%s: expected read-only root only for the credential init container", mode)
+		}
+	}
+}
 
 func TestKubernetesPendingRunnersReserveCapacity(t *testing.T) {
 	for _, pod := range []core.Pod{

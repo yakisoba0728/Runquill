@@ -80,7 +80,9 @@ require() {
 
 # quote prints $1 as one single-quoted shell word.
 quote() {
-    printf "'%s'" "$(printf '%s\n' "$1" | sed "s/'/'\\\\''/g")"
+    # Keep trailing newlines through command substitution.
+    quoted=$(printf '%s.\n' "$1" | sed "s/'/'\\\\''/g")
+    printf "'%s'" "${quoted%.}"
 }
 
 original_args=
@@ -523,7 +525,10 @@ preflight_docker() {
     elif [ "$snap" = true ]; then
         item fail 'Compose v2' 'missing from the snap Docker'
         add_line blockers 'Snap-installed Docker is not changed automatically. Remove it (sudo snap remove docker) and rerun to install Docker from its official repository, or add the Compose v2 plugin yourself.'
-    elif docker_from_docker_repo && { [ "$docker_repo" = apt ] || [ "$docker_repo" = dnf ]; } && [ "$can_root" = true ]; then
+    elif [ "$can_root" = false ]; then
+        item fail 'Compose v2' 'missing'
+        add_line blockers "Installing Docker Compose v2: $root_reason"
+    elif docker_from_docker_repo && { [ "$docker_repo" = apt ] || [ "$docker_repo" = dnf ]; }; then
         fix_compose=true
         item fix 'Compose v2' 'missing; install docker-compose-plugin'
         if [ "$docker_repo" = apt ]; then
@@ -531,7 +536,7 @@ preflight_docker() {
         else
             add_line docker_plan "  Install the Compose plugin:$newline    $(as_root_text "$docker_dnf" install -y docker-compose-plugin)"
         fi
-    elif [ "$docker_repo" = apk ] && [ "$can_root" = true ]; then
+    elif [ "$docker_repo" = apk ]; then
         fix_compose=true
         item fix 'Compose v2' 'missing; install docker-cli-compose'
         add_line docker_plan "  Install the Compose plugin:$newline    $(as_root_text apk add --no-cache docker-cli-compose)"
@@ -636,6 +641,9 @@ preflight_docker() {
 
 applied=
 apply_step=
+prep_tmp='' ts_tmp='' scratch='' upgrade_lock=''
+temp_root=${TMPDIR:-/tmp}
+case $temp_root in /*) ;; *) temp_root=$(pwd)/$temp_root ;; esac
 note_done() { add_line applied "  $1"; }
 
 run_root() {
@@ -650,16 +658,23 @@ run_root() {
 
 on_exit() {
     exit_status=$?
-    if [ -n "${prep_tmp:-}" ]; then rm -rf -- "$prep_tmp"; fi
-    if [ -n "${ts_tmp:-}" ]; then rm -rf -- "$ts_tmp"; fi
-    if [ -n "${scratch:-}" ]; then rm -rf -- "$scratch"; fi
+    if [ -n "$prep_tmp" ]; then rm -rf -- "$prep_tmp" || :; fi
+    if [ -n "$ts_tmp" ]; then rm -rf -- "$ts_tmp" || :; fi
+    if [ -n "$scratch" ]; then
+        if [ -d "$scratch/previous" ] && [ ! -e .previous ] && ! mv -- "$scratch/previous" .previous; then
+            printf 'Could not restore .previous. The backup is in %s/%s/previous.\n' "$(pwd)" "$scratch" >&2
+        else
+            rm -rf -- "$scratch" || :
+        fi
+    fi
+    if [ -n "$upgrade_lock" ]; then rmdir "$upgrade_lock" || :; fi
     if [ "$exit_status" -ne 0 ] && [ -n "$apply_step" ]; then
         printf '\nrunquill install: failed while: %s\n' "$apply_step" >&2
         if [ -n "$applied" ]; then printf 'Already changed on this host:\n%s\n' "$applied" >&2; else printf 'Nothing on this host was changed.\n' >&2; fi
         printf 'Not done: this step and everything after it. Fix the error above and rerun the installer;\nsteps that already succeeded are detected and skipped.\n' >&2
     fi
 }
-trap on_exit EXIT
+trap on_exit 0
 trap 'exit 130' INT TERM
 
 fetch_verified_key() { # URL FINGERPRINT OUT
@@ -676,7 +691,7 @@ fetch_verified_key() { # URL FINGERPRINT OUT
 # Package lists and group_cmd are split into words on purpose.
 # shellcheck disable=SC2086
 apply_plan() {
-    prep_tmp=$(mktemp -d "${TMPDIR:-/tmp}/runquill-prepare.XXXXXX")
+    prep_tmp=$(mktemp -d "$temp_root/runquill-prepare.XXXXXX")
     mkdir -m 700 "$prep_tmp/gnupg"
     if [ -n "$fix_tools" ]; then
         apply_step="install$missing_tools"
@@ -771,13 +786,13 @@ continue_with_docker_group() {
     export RUNQUILL_INSTALL_REEXEC
     if has sg; then
         printf '%s\n' 'Continuing with the docker group active (sg docker) ...'
-        trap - EXIT
+        trap - 0
         on_exit
         exec sg docker -c "exec /bin/sh $(quote "$script_path")$original_args"
     fi
     if [ "$uid" -ne 0 ] && has sudo; then
         printf '%s\n' "Continuing with the docker group active (sudo -u $user) ..."
-        trap - EXIT
+        trap - 0
         on_exit
         eval "set -- $original_args"
         exec sudo -u "$user" env RUNQUILL_INSTALL_REEXEC=1 \
@@ -840,7 +855,7 @@ plan_tailscale() {
 
 prepare_tailscale() {
     if ! has tailscale; then
-        ts_tmp=$(mktemp -d "${TMPDIR:-/tmp}/runquill-tailscale.XXXXXX") || return 1
+        ts_tmp=$(mktemp -d "$temp_root/runquill-tailscale.XXXXXX") || return 1
         curl --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 30 \
             -fsSL https://tailscale.com/install.sh -o "$ts_tmp/install.sh" || return 1
         run_root sh "$ts_tmp/install.sh" || return 1
@@ -970,6 +985,10 @@ else
         relogin_note
         exit 0
     fi
+    if [ "$mode_docker" = false ] && [ "$upgrade" = false ] && [ "$wizard" = false ] &&
+        ! docker compose version --short >/dev/null 2>&1; then
+        fail 'Docker Compose v2 is required for command-line setup. Install the Compose plugin or use --wizard for K3s.'
+    fi
 fi
 
 require curl 'Install curl with your package manager.'
@@ -981,11 +1000,12 @@ if [ -z "$tag" ]; then
     latest=$(curl --proto '=https' --proto-redir '=https' -fsSL -o /dev/null -w '%{url_effective}' "$repo/releases/latest")
     tag=${latest##*/}
 fi
-if ! printf '%s\n' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$'; then
+if [ "${tag#*"$newline"}" != "$tag" ] || ! printf '%s\n' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$'; then
     printf '%s\n' 'Could not select a Runquill release tag. Specify --version vX.Y.Z.' >&2
     exit 1
 fi
 
+case $directory in /*) ;; *) directory=./$directory ;; esac
 if [ "$upgrade" = true ]; then
     if [ ! -f "$directory/runquill" ] || [ -L "$directory/runquill" ]; then
         fail "No Runquill install found in $directory. Pass the existing install with --dir."
@@ -994,8 +1014,8 @@ fi
 
 umask 077
 mkdir -p -- "$directory"
-cd -- "$directory"
-scratch=$(mktemp -d .runquill-install.XXXXXX)
+cd "$directory"
+scratch=$(mktemp -d ./.runquill-install.XXXXXX)
 binary=runquill-linux-$arch
 url="$repo/releases/download/$tag"
 files='compose.yaml compose.ssh.yaml LICENSE'
@@ -1031,6 +1051,15 @@ curl --proto '=https' --proto-redir '=https' --connect-timeout 10 --retry 2 --fa
 chmod 700 "$scratch/$binary"
 if [ "$upgrade" = true ]; then
     # Only release assets are replaced; .env, keys, data and anything else stay as they are.
+    # Give cleanup ownership before honoring a signal received during mkdir.
+    lock_interrupted=false
+    trap 'lock_interrupted=true' INT TERM
+    if (trap '' INT TERM; mkdir .runquill-upgrade); then
+        upgrade_lock=.runquill-upgrade
+    fi
+    trap 'exit 130' INT TERM
+    [ "$lock_interrupted" = false ] || exit 130
+    [ -n "$upgrade_lock" ] || fail 'Could not lock this install for upgrade (.runquill-upgrade). Check for another installer.'
     changed=
     for name in runquill $files; do
         asset=$name
@@ -1049,11 +1078,12 @@ if [ "$upgrade" = true ]; then
     if [ -L .previous ] || { [ -e .previous ] && [ ! -d .previous ]; }; then
         fail '.previous is not a directory. Move it away and rerun --upgrade.'
     fi
-    backup=$(mktemp -d .runquill-previous.XXXXXX)
+    backup=$scratch/backup
+    mkdir "$backup"
     for name in $changed; do
         if [ -e "$name" ]; then cp -p -- "$name" "$backup/$name"; fi
     done
-    rm -rf -- .previous
+    if [ -d .previous ]; then mv -- .previous "$scratch/previous"; fi
     mv -- "$backup" .previous
     for name in $changed; do
         asset=$name

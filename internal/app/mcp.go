@@ -470,6 +470,11 @@ var mcpTools = []mcpTool{
 			"group": {Type: "string", Description: "Group by worker pool or by repository and runner label.", Enum: []string{"pool", "job"}, Default: "pool"},
 			"days":  mcpInteger("Jobs that finished in this many days.", 1, 7, rightsizingDefaultAge),
 		})},
+	{Name: "pool_rightsizing", Title: "Pool rightsizing", Annotations: mcpReadOnly,
+		Description: "Show sampled CPU peaks in cores, memory peaks in MiB, out-of-memory kills, and a verdict per resource for each worker pool over recently finished jobs.",
+		InputSchema: mcpObject(nil, map[string]*mcpSchema{
+			"days": mcpInteger("Jobs that finished in this many days.", 1, 7, rightsizingDefaultAge),
+		})},
 }
 
 type mcpArgs map[string]json.RawMessage
@@ -511,6 +516,8 @@ var mcpHandlers = map[string]func(*mcpServer, context.Context, mcpArgs) (any, er
 	"usage_summary":     (*mcpServer).usageSummary,
 	"elastic_decisions": (*mcpServer).elasticDecisions,
 	"job_rightsizing":   (*mcpServer).jobRightsizing,
+	// The pool tool accepts no group argument, so the handler uses its pool default.
+	"pool_rightsizing": (*mcpServer).jobRightsizing,
 }
 
 func (s *mcpServer) snapshot() panelSnapshot {

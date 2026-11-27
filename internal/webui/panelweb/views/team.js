@@ -122,8 +122,32 @@ function teamBlock(ctx) {
       }, { small: true, "aria-label": tr("{action} {name}", { action: tr(member.disabled ? "Enable" : "Disable"), name: memberName(member) }) })) },
     ],
   });
-  async function load() {
-    table.update(await ctx.api.get("./api/team"));
+  let cursors = [0];
+  let nextCursor = 0;
+  let loading = Promise.resolve();
+  const previous = button("Previous page", () => guarded(output, () => load(cursors.slice(0, -1))), { disabled: true });
+  const next = button("Next page", () => guarded(output, () => load([...cursors, nextCursor])), { disabled: true });
+  function load(pageCursors) {
+    loading = loading.catch(() => {}).then(async () => {
+      const focused = [previous, next].find((control) => document.activeElement === control);
+      previous.disabled = next.disabled = true;
+      try {
+        const page = pageCursors ?? cursors;
+        const members = await ctx.api.get("./api/team?after=" + encodeURIComponent(page.at(-1)));
+        nextCursor = members.length === 100 ? members.at(-1).github_id : 0;
+        if (members.length || page.length <= cursors.length) {
+          table.update(members);
+          cursors = page;
+        }
+      } finally {
+        previous.disabled = cursors.length === 1;
+        next.disabled = !nextCursor;
+        if (focused && (document.activeElement === document.body || document.activeElement === focused)) {
+          (focused.disabled ? table.element : focused).focus({ preventScroll: true });
+        }
+      }
+    });
+    return loading;
   }
   submitForm(form, output, async (data) => {
     const account = String(data.get("account")).trim();
@@ -139,7 +163,8 @@ function teamBlock(ctx) {
   });
   table.update([], "Loading…");
   void guarded(output, load).then((ok) => ok || table.update([], "Team members are unavailable."));
-  return block("Team", { note: "Enroll a teammate by GitHub login or numeric account ID." }, form, table.element, output);
+  return block("Team", { note: "Enroll a teammate by GitHub login or numeric account ID." },
+    form, table.element, h("div", { class: "actions" }, previous, next), output);
 }
 
 export default {

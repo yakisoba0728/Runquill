@@ -80,6 +80,141 @@ func TestSchedulerRetryHonoursGitHubRetryAt(t *testing.T) {
 	}
 }
 
+func TestSchedulerRetryAtBackoffLimit(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		cancel    bool
+		rateDelay time.Duration
+		wantDelay time.Duration
+	}{
+		{"repeated launch failures", false, 0, maxLaunchDelay},
+		{"GitHub rate limit exceeds backoff cap", false, time.Hour, time.Hour},
+		{"cancelled attempt keeps existing retry", true, time.Hour, 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			q := testQueue(t)
+			now := time.Unix(1_800_000_000, 0)
+			j := recordTestJob(t, q, 9, "runquill-1-1-ci", now)
+			if _, err := q.ExecContext(t.Context(), `UPDATE jobs SET launch_failures = 20,
+				retry_at = ?, retry_reason = 'previous attempt' WHERE job_id = ?`, now.Unix(), j.id); err != nil {
+				t.Fatal(err)
+			}
+			want := readJob(t, q, j.id)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			var wantErr error
+			if tt.cancel {
+				cancel()
+				wantErr = context.Canceled
+			}
+			s := &scheduler{queue: q}
+			cause := &githubError{status: http.StatusTooManyRequests, retryAt: now.Add(tt.rateDelay)}
+			if err := s.retryAfter(ctx, want, now, "provision runner", cause, launchDelay(want.launchFailures), true); !errors.Is(err, wantErr) {
+				t.Fatalf("retry returned %v, want %v", err, wantErr)
+			}
+			if !tt.cancel {
+				want.launchFailures++
+				want.retryAt = now.Add(tt.wantDelay).Unix()
+				want.retryReason = retryMessage("provision runner", cause)
+			}
+			if got := readJob(t, q, j.id); got != want {
+				t.Fatalf("stored job = %+v, want %+v", got, want)
+			}
+		})
+	}
+}
+
+func TestSchedulerDoesNotClaimJobCancelledDuringLookup(t *testing.T) {
+	q := testQueue(t)
+	now := time.Unix(1_800_000_000, 0)
+	j := recordTestJob(t, q, 9, "runquill-1-1-ci", now)
+	gh := testGitHub(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method + " " + r.URL.Path {
+		case "POST /app/installations/1/access_tokens":
+			fmt.Fprint(w, `{"token":"stub"}`)
+		case "GET /repos/owner/repo":
+			fmt.Fprint(w, `{"id":2,"private":true,"owner":{"login":"owner"}}`)
+		case "GET /repos/owner/repo/actions/jobs/9":
+			if changed, err := q.fail(r.Context(), j.id, now, "cancelled by operator"); err != nil || !changed {
+				t.Errorf("cancel while checking job: changed %v, error %v", changed, err)
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			fmt.Fprint(w, `{"status":"queued"}`)
+		default:
+			t.Errorf("unexpected GitHub request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	s := &scheduler{queue: q, github: gh}
+	if claimed, err := s.launch(t.Context(), j, "local", defaultWorkerPool, now); err != nil || claimed {
+		t.Fatalf("launch after cancellation: claimed %v, error %v", claimed, err)
+	}
+	if got := readJob(t, q, j.id); got.phase != completed || got.runnerName != "" || got.failure != "cancelled by operator" {
+		t.Fatalf("job after cancellation: %+v", got)
+	}
+}
+
+func TestSchedulerReconcilesLeaseOnRecordedHost(t *testing.T) {
+	const runner = "runquill-9-0123456789ab"
+	for _, tt := range []struct {
+		name      string
+		owner     string
+		local     map[string]string
+		other     map[string]string
+		wantOwner string
+		removed   bool
+	}{
+		{"owner offline", "local", nil, map[string]string{}, "local", false},
+		{"runner seen only elsewhere", "local", map[string]string{}, map[string]string{runner: "running"}, "local", false},
+		{"legacy lease adopts observed host", "", map[string]string{runner: "running"}, nil, "local", false},
+		{"duplicate on another host", "local", map[string]string{runner: "exited"}, map[string]string{runner: "running"}, "", true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			q := testQueue(t)
+			ctx := t.Context()
+			now := time.Unix(1_800_000_000, 0)
+			j := recordTestJob(t, q, 9, "runquill-1-1-ci", now)
+			if _, err := q.ExecContext(ctx, `UPDATE jobs SET phase = ?, runner_name = ?, runner_host = nullif(?, ''),
+				runner_id = 55, launched_at = ? WHERE job_id = ?`, completed, runner, tt.owner, now.Unix(), j.id); err != nil {
+				t.Fatal(err)
+			}
+			var deleted atomic.Int32
+			gh := testGitHub(t, func(w http.ResponseWriter, r *http.Request) {
+				switch r.Method + " " + r.URL.Path {
+				case "POST /app/installations/1/access_tokens":
+					fmt.Fprint(w, `{"token":"stub"}`)
+				case "DELETE /repos/owner/repo/actions/runners/55":
+					deleted.Add(1)
+					w.WriteHeader(http.StatusNoContent)
+				default:
+					t.Errorf("unexpected GitHub request: %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			})
+			runtime := &testRuntime{hosts: []dockerHostSnapshot{
+				{Name: "local", Containers: tt.local}, {Name: "other", Containers: tt.other},
+			}}
+			s := &scheduler{queue: q, github: gh, runtime: runtime}
+			if err := s.tick(ctx, now); err != nil {
+				t.Fatal(err)
+			}
+			got := readJob(t, q, j.id)
+			if got.runnerHost != tt.wantOwner || got.phase != completed {
+				t.Fatalf("reconciled job = %+v, want host %q and completed phase", got, tt.wantOwner)
+			}
+			if tt.removed {
+				if got.runnerName != "" || got.runnerID != 0 || got.launchedAt != 0 || deleted.Load() != 1 ||
+					len(runtime.removed) != 1 || tt.local[runner] != "" || tt.other[runner] != "running" {
+					t.Fatalf("cleanup left job %+v, removed %v and deleted %d registrations", got, runtime.removed, deleted.Load())
+				}
+			} else if got.runnerName != runner || got.runnerID != 55 || deleted.Load() != 0 || len(runtime.removed) != 0 {
+				t.Fatalf("cleanup altered lease %+v, removed %v and deleted %d registrations", got, runtime.removed, deleted.Load())
+			}
+		})
+	}
+}
+
 func TestGitHubRemoveFindsRunnerByNameWithoutID(t *testing.T) {
 	var deleted []string
 	var mu sync.Mutex

@@ -503,6 +503,7 @@ setInterval(renderChrome, 1000);
         .sort((a, b) => a.rank - b.rank || a.order - b.order).map((entry) => entry.item);
     }
     shown = matches.slice(0, limit);
+    input.setAttribute("aria-expanded", String(shown.length > 0));
     list.replaceChildren(...shown.map((item, i) => h("li", {
       id: "palette-option-" + i, role: "option", "aria-selected": "false", dataset: { index: String(i) },
     }, h("span", { class: "palette-label" }, item.text), h("span", { class: "palette-kind" }, tr(item.kind)))));
@@ -529,10 +530,12 @@ setInterval(renderChrome, 1000);
   function close() {
     if (!dialog.open) return;
     dialog.close();
+    input.setAttribute("aria-expanded", "false");
     input.removeAttribute("aria-activedescendant");
     const target = opener;
     opener = null;
     if (target?.isConnected && target !== document.body) target.focus({ preventScroll: true });
+    if (document.activeElement === document.body) $("palette-open").focus({ preventScroll: true });
   }
 
   function choose(i) {
@@ -547,9 +550,9 @@ setInterval(renderChrome, 1000);
     }
   }
 
-  function open() {
+  function open(trigger = document.activeElement) {
     if (dialog.open || $("shell").hidden || $("confirm-dialog").open) return;
-    opener = document.activeElement;
+    opener = trigger;
     items = collect();
     input.value = "";
     dialog.showModal();
@@ -569,8 +572,6 @@ setInterval(renderChrome, 1000);
     } else if (event.key === "Enter") {
       event.preventDefault();
       choose(index);
-    } else if (event.key === "Tab") {
-      event.preventDefault(); // the field is the dialog's only stop
     }
   });
   list.addEventListener("mousedown", (event) => event.preventDefault()); // keep focus in the field
@@ -593,7 +594,8 @@ setInterval(renderChrome, 1000);
   const mac = /mac|iphone|ipad/i.test(navigator.userAgentData?.platform || navigator.platform || "");
   $("palette-key").textContent = mac ? "⌘K" : "Ctrl K";
   $("palette-open").setAttribute("aria-keyshortcuts", mac ? "Meta+K /" : "Control+K /");
-  $("palette-open").addEventListener("click", open);
+  $("palette-open").addEventListener("click", (event) => open(event.currentTarget));
+  $("palette-close").addEventListener("click", close);
   document.addEventListener("keydown", (event) => {
     if (event.defaultPrevented || event.isComposing) return;
     if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "k") {

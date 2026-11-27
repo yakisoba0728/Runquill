@@ -18,6 +18,34 @@ import (
 	"time"
 )
 
+func TestPollerRejectsInvalidPagesBeforeCaching(t *testing.T) {
+	const path = "/repos/owner/repo/actions/runs"
+	const valid = `{"workflow_runs":[]}`
+	for _, tt := range []struct {
+		name, body string
+	}{
+		{"trailing JSON", valid + " {}"},
+		{"oversize page", valid + strings.Repeat(" ", maxPollPageBytes+1-len(valid))},
+		{"null list", `{"workflow_runs":null}`},
+		{"malformed list entry", `{"workflow_runs":[{"id":"not an integer"}]}`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("ETag", `"invalid"`)
+				fmt.Fprint(w, tt.body)
+			}))
+			defer server.Close()
+			p := &poller{github: &github{base: server.URL, client: server.Client()}, cache: make(map[string]pollPage)}
+			if _, err := polledPages[workflowRun](t.Context(), p, path, "workflow_runs"); err == nil {
+				t.Fatal("expected invalid page to be rejected")
+			}
+			if _, cached := p.cache[path]; cached {
+				t.Fatal("invalid page was cached")
+			}
+		})
+	}
+}
+
 func TestPollerFindsQueuedJobsInActiveRunsAndDeduplicatesWebhooks(t *testing.T) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {

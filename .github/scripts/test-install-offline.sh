@@ -1,5 +1,5 @@
 #!/bin/sh
-# Offline tests for install.sh's host checks and fixes. Every system command the
+# Offline tests for install.sh's host checks and release handling. Every system command the
 # installer touches (uname, id, docker, sudo, apt-get, systemctl, curl, gpg, sg,
 # ...) is a stub on PATH that records its arguments, and /etc, /proc, /run and /sys
 # come from a fake root, so nothing on this machine is read or changed.
@@ -13,14 +13,14 @@ set -eu
 shell_under_test=${1:-sh}
 installer=$(cd "$(dirname "$0")/../.." && pwd)/install.sh
 work=$(mktemp -d)
-trap 'rm -rf -- "$work"' EXIT
+trap 'rm -rf -- "$work"' 0
 passed=0
 failed=0
 
 # ---------------------------------------------------------------- stubs
 
 mkdir -p "$work/real" "$work/templates"
-for tool in sh dash bash awk sed grep cat mktemp rm mkdir tr cut head tail readlink cmp wc env chmod ln cp mv \
+for tool in sh dash bash ash awk sed grep cat mktemp rm mkdir rmdir tr cut head tail readlink cmp wc env chmod ln cp mv \
     sleep tee dirname basename sha256sum timeout touch ls printf test true false expr sort; do
     path=$(command -v "$tool" 2>/dev/null) || continue
     case $path in /*) ln -s "$path" "$work/real/$tool" ;; esac
@@ -47,7 +47,14 @@ stub stat 'echo "${STUB_CGROUP:-cgroup2fs}"'
 stub df 'echo "Filesystem 1024-blocks Used Available Capacity Mounted"; echo "/dev/x 1 1 ${STUB_DISK_KB:-104857600} 1% /"'
 stub curl 'out=; write=; prev=; url=
 for a in "$@"; do
-    if [ "$prev" = -o ]; then out=$a; fi
+    if [ "$prev" = -o ]; then
+        out=$a
+        case $url in */releases/download/*)
+            if [ -d "$STUB_STATE/release" ]; then
+                cp "$STUB_STATE/release/${url##*/}" "$out" || exit 22
+            fi ;;
+        esac
+    fi
     if [ "$prev" = -w ]; then write=1; fi
     case $a in https://*) url=$a ;; esac
     prev=$a
@@ -55,7 +62,15 @@ done
 if [ -n "$write" ]; then printf "%s" "${STUB_HTTP:-200}"; [ "${STUB_HTTP:-200}" != 000 ] || exit 7; exit 0; fi
 [ "${STUB_HTTP:-200}" != 000 ] || exit 7
 if [ "$url" = https://tailscale.com/install.sh ]; then cp "$STUB_TEMPLATES/tailscale-install" "$out"; exit; fi
-if [ -n "$out" ] && [ "$out" != /dev/null ]; then echo stub-download >"$out"; fi'
+if [ -n "$out" ] && [ "$out" != /dev/null ] && [ ! -d "$STUB_STATE/release" ]; then echo stub-download >"$out"; fi'
+stub mv 'if [ "$#" -eq 3 ] && [ "${2##*/}" = backup ] && [ "$3" = .previous ]; then exit 1; fi
+exec "$STUB_TEMPLATES/../real/mv" "$@"'
+stub mkdir '"$STUB_TEMPLATES/../real/mkdir" "$@" || exit "$?"
+if [ "$*" = .runquill-upgrade ]; then
+    kill -TERM "$(cat "$STUB_STATE/installer-pid")"
+else
+    printf "%s\n" "$PPID" >"$STUB_STATE/installer-pid"
+fi'
 stub gpg 'printf "pub:-:4096:1:X:::::\nfpr:::::::::%s:\nsub:-:4096:1:Y:::::\nfpr:::::::::%s:\n" "${STUB_FPR:-9DC858229FC7DD38854AE2D88D81803C0EBFCD88}" D3306A018370199E527AE7997EA0A9C3F273FCD8'
 stub sudo 'if [ -n "${STUB_SUDO_BROKEN:-}" ]; then exit 1; fi
 if [ "$1" = -n ]; then [ -z "${STUB_SUDO_PASSWORD:-}" ]; exit; fi
@@ -119,7 +134,7 @@ pm_body='for p in "$@"; do
         curl) cp "$STUB_TEMPLATES/curl" "$STUB_BIN/" ;;
         gpg|gnupg|gnupg2) cp "$STUB_TEMPLATES/gpg" "$STUB_BIN/" ;;
         docker-ce|docker) cp "$STUB_TEMPLATES/docker" "$STUB_BIN/"; touch "$STUB_STATE/docker-ce" "$STUB_STATE/compose" ;;
-        docker-compose-plugin|docker-cli-compose) touch "$STUB_STATE/compose" ;;
+        docker-compose-plugin|docker-cli-compose) [ -n "${STUB_COMPOSE_INSTALL_NOOP:-}" ] || touch "$STUB_STATE/compose" ;;
     esac
 done
 [ -z "${STUB_PM_FAIL:-}" ]'
@@ -219,8 +234,31 @@ lacks_out() { ! has_out "$1"; }
 has_log() { grep -Fq -- "$1" "$case_dir/state/log"; }
 lacks_log() { ! has_log "$1"; }
 exit_is() { [ "$code" -eq "$1" ]; }
+no_matches() { [ "$#" -eq 1 ] && [ ! -e "$1" ]; }
 changed_nothing() {
     ! grep -Eq '^(apt-get|dnf|apk|install|usermod|addgroup|rpm|groupadd|systemctl enable|sg) ' "$case_dir/state/log"
+}
+
+release() {
+    fixture=$case_dir/state/release
+    mkdir "$fixture"
+    (
+        cd "$fixture"
+        for asset in runquill-linux-amd64 compose.yaml compose.ssh.yaml compose.panel.yaml LICENSE; do
+            printf 'new %s\n' "$asset" >"$asset"
+            sha256sum "$asset"
+        done >SHA256SUMS
+    )
+}
+
+existing_install() {
+    installed=$case_dir/home/runquill
+    mkdir -p "$installed/.previous"
+    printf '%s\n' 'old binary' >"$installed/runquill"
+    printf '%s\n' 'old compose' >"$installed/compose.yaml"
+    printf '%s\n' 'older binary' >"$installed/.previous/runquill"
+    printf '%s\n' 'FIXTURE=keep' >"$case_dir/original.env"
+    cp "$case_dir/original.env" "$installed/.env"
 }
 
 healthy='docker up group enabled compose systemd'
@@ -417,11 +455,33 @@ run -- --prepare-only --yes
 check 'compose missing: plugin installed' has_log 'apt-get install -y docker-compose-plugin'
 check 'compose missing: ready' exit_is 0
 
+host docker up group enabled systemd
+run STUB_COMPOSE_INSTALL_NOOP=1 -- --prepare-only --yes
+check 'compose still missing after install: fails' exit_is 1
+check 'compose still missing after install: rechecked' has_out 'The host is still not ready'
+
+host docker up group enabled systemd nosudo
+run -- --prepare-only --yes
+check 'compose missing without sudo: fails' exit_is 1
+check 'compose missing without sudo: explains the permission issue' has_out 'Installing Docker Compose v2: this needs root'
+
+host systemd k3s
+run -- --version v0.3.2
+check 'direct setup on K3s without Compose: fails' exit_is 1
+check 'direct setup on K3s without Compose: suggests wizard' has_out 'use --wizard for K3s'
+check 'direct setup on K3s without Compose: fails before download' lacks_log '/SHA256SUMS'
+
 host docker up dbgroup enabled compose systemd
 run -- --prepare-only
 check 'group already in db: no consent needed' exit_is 0
 check 'group already in db: re-exec' has_log 'sg docker -c'
 check 'group already in db: no change' lacks_log 'usermod'
+
+host docker up dbgroup enabled compose systemd
+newline='
+'
+run -- --prepare-only --dir "trailing${newline}"
+check 'group re-exec keeps a trailing newline in an argument' grep -Fxq 'arg[trailing' "$case_dir/state/log"
 
 host docker up dbgroup enabled compose systemd
 run STUB_SG_NOOP=1 -- --prepare-only
@@ -458,6 +518,77 @@ run -- --upgrade --version v0.3.1 --dir ./missing
 check 'upgrade: skips Docker probes' lacks_log 'docker '
 check 'upgrade: no docker install' changed_nothing
 check 'upgrade: still requires an install' has_out 'No Runquill install found'
+
+host
+release
+mkdir -p "$case_dir/elsewhere/-run quill's"
+run CDPATH=../elsewhere -- --download-only --version v0.3.2 --dir "-run quill's"
+installed="$case_dir/home/-run quill's"
+check 'download: accepts a relative directory with shell punctuation' exit_is 0
+check 'download: verified binary installed in the requested directory' cmp "$fixture/runquill-linux-amd64" "$installed/runquill"
+check 'download: verifies and installs optional asset' cmp "$fixture/compose.panel.yaml" "$installed/compose.panel.yaml"
+check 'download: ignores CDPATH' test ! -e "$case_dir/elsewhere/-run quill's/runquill"
+check 'download: removes staging on success' no_matches "$installed"/.runquill-install.*
+
+host
+release
+run -- --download-only --version "v0.3.2${newline}extra"
+check 'download: rejects a multiline version' exit_is 1
+check 'download: invalid version does not fetch assets' lacks_log '/SHA256SUMS'
+
+host $healthy
+release
+mkdir "$case_dir/home/temp"
+printf '%s\n' 'corrupt optional asset' >"$fixture/compose.panel.yaml"
+run TMPDIR=temp -- --wizard --yes --version v0.3.2
+check 'download: rejects an optional asset with the wrong checksum' exit_is 1
+check 'download: checksum error identifies the asset' has_out 'compose.panel.yaml: FAILED'
+check 'download: no binary installed after checksum failure' test ! -e "$case_dir/home/runquill/runquill"
+check 'download: removes staging on checksum failure' no_matches "$case_dir/home/runquill"/.runquill-install.*
+check 'download: removes relative Tailscale temp directory after cd' no_matches "$case_dir/home/temp"/runquill-tailscale.*
+
+host
+release
+sed '/ LICENSE$/d' "$fixture/SHA256SUMS" >"$fixture/manifest"
+mv "$fixture/manifest" "$fixture/SHA256SUMS"
+run -- --download-only --version v0.3.2
+check 'download: rejects a missing required checksum' exit_is 1
+check 'download: missing checksum identifies the asset' has_out 'Invalid or missing checksum for LICENSE'
+check 'download: no binary installed with an incomplete manifest' test ! -e "$case_dir/home/runquill/runquill"
+
+host
+release
+existing_install
+run -- --upgrade --version v0.3.2
+check 'upgrade: completes without Docker' exit_is 0
+check 'upgrade: replaces the binary' cmp "$fixture/runquill-linux-amd64" "$installed/runquill"
+check 'upgrade: backs up the replaced binary' grep -qx 'old binary' "$installed/.previous/runquill"
+check 'upgrade: backs up the replaced Compose file' grep -qx 'old compose' "$installed/.previous/compose.yaml"
+check 'upgrade: preserves .env' cmp "$case_dir/original.env" "$installed/.env"
+run -- --upgrade --version v0.3.2
+check 'upgrade: retry reports the release is already installed' has_out 'is already installed'
+check 'upgrade: retry keeps the rollback copy' grep -qx 'old binary' "$installed/.previous/runquill"
+
+host
+release
+existing_install
+cp "$work/templates/mv" "$case_dir/bin/"
+run -- --upgrade --version v0.3.2
+check 'upgrade: backup publish failure aborts' exit_is 1
+check 'upgrade: backup publish failure restores the prior backup' grep -qx 'older binary' "$installed/.previous/runquill"
+check 'upgrade: backup publish failure leaves current files intact' grep -qx 'old binary' "$installed/runquill"
+check 'upgrade: backup publish failure preserves .env' cmp "$case_dir/original.env" "$installed/.env"
+check 'upgrade: backup publish failure removes staging' no_matches "$installed"/.runquill-install.*
+check 'upgrade: backup publish failure releases the lock' test ! -e "$installed/.runquill-upgrade"
+
+host
+release
+existing_install
+cp "$work/templates/mkdir" "$case_dir/bin/"
+run -- --upgrade --version v0.3.2
+check 'upgrade: interruption while locking exits' exit_is 130
+check 'upgrade: interruption while locking removes staging' no_matches "$installed"/.runquill-install.*
+check 'upgrade: interruption while locking releases the lock' test ! -e "$installed/.runquill-upgrade"
 
 script_bin=$(command -v script 2>/dev/null || true)
 if [ -n "$script_bin" ] && "$script_bin" -qec true /dev/null >/dev/null 2>&1; then

@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/yakisoba0728/Runquill/internal/workflow"
 )
 
 // pendingRoutes lists panel routes that are registered but not yet described
@@ -147,6 +149,9 @@ func TestOpenAPIOperationsAreComplete(t *testing.T) {
 			if panelTokenCanCall(permission) {
 				want = []string{"bearerToken", "sessionCookie"}
 			}
+			if key == "POST /mcp" {
+				want = []string{"bearerToken"}
+			}
 			if !slices.Equal(schemes, want) {
 				t.Errorf("%s with permission %s declares security %v, want %v", where, permission, schemes, want)
 			}
@@ -189,10 +194,11 @@ func TestOpenAPIOperationsAreComplete(t *testing.T) {
 	walk(spec)
 }
 
-// Schemas named here must list exactly the JSON fields the Go type encodes,
-// and require exactly those without omitempty.
+// Schemas named here must list exactly the JSON fields the Go type encodes
+// and require exactly those that cannot be omitted.
 func TestOpenAPISchemasMatchGoStructs(t *testing.T) {
-	schemas := loadOpenAPI(t).get("components").get("schemas")
+	spec := loadOpenAPI(t)
+	schemas := spec.get("components").get("schemas")
 	for name, value := range map[string]any{
 		"Identity": panelIdentity{}, "TeamMember": panelMember{}, "Token": panelToken{}, "AuditEvent": panelAuditEvent{},
 		"HistoryJob": panelHistoryJob{}, "JobHistoryPage": panelHistoryPageResponse{}, "Snapshot": panelSnapshot{},
@@ -203,23 +209,58 @@ func TestOpenAPISchemasMatchGoStructs(t *testing.T) {
 		"RightsizingGroup": rightsizingGroup{}, "RightsizingReport": rightsizingResponse{},
 		"HostResourcesReport": hostResourcesReport{}, "HostResources": hostResources{},
 		"HostReservation": hostReservation{}, "HostUsage": hostUsage{}, "RunnerDiskUse": runnerDiskUse{},
+		"ElasticReport": elasticReport{}, "ElasticHostPlan": elasticHostPlan{},
+		"ElasticRunner": elasticRunnerView{}, "ElasticDecision": elasticDecision{},
+		"UsageReport": usageResponse{}, "UsageTotals": usageTotals{}, "UsageGroup": usageGroup{},
+		"MigrationError": migrateFailure{}, "MigrationJob": workflow.JobOutcome{},
+		"MigrationFile": migrationFile{}, "MigrationPreview": migrationPreview{}, "MigrationPullRequest": migrationPR{},
+		"BackupStatus": backupStatusReport{}, "BackupVerification": backupVerification{},
+		"BackupRemote": backupRemoteSummary{}, "BackupRun": backupSnapshot{},
+		"JSONRPCResponse": rpcResponse{},
 	} {
-		schema := schemas.get(name)
-		if schema == nil {
-			t.Errorf("components.schemas.%s is missing", name)
-			continue
+		checkOpenAPIFields(t, name, schemas, schemas.get(name), value)
+	}
+	rpcErrorSchema := schemas.get("JSONRPCResponse").get("properties").get("error")
+	checkOpenAPIFields(t, "JSONRPCResponse.error", schemas, rpcErrorSchema, rpcError{})
+	enrollment := spec.get("paths").get("/api/hosts/{name}/enrollment").get("post").get("responses").get("201")
+	checkOpenAPIFields(t, "worker enrollment response", schemas,
+		enrollment.get("content").get("application/json").get("schema"), workerEnrollmentCommand{})
+}
+
+func checkOpenAPIFields(t *testing.T, name string, schemas, schema *specNode, value any) {
+	t.Helper()
+	if schema == nil {
+		t.Errorf("%s schema is missing", name)
+		return
+	}
+	var properties, documented []string
+	seen := make(map[*specNode]bool)
+	var collect func(*specNode)
+	collect = func(node *specNode) {
+		if node == nil || seen[node] {
+			return
 		}
-		fields, required := jsonFields(reflect.TypeOf(value))
-		properties := slices.Clone(schema.get("properties").keys)
-		slices.Sort(properties)
-		if !slices.Equal(properties, fields) {
-			t.Errorf("components.schemas.%s properties %v, but %T encodes %v", name, properties, value, fields)
+		seen[node] = true
+		if ref, ok := strings.CutPrefix(node.get("$ref").scalar(), "#/components/schemas/"); ok {
+			collect(schemas.get(ref))
 		}
-		documented := flowList(schema.get("required").scalar())
-		slices.Sort(documented)
-		if !slices.Equal(documented, required) {
-			t.Errorf("components.schemas.%s required %v, but %T always encodes %v", name, documented, value, required)
+		for _, item := range node.get("allOf").items() {
+			collect(item)
 		}
+		if props := node.get("properties"); props != nil {
+			properties = append(properties, props.keys...)
+		}
+		documented = append(documented, flowList(node.get("required").scalar())...)
+	}
+	collect(schema)
+	fields, required := jsonFields(reflect.TypeOf(value))
+	slices.Sort(properties)
+	if !slices.Equal(slices.Compact(properties), fields) {
+		t.Errorf("%s properties %v, but %T encodes %v", name, properties, value, fields)
+	}
+	slices.Sort(documented)
+	if !slices.Equal(slices.Compact(documented), required) {
+		t.Errorf("%s required %v, but %T always encodes %v", name, documented, value, required)
 	}
 }
 
@@ -300,7 +341,8 @@ func jsonFields(typ reflect.Type) (fields, required []string) {
 			name = field.Name
 		}
 		fields = append(fields, name)
-		if !slices.Contains(strings.Split(options, ","), "omitempty") {
+		flags := strings.Split(options, ",")
+		if !slices.Contains(flags, "omitempty") && !slices.Contains(flags, "omitzero") {
 			required = append(required, name)
 		}
 	}

@@ -30,6 +30,8 @@ type pollPage struct {
 	usedAt     time.Time
 }
 
+const maxPollPageBytes = 8 << 20
+
 func (p *poller) run(ctx context.Context, ops *operations) {
 	var last, rateBlockedUntil time.Time
 	var backoff time.Duration
@@ -289,6 +291,8 @@ func polledPages[T any](ctx context.Context, p *poller, path, key string) ([]T, 
 		if err := json.Unmarshal(page.items, &batch); err != nil {
 			return nil, fmt.Errorf("decode GitHub %s list: %w", key, err)
 		}
+		page.usedAt = time.Now()
+		p.cache[path] = page
 		items = append(items, batch...)
 		path = page.next
 	}
@@ -303,14 +307,22 @@ func (p *poller) page(ctx context.Context, path, key string) (pollPage, error) {
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusNotModified {
+		body, err := io.ReadAll(io.LimitReader(res.Body, maxPollPageBytes+1))
+		if err != nil {
+			return page, fmt.Errorf("read GitHub %s page: %w", key, err)
+		}
+		if len(body) > maxPollPageBytes {
+			return page, fmt.Errorf("GitHub %s page exceeds %d bytes", key, maxPollPageBytes)
+		}
 		var out map[string]json.RawMessage
-		if err := json.NewDecoder(io.LimitReader(res.Body, 8<<20)).Decode(&out); err != nil {
+		if err := json.Unmarshal(body, &out); err != nil {
 			return page, fmt.Errorf("decode GitHub %s page: %w", key, err)
 		}
-		if len(out[key]) == 0 {
-			return page, fmt.Errorf("GitHub response omitted %s", key)
+		items := out[key]
+		if len(items) == 0 || items[0] != '[' {
+			return page, fmt.Errorf("GitHub response did not contain a %s array", key)
 		}
-		page = pollPage{etag: res.Header.Get("ETag"), items: out[key]}
+		page = pollPage{etag: res.Header.Get("ETag"), items: items}
 		for link := range strings.SplitSeq(res.Header.Get("Link"), ",") {
 			address, relation, ok := strings.Cut(strings.TrimSpace(link), ";")
 			if !ok || strings.TrimSpace(relation) != `rel="next"` {
@@ -329,7 +341,5 @@ func (p *poller) page(ctx context.Context, path, key string) (pollPage, error) {
 			break
 		}
 	}
-	page.usedAt = time.Now()
-	p.cache[path] = page
 	return page, nil
 }

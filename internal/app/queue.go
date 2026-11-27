@@ -168,6 +168,9 @@ func (q *queue) migrate() error {
     );
     CREATE INDEX IF NOT EXISTS jobs_recent ON jobs(installation_id, changed_at);
     CREATE INDEX IF NOT EXISTS jobs_repository ON jobs(repository COLLATE NOCASE, sequence);
+    CREATE INDEX IF NOT EXISTS jobs_unleased_changed ON jobs(changed_at) WHERE runner_name IS NULL;
+    CREATE INDEX IF NOT EXISTS jobs_phase_changed ON jobs(phase, changed_at);
+    CREATE INDEX IF NOT EXISTS jobs_status ON jobs(sequence) WHERE phase = 0 OR runner_name IS NOT NULL;
     CREATE INDEX IF NOT EXISTS jobs_cleaned ON jobs(runner_cleaned_at) WHERE runner_cleaned_at IS NOT NULL;
     CREATE INDEX IF NOT EXISTS jobs_first_workflow ON jobs(runner_cleaned_at)
         WHERE route GLOB '*-first-job'`)

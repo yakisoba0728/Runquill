@@ -92,9 +92,11 @@ function loadInsight(job) {
 }
 
 function renderDetail(job, target) {
+  const focused = target.contains(document.activeElement) ? document.activeElement : null;
   if (!job) {
     target.hidden = true;
     target.replaceChildren();
+    if (focused) parts.table.element.focus({ preventScroll: true });
     return;
   }
   const insight = loadInsight(job);
@@ -110,7 +112,6 @@ function renderDetail(job, target) {
     }
     return;
   }
-  const focused = target.contains(document.activeElement) ? document.activeElement.textContent : null;
   target.dataset.signature = signature;
   parts.timingKey = timingKey;
   target.hidden = false;
@@ -152,7 +153,7 @@ function renderDetail(job, target) {
   target.replaceChildren(
     h("div", { class: "detail-head" }, h("h2", { id: "job-detail-title", tabindex: "-1" }, tr("Job #{id}", { id: job.id })),
       h("span", { class: "muted" }, job.repository), link,
-      actions.length ? h("div", { class: "actions" }, ...actions) : null),
+      h("div", { class: "actions" }, ...actions, button("Close", closeDetail, { small: true, "aria-label": tr("Close job #{id}", { id: job.id }) }))),
     h("div", { class: "detail-body" },
       why || retry ? h("p", { class: "reason" }, [why, retry].filter(Boolean).join(" ")) : null,
       h("div", {}, h("h3", {}, tr("Stage timing")), h("div", { "data-timing": "" }, timingView(timing)),
@@ -161,7 +162,20 @@ function renderDetail(job, target) {
       h("div", {}, h("h3", {}, tr("Details")), facts.element,
         events.length ? h("h3", { class: "spaced" }, tr("Timeline")) : null, events.length ? timeline.element : null)),
   );
-  if (focused) [...target.querySelectorAll("button, a")].find((node) => node.textContent === focused)?.focus({ preventScroll: true });
+  if (focused) {
+    const control = [...target.querySelectorAll("button, a")].find((node) => node.textContent === focused.textContent);
+    (control || target.querySelector("h2")).focus({ preventScroll: true });
+  }
+}
+
+function closeDetail() {
+  if (!parts) return;
+  const id = parts.selected;
+  leave();
+  parts.selected = null;
+  render();
+  const row = [...parts.table.element.querySelectorAll("tbody tr")].find((node) => node.dataset.key === String(id));
+  (row?.querySelector(".cell-button") || parts.table.element).focus();
 }
 
 function showList(id) {
@@ -208,7 +222,8 @@ export default {
     };
     const search = h("input", { type: "search", placeholder: tr("Repository or job ID"), on: { input: filtered } });
     const pool = h("select", { on: { change: filtered } }, h("option", { value: "" }, tr("All pools")));
-    const detail = h("section", { class: "detail", "aria-labelledby": "job-detail-title", hidden: true });
+    const detail = h("section", { class: "detail", id: "queue-job-detail", "aria-labelledby": "job-detail-title", hidden: true,
+      on: { keydown: (event) => { if (event.key === "Escape" && !event.isComposing) closeDetail(); } } });
     const table = createTable({
       label: "Job results",
       key: (job) => job.id,
@@ -217,13 +232,14 @@ export default {
       columns: [
         { label: "Position", num: true, cell: (job) => job.queue_position ?? "—" },
         { label: "Repository", rowHeader: true, className: "long", cell: (job) => h("button", {
-          type: "button", class: "cell-button", "aria-expanded": String(job.id === parts.selected),
+          type: "button", class: "cell-button", "aria-expanded": String(job.id === parts.selected), "aria-controls": detail.id,
           "aria-label": tr("{repo} job {id}", { repo: job.repository, id: job.id }),
           on: { click: () => {
+            if (parts.selected === job.id) return closeDetail();
             leave();
-            parts.selected = parts.selected === job.id ? null : job.id;
+            parts.selected = job.id;
             render();
-            if (parts.selected) detail.scrollIntoView({ block: "nearest" });
+            detail.querySelector("h2").focus();
           } },
         }, job.repository) },
         { label: "Job", className: "id", cell: (job) => "#" + job.id },

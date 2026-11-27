@@ -109,7 +109,7 @@ function settingsForm(ctx) {
     block("Docker workers", {
       note: "SSH workers use the manager's configured SSH credentials. Outbound agents use deployment credentials.",
       actions: [button("Add worker", () => hostRow(hostList).focus())],
-    }, h("div", { class: "table-wrap" }, h("table", {},
+    }, h("div", { class: "table-wrap", role: "region", tabindex: "0", "aria-label": tr("Docker workers") }, h("table", {},
       h("caption", { class: "visually-hidden" }, tr("Docker workers")),
       h("thead", {}, h("tr", {}, h("th", { scope: "col" }, tr("Worker address")), h("th", { scope: "col" }, tr("Worker slot limit")),
         h("th", { scope: "col" }, h("span", { class: "visually-hidden" }, tr("Actions"))))),

@@ -48,7 +48,7 @@ Look for `ready: true` from `/readyz`. [Run the first job](workflows.md#verify-y
 
 ## Sample panel
 
-Once published, the [GitHub Pages demo](https://yakisoba0728.github.io/Runquill/) shows first-job cleanup, recovery from a missed webhook, and an offline worker with synthetic data. Run `"$HOME/runquill/runquill" panel --demo` and open [127.0.0.1:8081](http://127.0.0.1:8081/) to try the same scenarios locally. From a source checkout, use `go run . panel --demo`.
+Once published, the [GitHub Pages demo](https://yakisoba0728.github.io/Runquill/) shows first-job cleanup, recovery from a missed webhook, and an offline worker with synthetic data. Run `"$HOME/runquill/runquill" panel --demo` and open [127.0.0.1:8081](http://127.0.0.1:8081/) to try the same scenarios locally. From a source checkout, use `go run . panel --demo`. Add `--port PORT` to select a different loopback port, or `--port 0` to let Runquill pick one.
 
 To publish the sample panel, set **Settings → Pages → Source** to **GitHub Actions** and run [Publish sample panel](../.github/workflows/demo-pages.yml) from `main`. The workflow publishes the demo's HTML, CSS, scripts, and license. Its run summary links to the deployed site. [GitHub Pages setup](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site)
 
@@ -73,7 +73,7 @@ Add those variables to your manager configuration and build with the panel overl
 RUNQUILL_MANAGER_IMAGE=runquill-manager:local docker compose -f compose.yaml -f compose.panel.yaml up -d --build
 ```
 
-For release installs, omit the image override and use `--no-build` with the same Compose files. For multi-host Compose installs, include `-f compose.ssh.yaml`. If the manager runs directly, also set `RUNQUILL_PANEL_ADDR=127.0.0.1:8081`. Use an SSH tunnel for remote loopback access. For a shared panel, set `RUNQUILL_PANEL_URL` to an HTTPS origin and forward it to port 8081 through an HTTPS reverse proxy that preserves the public Host header. Use a separate origin for the public webhook.
+For release installs, omit the image override and use `--no-build` with the same Compose files. For multi-host Compose installs, include `-f compose.ssh.yaml`. If the manager runs directly, also set `RUNQUILL_PANEL_ADDR=127.0.0.1:8081`. Use an SSH tunnel for remote loopback access. For a shared panel, set `RUNQUILL_PANEL_URL` to an HTTPS origin and forward it to port 8081 through an HTTPS reverse proxy that preserves the public Host header. Route the public webhook separately to port 8080. The [Cloudflare Tunnel guide](cloudflare-tunnel.md) shows how to share a hostname using a path rule.
 
 | Role | Panel access |
 | --- | --- |
@@ -111,11 +111,11 @@ Operators and administrators can read or follow the container output of a runner
 
 ## Remote CLI
 
-Run `runquill fleet status`, `jobs list`, `jobs show`, `runners list`, `hosts list`, `pools list`, `usage`, `elastic`, `hosts cordon`, `hosts uncordon`, `jobs cancel` and `jobs retry` from any machine against the panel API. Set `RUNQUILL_URL` to the panel origin and pass a token through `RUNQUILL_TOKEN` or `--token-file`, and add `--json` for scripts. Each command needs the matching token scope, and `audit tail` always needs the web panel because no token can read the audit log. [Remote CLI guide](remote-cli.md)
+Run `runquill fleet status`, `jobs list`, `jobs show`, `runners list`, `hosts list`, `pools list`, `usage`, `usage --rightsizing`, `elastic`, `hosts cordon`, `hosts uncordon`, `jobs cancel` and `jobs retry` from any machine against the panel API. Set `RUNQUILL_URL` to the panel origin and pass a token through `RUNQUILL_TOKEN` or `--token-file`, and add `--json` for scripts. Each command needs the matching token scope, and `audit tail` always needs the web panel because no token can read the audit log. [Remote CLI guide](remote-cli.md)
 
 ## MCP for coding agents
 
-`POST /mcp` serves read-only [Model Context Protocol](https://modelcontextprotocol.io/) tools for fleet status, jobs, hosts, usage and elastic decisions. Use a `fleet:read` token over HTTP, or run `runquill mcp` as a local stdio server that forwards to the panel. Browser sessions are always refused. The endpoint has not yet been tried with a real MCP client. [MCP guide](mcp.md)
+`POST /mcp` serves read-only [Model Context Protocol](https://modelcontextprotocol.io/) tools for fleet status, jobs, hosts, usage, job right-sizing and elastic decisions. Use a `fleet:read` token over HTTP, or run `runquill mcp` as a local stdio server that forwards to the panel. Browser sessions are always refused. The endpoint has not yet been tried with a real MCP client. [MCP guide](mcp.md)
 
 ## Status and upgrades
 
@@ -134,6 +134,8 @@ Administrators can open **Settings** to change the fleet limit, per-worker limit
 Use `docker compose exec -T manager runquill status --json` for scripts and monitoring. Schema version 1 includes `slot_limit`, `runners`, `hosts`, and `jobs`. Occupied slots are observed on reachable workers. Reserved slots account for offline workers and leases without an observed host. If Docker reports a conflicting topology, the snapshot still includes jobs and a `docker_error`, with `runners` set to `null` and a nonzero exit status.
 
 `runquill doctor --json` prints the checks as one JSON document, such as `{"checks":[{"name":"configuration","ok":false,"error":"set RUNQUILL_OWNER"}],"passed":false}`. Passing checks omit `error`. As with the plain output, the command exits with status 1 when any check fails. When a check fails, the plain output ends with a link to [Troubleshooting](#troubleshooting).
+
+Doctor reports the registry mirror setting, each Docker pool’s cache setting and configured warm runner target per host, and cache volume counts on reachable local and SSH hosts with caching enabled.
 
 If GitHub shows a queued job that Runquill has not started, run `docker compose exec manager runquill diagnose OWNER/REPO`. It checks the App’s access using a repository-scoped read-only token, reports the last recorded poll, and explains invalid labels, retries, and worker capacity for queued jobs.
 
@@ -178,6 +180,10 @@ docker compose -f compose.yaml -f compose.panel.yaml exec -T manager runquill st
 ```
 
 ## Add manager settings
+
+The manager selects Docker by default (`RUNQUILL_BACKEND=docker`). The [bundled K3s manifest](../deploy/k3s/runquill.yaml) sets `RUNQUILL_BACKEND=kubernetes` and `RUNQUILL_K8S_RUNNER_NAMESPACE=runquill-runners`. See [K3s runner settings](../deploy/k3s/README.md#runner-settings) for Pod resources, node selection and runner modes.
+
+For a standalone manager, `RUNQUILL_BIND` and `RUNQUILL_PORT` set the webhook and health listener, defaulting to `127.0.0.1` and `8080`. `RUNQUILL_DB` defaults to `runquill.sqlite3` in the working directory. The bundled Compose file binds to `0.0.0.0` inside the container, publishes port 8080 on the host's loopback interface, and defaults the database to `/data/runquill.sqlite3`.
 
 Compose passes only the variables listed in `compose.yaml` to the manager. For optional settings such as `RUNQUILL_MAX_PER_REPOSITORY`, `RUNQUILL_SCHEDULER_WORKERS`, `RUNQUILL_LOG_FORMAT`, `RUNQUILL_LOG_LEVEL`, the [notification](#send-notifications) variables, `RUNQUILL_ELASTIC*`, `RUNQUILL_JOB_RESOURCES`, `RUNQUILL_BACKUP_*`, `RUNQUILL_METRICS_*`, `RUNQUILL_IMAGE_PULL*`, `RUNQUILL_RUNNER_IMAGES`, `RUNQUILL_CLEANUP_*`, a [`RUNQUILL_REGISTRY_MIRROR`](runner-images.md#docker-hub-mirror) you run without `compose.mirror.yaml` and [`RUNQUILL_ALLOW_PUBLIC_REPOSITORIES`](workflows.md#run-jobs-from-public-repositories), keep the values in `.env` and save an overlay such as `compose.settings.yaml` beside `compose.yaml`. `--upgrade` replaces `compose.yaml` but leaves this file in place.
 

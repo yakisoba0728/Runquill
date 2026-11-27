@@ -461,7 +461,7 @@ export default {
     });
     const rowsBody = h("tbody");
     const addRowButton = button("Add mapping", () => { addRow().focus(); changed(); }, { small: true });
-    const mappingTable = h("div", { class: "table-wrap migrate-mapping", role: "region", "aria-label": tr("Label mapping") },
+    const mappingTable = h("div", { class: "table-wrap migrate-mapping", role: "region", tabindex: "0", "aria-label": tr("Label mapping") },
       h("table", {},
         h("caption", { class: "visually-hidden" }, tr("Label mapping")),
         h("thead", {}, h("tr", {},

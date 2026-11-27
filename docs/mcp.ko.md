@@ -15,6 +15,7 @@ Runquill은 에이전트가 운영 현황을 살펴볼 수 있도록 읽기 전�
 | `usage_summary` | `window`(`24h` 또는 `7d`), `group`(`day`, `repository`, `pool`, `host`) | 끝난 작업 수, 실패, 러너 사용 시간, 대기 시간입니다. `group`을 주면 같은 통계를 그룹별로 나눈 `series`도 반환합니다. 작업이 많은 그룹부터 최대 500개이며, `window` 기간을 포함하는 UTC 날짜 전체를 `from`과 `to`로 지정한 `GET /api/usage`처럼 읽습니다. |
 | `elastic_decisions` | `limit`(1–200, 기본 20) | 최근 [탄력적 한도](elastic-limits.ko.md) 결정입니다. |
 | `job_rightsizing` | `group`(`pool` 또는 `job`), `days`(1–7, 기본 7) | 최근 끝난 작업의 한도 대비 CPU와 메모리 최고값, 메모리 부족 종료 수, 자원별 판정입니다. `GET /api/usage/rightsizing`과 같은 내용입니다. |
+| `pool_rightsizing` | `days`(1–7, 기본 7) | 최근 끝난 작업의 풀별 CPU 최고값(코어), 메모리 최고값(MiB), 메모리 부족 종료 수, 자원별 판정입니다. `GET /api/usage/rightsizing?group=pool`과 같은 내용입니다. |
 
 결과는 JSON 텍스트와 구조화된 콘텐츠로 함께 반환합니다. 저장소, 작업, 러너 이름은 GitHub 사용자가 정한 값이므로, 서버 지침은 에이전트에게 이를 데이터로만 다루라고 안내합니다.
 

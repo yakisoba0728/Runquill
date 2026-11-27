@@ -293,6 +293,7 @@ func FuzzRewriteWorkflow(f *testing.F) {
 		"jobs:\n  build:\n    runs-on:\n      group: x\n",
 		"jobs:\n  build:\n    uses: a/b/.github/workflows/c.yml@v1\n",
 		"jobs:\n\tbuild:\n",
+		"jobs:\n  build:\n    runs-on: ubuntu-latest\n  lint:\n    runs-on: never-used-label\n",
 	} {
 		f.Add([]byte(seed))
 	}
@@ -310,15 +311,25 @@ func FuzzRewriteWorkflow(f *testing.F) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if res.Refused != "" && !bytes.Equal(res.Output, src) {
-			t.Fatal("a refused file changed")
+		if res.Changed() != !bytes.Equal(res.Output, src) || res.Refused != "" && res.Changed() {
+			t.Fatal("rewrite status disagrees with output")
 		}
-		unmapped, err := rewriteWorkflow(src, []Mapping{{From: []string{"never-used-label"}}})
-		if err != nil || !bytes.Equal(unmapped.Output, src) {
-			t.Fatal("a mapping that matches nothing changed the file")
+		changed := make(map[string]bool)
+		for _, job := range res.Jobs {
+			if job.Changed {
+				changed[job.Job] = true
+			}
+		}
+		if res.Changed() != (len(changed) > 0) {
+			t.Fatal("rewrite status disagrees with job outcomes")
+		}
+		for _, finding := range Check("f.yml", res.Output, CheckOptions{}) {
+			if finding.Code == "runs-on" && changed[finding.Job] {
+				t.Fatalf("generated an invalid route for %s: %s", finding.Job, finding.Message)
+			}
 		}
 		again, err := rewriteWorkflow(res.Output, testMapping)
-		if err != nil || !bytes.Equal(again.Output, res.Output) {
+		if err != nil || again.Changed() || !bytes.Equal(again.Output, res.Output) {
 			t.Fatalf("rewrite is not idempotent:\n%q\n%q", res.Output, again.Output)
 		}
 		// Keeping hosted Ubuntu versions as os__ selectors keeps the same guarantees.

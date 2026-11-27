@@ -25,8 +25,12 @@ func warmTestFleet(t *testing.T, local, remote string) (*dockerFleet, func() []s
 	t.Setenv("WARM_LOG", log)
 	t.Setenv("WARM_PS", ps)
 	t.Setenv("WARM_RENAME_FAIL", "")
+	t.Setenv("WARM_RENAME_APPLIED_FAIL", "")
 	t.Setenv("WARM_CREATE_FAIL", "")
 	t.Setenv("WARM_EXEC_FAIL", "")
+	t.Setenv("WARM_FAIL_COMMAND", "")
+	t.Setenv("WARM_REMOVE_FAIL", "")
+	t.Setenv("WARM_START_APPLIED_FAIL", "")
 	for path, content := range map[string]string{ps: local, ps + ".remote": remote} {
 		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 			t.Fatal(err)
@@ -37,11 +41,37 @@ set -eu
 list=$WARM_PS
 if [ "$1" = --host ]; then list=$WARM_PS.remote; printf '%s ' "$2" >> "$WARM_LOG"; shift 2; fi
 printf '%s\n' "$*" >> "$WARM_LOG"
+if [ "$1" = "$WARM_FAIL_COMMAND" ] || { [ "$1" = rm ] && [ -n "$WARM_REMOVE_FAIL" ]; }; then
+  echo "failed $1" >&2
+  exit 1
+fi
 case "$1" in
-  ps) cat "$list" ;;
+  ps)
+    case " $* " in
+      *' --no-trunc '*) awk -F '\t' '{ printf "%s\t%056d%08x\t%s\n", $1, 0, NR, $2 }' "$list" ;;
+      *' --filter id='*) if [ -f "$WARM_LOG.renamed" ]; then cat "$WARM_LOG.renamed"; fi ;;
+      *) cat "$list" ;;
+    esac ;;
   exec) if [ -n "$WARM_EXEC_FAIL" ]; then exit 1; fi; cat > "$WARM_LOG.jit" ;;
   cp) cat > /dev/null ;;
-  rename) if [ "$2" = "$WARM_RENAME_FAIL" ]; then exit 1; fi ;;
+  start)
+    if [ -n "$WARM_START_APPLIED_FAIL" ]; then
+      touch "$WARM_LOG.running"
+      echo 'lost start response' >&2
+      exit 1
+    fi ;;
+  rm)
+    if [ -f "$WARM_LOG.running" ]; then
+      if [ "$2" != -f ]; then echo 'runner is running' >&2; exit 1; fi
+      rm "$WARM_LOG.running"
+    fi ;;
+  rename)
+    if [ -n "$WARM_RENAME_APPLIED_FAIL" ]; then
+      printf '%s\n' "$3" > "$WARM_LOG.renamed"
+      echo 'lost rename response' >&2
+      exit 1
+    fi
+    if [ "$2" = "$WARM_RENAME_FAIL" ]; then exit 1; fi ;;
   create) if [ -n "$WARM_CREATE_FAIL" ]; then exit 1; fi ;;
 esac
 `), 0700); err != nil {
@@ -174,6 +204,7 @@ func TestWarmHandoff(t *testing.T) {
 	newest := warmName(key, now.Add(-time.Minute), 5)
 	list := fmt.Sprintf("%s\trunning\n%s\trunning\n%s\texited\n%s\trunning\n%s\trunning\nrunquill-9-aaaaaaaaaaaa\trunning\n", stale, expired, exited, newest, oldest)
 	const runner, jit = "runquill-7-abcdefabcdef", "secret-jit-config"
+	oldestID := fmt.Sprintf("%064x", 5)
 
 	fleet, read := warmTestFleet(t, list, "")
 	if err := fleet.startOn(t.Context(), "local", runner, jit); err != nil {
@@ -183,7 +214,7 @@ func TestWarmHandoff(t *testing.T) {
 	if renames := calls(log, "rename"); !slices.Equal(renames, []string{"rename " + oldest + " " + runner}) {
 		t.Fatalf("claimed %q, want the oldest usable warm runner", renames)
 	}
-	if execs := calls(log, "exec"); len(execs) != 1 || !strings.HasPrefix(execs[0], "exec -i "+runner+" sh -c ") || !strings.HasSuffix(execs[0], " sh /run/runquill/jit") {
+	if execs := calls(log, "exec"); len(execs) != 1 || !strings.HasPrefix(execs[0], "exec -i "+oldestID+" sh -c ") || !strings.HasSuffix(execs[0], " sh /run/runquill/jit") {
 		t.Fatalf("JIT delivery: %q", execs)
 	}
 	if data, err := os.ReadFile(os.Getenv("WARM_LOG") + ".jit"); err != nil || string(data) != jit {
@@ -200,7 +231,7 @@ func TestWarmHandoff(t *testing.T) {
 		t.Fatal("failed JIT delivery reported success")
 	}
 	t.Setenv("WARM_EXEC_FAIL", "")
-	if log = read(); !slices.Contains(log, "rm -f -v "+runner) || len(calls(log, "create")) != 0 || len(calls(log, "rename")) != 1 {
+	if log = read(); !slices.Contains(log, "rm -f -v "+oldestID) || len(calls(log, "create")) != 0 || len(calls(log, "rename")) != 1 {
 		t.Fatalf("failed delivery: %q", log)
 	}
 
@@ -214,6 +245,16 @@ func TestWarmHandoff(t *testing.T) {
 		t.Fatalf("claims after a lost rename: %q", renames)
 	}
 
+	// The engine renamed the container before losing the reply. It must be removed by ID.
+	fleet, read = warmTestFleet(t, list, "")
+	t.Setenv("WARM_RENAME_APPLIED_FAIL", "1")
+	if err := fleet.startOn(t.Context(), "local", runner, jit); err == nil || !strings.Contains(err.Error(), "lost rename response") {
+		t.Fatalf("rename error: %v", err)
+	}
+	if log = read(); !slices.Contains(log, "rm -f -v "+oldestID) || len(calls(log, "create")) != 0 || len(calls(log, "exec")) != 0 {
+		t.Fatalf("lost rename response: %q", log)
+	}
+
 	// A job that selects another image starts cold and retires a warm runner for its slot.
 	fleet, read = warmTestFleet(t, list, "")
 	if err := fleet.startOn(withRunnerImage(t.Context(), "runner:debian12"), "local", runner, jit); err != nil {
@@ -222,6 +263,12 @@ func TestWarmHandoff(t *testing.T) {
 	log = read()
 	if len(calls(log, "rename")) != 0 || !slices.Contains(log, "rm -f -v "+oldest) || len(calls(log, "create --name "+runner)) != 1 {
 		t.Fatalf("other image: %q", log)
+	}
+
+	fleet, read = warmTestFleet(t, list, "")
+	t.Setenv("WARM_REMOVE_FAIL", "1")
+	if err := fleet.startOn(withRunnerImage(t.Context(), "runner:debian12"), "local", runner, jit); err == nil || len(calls(read(), "create")) != 0 {
+		t.Fatalf("failed warm retirement: %v, calls %q", err, read())
 	}
 
 	// Warm runners on one host never take a job placed on another.
@@ -241,6 +288,35 @@ func TestWarmHandoff(t *testing.T) {
 	}
 	if log = read(); len(calls(log, "rename")) != 0 || len(calls(log, "create --name "+runner)) != 1 {
 		t.Fatalf("no usable warm runner: %q", log)
+	}
+}
+
+func TestDockerFailedStartRemovesCreatedRunner(t *testing.T) {
+	for _, step := range []string{"create", "cp", "start"} {
+		t.Run(step, func(t *testing.T) {
+			fleet, read := warmTestFleet(t, "", "")
+			t.Setenv("WARM_FAIL_COMMAND", step)
+			t.Setenv("WARM_REMOVE_FAIL", "1")
+			err := fleet.startOn(t.Context(), "local", "runner", "test-jit")
+			if err == nil || !strings.Contains(err.Error(), "failed "+step) {
+				t.Fatalf("start error: %v", err)
+			}
+			if got := slices.Contains(read(), "rm -v runner"); got != (step != "create") || got != strings.Contains(err.Error(), "failed rm") {
+				t.Fatalf("cleanup after %s: error %v, calls %q", step, err, read())
+			}
+		})
+	}
+}
+
+func TestDockerLostStartReplyKeepsRunningContainer(t *testing.T) {
+	fleet, _ := warmTestFleet(t, "", "")
+	t.Setenv("WARM_START_APPLIED_FAIL", "1")
+	err := fleet.startOn(t.Context(), "local", "runner", "test-jit")
+	if err == nil || !strings.Contains(err.Error(), "lost start response") {
+		t.Fatalf("start error: %v", err)
+	}
+	if _, err := os.Stat(os.Getenv("WARM_LOG") + ".running"); err != nil {
+		t.Fatalf("rollback removed a running container: %v", err)
 	}
 }
 
