@@ -542,7 +542,7 @@ func checkRunnerImageCatalogue(ctx context.Context, saved *operationState, defau
 	}
 	var local *docker
 	if env("RUNQUILL_BACKEND", "docker") == "docker" {
-		if fleet, err := parseDockerFleet("", "local"); err == nil {
+		if fleet, err := parseDockerHosts("", "local", ""); err == nil {
 			local = &fleet.hosts[0]
 		}
 	}

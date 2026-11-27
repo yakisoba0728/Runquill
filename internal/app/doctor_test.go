@@ -187,3 +187,67 @@ func TestDoctorJSONAndNextStep(t *testing.T) {
 		t.Errorf("missing human-readable failure:\n%s", out.String())
 	}
 }
+
+func TestDoctorReportsOptionalRunnerSettings(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+	t.Setenv("RUNQUILL_OWNER", "")
+	t.Setenv("RUNQUILL_APP_ID", "")
+	t.Setenv("RUNQUILL_KEY_FILE", "")
+	t.Setenv("RUNQUILL_PANEL_ADDR", "")
+	t.Setenv("RUNQUILL_DB", filepath.Join(dir, "missing.sqlite3"))
+	t.Setenv("RUNQUILL_BACKEND", "docker")
+	t.Setenv("RUNQUILL_CONTAINER_ENGINE", "docker")
+	t.Setenv("RUNQUILL_DOCKER_HOSTS", "local")
+	t.Setenv("DOCTOR_TEST_INFO", dockerRootfulInfo)
+	if err := os.WriteFile(filepath.Join(dir, "docker"), []byte(`#!/bin/sh
+case "$1" in
+  info) printf '%s\n' "$DOCTOR_TEST_INFO" ;;
+  image) printf '%s\n' linux/amd64 ;;
+  volume) printf '%s' "$DOCTOR_TEST_VOLUMES" ;;
+esac
+`), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name, pools, mirror, volumes, level string
+		want                                []string
+	}{
+		{"unset", "", "", "", "info", []string{"RUNQUILL_REGISTRY_MIRROR): unset", `worker pool "default": cache=false, warm=0 per host`}},
+		{"cache present", `{"build":{"hosts":["local"],"cache":true}}`, "https://mirror.internal", "runquill-cache-7", "info", []string{"configured and valid", `worker pool "build": cache=true, warm=0 per host`, `worker pool "build" cache volumes on local: 1`}},
+		{"cache empty", `{"default":{"cache":true}}`, "", "", "info", []string{`worker pool "default" cache volumes on local: 0`}},
+		{"warm", `{"default":{"warm":2}}`, "", "", "info", []string{`worker pool "default": cache=false, warm=2 per host`}},
+		{"invalid mirror", "", "https://user:mirror-password@mirror.internal", "", "warn", []string{"RUNQUILL_REGISTRY_MIRROR must be an http:// or https:// origin"}},
+		{"invalid warm size", `{"default":{"warm":101}}`, "", "", "warn", []string{"warm must be between 0 and 100"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("RUNQUILL_WORKER_POOLS", test.pools)
+			t.Setenv("RUNQUILL_REGISTRY_MIRROR", test.mirror)
+			t.Setenv("DOCTOR_TEST_VOLUMES", test.volumes)
+			var out strings.Builder
+			err := doctor(t.Context(), &out, "", true)
+			if err == nil || err.Error() != "set RUNQUILL_OWNER, RUNQUILL_APP_ID, RUNQUILL_KEY_FILE" {
+				t.Fatalf("expected only the missing GitHub configuration to fail, got %v\n%s", err, &out)
+			}
+			if strings.Contains(out.String(), "mirror-password") {
+				t.Fatal("doctor exposed credentials from the invalid mirror URL")
+			}
+			var result struct{ Checks []doctorCheck }
+			if err := json.Unmarshal([]byte(out.String()), &result); err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range test.want {
+				found := false
+				for _, check := range result.Checks {
+					if check.Level == test.level && check.OK && strings.Contains(check.Name, want) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("missing %s check containing %q:\n%s", test.level, want, &out)
+				}
+			}
+		})
+	}
+}

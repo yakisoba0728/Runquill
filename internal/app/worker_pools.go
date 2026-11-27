@@ -38,6 +38,8 @@ type workerPool struct {
 
 type workerPools map[string]workerPool
 
+type invalidWarmPoolError struct{ error }
+
 func (f *dockerFleet) configurePools(raw string) (workerPools, error) {
 	if strings.TrimSpace(raw) == "" {
 		return nil, nil
@@ -75,9 +77,6 @@ func (f *dockerFleet) configurePools(raw string) (workerPools, error) {
 		if pool.CacheWrites != "" && pool.CacheWrites != cacheWritesAll && pool.CacheWrites != cacheWritesDefaultBranch {
 			return nil, fmt.Errorf("worker pool %q: cache_writes must be %q or %q", name, cacheWritesAll, cacheWritesDefaultBranch)
 		}
-		if err := checkWarmPool(pool); err != nil {
-			return nil, fmt.Errorf("worker pool %q: %w", name, err)
-		}
 		if err := checkPoolImageNames(pool.Images); err != nil {
 			return nil, fmt.Errorf("worker pool %q: %w", name, err)
 		}
@@ -102,6 +101,11 @@ func (f *dockerFleet) configurePools(raw string) (workerPools, error) {
 	if _, ok := pools[defaultWorkerPool]; !ok {
 		pools[defaultWorkerPool] = workerPool{}
 	}
+	for name, pool := range pools {
+		if err := checkWarmPool(pool); err != nil {
+			return nil, invalidWarmPoolError{fmt.Errorf("worker pool %q: %w", name, err)}
+		}
+	}
 	for i := range f.hosts {
 		host := &f.hosts[i]
 		host.pool = poolByHost[host.label()]
@@ -115,7 +119,7 @@ func (f *dockerFleet) configurePools(raw string) (workerPools, error) {
 			host.image = pool.Image
 		}
 		if pool.Warm > 0 && host.agentName() != "" {
-			return nil, fmt.Errorf("worker pool %q: warm runners are not supported on outbound worker %s", host.pool, host.label())
+			return nil, invalidWarmPoolError{fmt.Errorf("worker pool %q: warm runners are not supported on outbound worker %s", host.pool, host.label())}
 		}
 		host.warm, host.warmMaxIdle = pool.Warm, warmMaxIdle(pool)
 	}
