@@ -289,7 +289,10 @@ func (d docker) start(ctx context.Context, name, jit string) (err error) {
 	}
 	defer func() {
 		if err != nil {
-			err = d.removeFailedRunner(ctx, name, err)
+			// A lost start reply can leave a runner that already picked up a job.
+			if _, cleanupErr := d.command(context.WithoutCancel(ctx), nil, "rm", "-v", name); cleanupErr != nil {
+				err = errors.Join(err, fmt.Errorf("remove failed runner %s: %w", name, cleanupErr))
+			}
 		}
 	}()
 	// Copy the JIT credential without exposing it in the engine's command or environment metadata.

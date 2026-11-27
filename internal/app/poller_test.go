@@ -27,6 +27,7 @@ func TestPollerRejectsInvalidPagesBeforeCaching(t *testing.T) {
 		{"trailing JSON", valid + " {}"},
 		{"oversize page", valid + strings.Repeat(" ", maxPollPageBytes+1-len(valid))},
 		{"null list", `{"workflow_runs":null}`},
+		{"malformed list entry", `{"workflow_runs":[{"id":"not an integer"}]}`},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

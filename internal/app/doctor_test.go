@@ -250,4 +250,42 @@ esac
 			}
 		})
 	}
+	for _, check := range []struct{ backend, name string }{
+		{"docker", "saved operation settings"},
+		{"kubernetes", "runner backend"},
+	} {
+		t.Run("invalid mirror prevents "+check.name, func(t *testing.T) {
+			t.Setenv("RUNQUILL_BACKEND", check.backend)
+			t.Setenv("RUNQUILL_K8S_RUNNER_NAMESPACE", "runner-fixture")
+			t.Setenv("RUNQUILL_K8S_RUNNER_MODE", "plain")
+			t.Setenv("RUNQUILL_WORKER_POOLS", "")
+			t.Setenv("RUNQUILL_DOCKER_HOST_LIMITS", "")
+			t.Setenv("RUNQUILL_REGISTRY_MIRROR", "invalid")
+			if check.backend == "docker" {
+				path := filepath.Join(t.TempDir(), "queue.sqlite3")
+				q, err := openQueue(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, err = q.Exec(`INSERT INTO operation_settings VALUES (1, 1, '{}')`)
+				q.close()
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Setenv("RUNQUILL_DB", path)
+			}
+			var out strings.Builder
+			_ = doctor(t.Context(), &out, "", true)
+			var result struct{ Checks []doctorCheck }
+			if err := json.Unmarshal([]byte(out.String()), &result); err != nil {
+				t.Fatal(err)
+			}
+			for _, got := range result.Checks {
+				if got.Name == check.name && !got.OK && strings.Contains(got.Error, "RUNQUILL_REGISTRY_MIRROR") {
+					return
+				}
+			}
+			t.Fatalf("missing failed %s check:\n%s", check.name, &out)
+		})
+	}
 }

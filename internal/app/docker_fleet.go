@@ -126,8 +126,6 @@ func parseDockerHosts(image, hosts, mirror string) (*dockerFleet, error) {
 	return fleet, nil
 }
 
-var errInvalidRegistryMirror = errors.New("RUNQUILL_REGISTRY_MIRROR must be an http:// or https:// origin that runner containers can reach, such as http://10.0.0.5:5000")
-
 // registryMirror reads the Docker Hub pull-through mirror that Docker-in-Docker runners pass to their own dockerd.
 // A value dockerd rejects would stop every DinD runner, so only an http(s) origin is accepted.
 func registryMirror() (string, error) {
@@ -139,7 +137,7 @@ func registryMirror() (string, error) {
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.Opaque != "" ||
 		(u.Path != "" && u.Path != "/") || u.RawPath != "" || strings.ContainsAny(raw, "?# \t") ||
 		strings.HasSuffix(u.Host, ":") || !validMirrorHost(u.Hostname()) {
-		return "", errInvalidRegistryMirror
+		return "", errors.New("RUNQUILL_REGISTRY_MIRROR must be an http:// or https:// origin that runner containers can reach, such as http://10.0.0.5:5000")
 	}
 	return strings.TrimSuffix(raw, "/"), nil
 }

@@ -216,7 +216,16 @@ func (k *kubeRunners) startOn(ctx context.Context, host, name, jit string) error
 	}
 	if _, err := k.secrets.Create(ctx, credential, meta.CreateOptions{}); err != nil {
 		// Kubernetes may include invalid values in error details. Do not surface Secret data.
+		var status apierrors.APIStatus
+		if !errors.As(err, &status) {
+			return errors.New("create runner credential Secret: request outcome unknown")
+		}
 		secretErr := fmt.Errorf("create runner credential Secret: %s", apierrors.ReasonForError(err))
+		code := status.Status().Code
+		// A lost response can leave a valid Secret and an active runner for the scheduler to reconcile.
+		if code < 400 || code >= 500 || code == http.StatusRequestTimeout || code == http.StatusConflict {
+			return secretErr
+		}
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		if err := k.deletePod(cleanup, pod); err != nil {
