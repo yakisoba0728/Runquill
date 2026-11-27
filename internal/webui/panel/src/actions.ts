@@ -5,14 +5,29 @@ import { toast } from "@yakihyuk0728/stratum-ui";
 import { useRef, useState } from "react";
 import { errorText, request, type ApiError } from "./api";
 
-/** POSTs and resolves to the answer (null for 204), or undefined after a failure it reported. */
-export async function post<T = null>(path: string, data?: unknown, timeout?: number): Promise<T | null | undefined> {
+/** Sends a write and resolves to the answer (null for 204), or undefined after a failure it reported. */
+export async function send<T = null>(method: string, path: string, data?: unknown, timeout?: number): Promise<T | null | undefined> {
   try {
-    return await request<T>(path, { method: "POST", data, timeout });
+    return await request<T>(path, { method, data, timeout });
   } catch (error) {
     if ((error as ApiError).status !== 401) toast(errorText(error), { tone: "danger" });
     return undefined;
   }
+}
+
+export const post = <T = null>(path: string, data?: unknown, timeout?: number) => send<T>("POST", path, data, timeout);
+
+/** Saves a blob the browser made or received as a file (v1 saveFile). */
+export function saveFile(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.hidden = true;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 /** Which write (by key) is running, and run(key, task), which does nothing while another runs. */

@@ -1,6 +1,6 @@
 // Hash routing (design §2.4, §5.4): #/screen/id/sub?query. Old v1 addresses are rewritten once with replaceState.
-// shortcut: no leave guard yet; the settings screen (phase 4) adds useLeaveGuard here.
-import { useSyncExternalStore } from "react";
+// A screen with unsaved changes can hold a leave guard: a move to another screen is undone and the screen is told.
+import { useEffect, useRef, useSyncExternalStore } from "react";
 
 export interface Route {
   screen: string;
@@ -71,12 +71,16 @@ export function resolve(hash: string, visible: readonly string[], admin: boolean
   return { route: parse(first)!, redirect: first };
 }
 
-// The store: hashchange, plus our own replaceState calls (which fire no event).
+// The store: hashchange, plus our own replaceState calls (which fire no event). The hash shown is the accepted one, not
+// location.hash: setting location.hash changes it at once while hashchange (and the leave guard) comes a task later.
 const listeners = new Set<() => void>();
 const emit = () => listeners.forEach((fn) => fn());
 let focusPending = false;
 let visits = 0;
-let shown = parse(location.hash)?.screen;
+let accepted = location.hash;
+let shown = parse(accepted)?.screen;
+let guard: ((retry: () => void) => void) | null = null;
+let bypass = false;
 
 function subscribe(fn: () => void) {
   listeners.add(fn);
@@ -96,13 +100,42 @@ export function changesScreen(from: string | undefined, to: string) {
 // The page heading takes focus only when the screen changes, so opening or closing a SplitView detail keeps the
 // focus the SplitView gives it.
 function onHashChange() {
-  if (changesScreen(shown, location.hash)) focusPending = true;
-  shown = parse(location.hash)?.screen ?? shown;
+  const target = location.hash;
+  if (guard && !bypass && changesScreen(shown, target)) {
+    // Blocked (a link, the palette or Back): put the address back and let the screen offer a way on.
+    history.replaceState(history.state, "", accepted || location.pathname + location.search);
+    guard(() => {
+      bypass = true;
+      location.hash = target;
+    });
+    return;
+  }
+  bypass = false;
+  if (changesScreen(shown, target)) focusPending = true;
+  accepted = target;
+  shown = parse(target)?.screen ?? shown;
   visits++;
   emit();
 }
 
-export const useHash = () => useSyncExternalStore(subscribe, () => location.hash);
+/**
+ * While blocked, leaving for another screen is undone and onBlocked gets retry(), which leaves anyway (call it after
+ * dropping the changes). The design's SaveBar guard (§3.6): no confirm dialog.
+ */
+export function useLeaveGuard(blocked: boolean, onBlocked: (retry: () => void) => void) {
+  const latest = useRef(onBlocked);
+  latest.current = onBlocked;
+  useEffect(() => {
+    if (!blocked) return;
+    const entry = (retry: () => void) => latest.current(retry);
+    guard = entry;
+    return () => {
+      if (guard === entry) guard = null;
+    };
+  }, [blocked]);
+}
+
+export const useHash = () => useSyncExternalStore(subscribe, () => accepted);
 /** Moves on every navigation, also when the same address is opened again. */
 export const useVisit = () => useSyncExternalStore(subscribe, () => visits);
 
@@ -110,9 +143,10 @@ export const useVisit = () => useSyncExternalStore(subscribe, () => visits);
 export function navigate(hash: string, { replace = false } = {}) {
   if (replace) {
     history.replaceState(history.state, "", hash);
+    accepted = hash;
     shown = parse(hash)?.screen ?? shown;
     emit();
-  } else if (location.hash === hash) {
+  } else if (accepted === hash) {
     focusPending = true;
     visits++;
     emit();
@@ -123,7 +157,7 @@ export function navigate(hash: string, { replace = false } = {}) {
 
 /** Changes the current address's params without a history entry (filters, tabs). */
 export function setParams(patch: Record<string, string | null | undefined>) {
-  const route = parse(location.hash);
+  const route = parse(accepted);
   if (route) navigate(format(withParams(route, patch)), { replace: true });
 }
 

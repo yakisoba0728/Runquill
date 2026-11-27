@@ -34,18 +34,25 @@ export const mib = (value: number | null | undefined) => bytes(typeof value === 
 export const cpus = (value: number) => t("{n} CPUs", { n: number(Math.round(value * 100) / 100) });
 export const percent = (value: number, digits = 0) => value.toLocaleString(language, { style: "percent", maximumFractionDigits: digits });
 
-const toDate = (value: string | null | undefined) => {
-  const date = value ? new Date(value) : null;
+type When = string | number | null | undefined;
+
+// Some answers carry Unix seconds (tokens, audit), most an ISO time (v1 toDate).
+const toDate = (value: When) => {
+  const date = typeof value === "number" ? new Date(value < 1e12 ? value * 1000 : value) : value ? new Date(value) : null;
   return date && !Number.isNaN(date.getTime()) ? date : null;
 };
 
 /** Local wall-clock time with seconds. */
-export const timeOfDay = (value: string | null | undefined) =>
+export const timeOfDay = (value: When) =>
   toDate(value)?.toLocaleTimeString(language, { hour: "2-digit", minute: "2-digit", second: "2-digit" }) ?? "—";
 
 /** Local month, day and time. */
-export const date = (value: string | null | undefined) =>
+export const date = (value: When) =>
   toDate(value)?.toLocaleString(language, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) ?? "—";
+
+/** Local year, month and day (v1 format.day). */
+export const calendarDay = (value: When) =>
+  toDate(value)?.toLocaleDateString(language, { year: "numeric", month: "short", day: "numeric" }) ?? "—";
 
 /** A UTC day key (YYYY-MM-DD), the usage API unit, as a short or (long) a full date. */
 export function day(key: string, long = false) {

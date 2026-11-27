@@ -232,6 +232,53 @@ pre.report {
 .brand { font-weight: 700; letter-spacing: -0.01em; color: var(--color-accent); }
 .signin-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
 
+/* Administration screens */
+.row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.data-table .row-actions { flex-wrap: nowrap; }
+.data-table .row-actions > .select { width: 9rem; }
+.table-pager { justify-content: flex-end; }
+.toolbar > .toolbar-full { flex: 1 1 100%; }
+.status-line { margin: 0; font-size: var(--text-sm); min-height: var(--text-sm--line-height); overflow-wrap: anywhere; }
+.status-line:empty { min-height: 0; }
+.status-line[data-tone="ok"] { color: var(--color-success); }
+.status-line[data-tone="failed"] { color: var(--color-danger); }
+.block > * + * { margin-top: 12px; }
+.block > h2 + *, .block-head + * { margin-top: 8px; }
+
+/* Settings: sections on one surface; the docked SaveBar leaves room under the form */
+.settings-form { border: 1px solid var(--color-line); border-radius: var(--radius-lg); background: var(--color-surface); padding-bottom: var(--savebar-space, 0px); }
+.entry-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.worker-row { display: flex; flex-wrap: wrap; align-items: end; gap: 8px 12px; }
+.worker-row > .field { flex: 0 1 200px; min-width: 0; }
+.worker-row > .toolbar-grow { flex: 1 1 260px; }
+.pool-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 16px; padding: 4px 0 16px; border: 0; margin: 0; min-width: 0; }
+.pool-grid > * { grid-column: span 2; }
+.pool-grid > .span-all { grid-column: 1 / -1; }
+.pool-grid > .span-half { grid-column: span 3; }
+.pool-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; }
+.pool-foot > .btn { margin-inline-start: auto; }
+
+/* Migrate */
+.migrate-form { display: grid; gap: 12px; }
+.plain-fieldset { border: 0; margin: 0; padding: 0; min-width: 0; display: grid; gap: 12px; }
+.migrate-repository { max-width: 28rem; }
+.mapping-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.mapping-row { display: grid; grid-template-columns: minmax(0, 2fr) auto minmax(8rem, 1fr) auto; align-items: center; gap: 8px; }
+.file-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; min-width: 0; overflow-wrap: anywhere; text-align: start; }
+.file-body { display: grid; gap: 12px; padding-bottom: 12px; min-width: 0; }
+
+/* G11 DiffView */
+.table-scroll { overflow-x: auto; max-width: 100%; border: 1px solid var(--color-line); border-radius: var(--radius-md); }
+.diff-view { border-collapse: collapse; width: max-content; min-width: 100%; font: var(--text-xs)/var(--text-xs--line-height) var(--font-mono); }
+.diff-view th { position: sticky; top: 0; text-align: start; white-space: nowrap; font: 600 var(--text-xs)/var(--text-xs--line-height) var(--font-sans); color: var(--color-text-hint); background: var(--color-surface-1); padding: 4px 8px; }
+.diff-view td { padding: 0 8px; vertical-align: top; }
+.diff-view .num { text-align: end; color: var(--color-text-hint); width: 1%; white-space: nowrap; user-select: none; }
+.diff-marker { width: 1.5em; user-select: none; }
+.diff-code { white-space: pre; }
+.diff-hunk td, .diff-note td { color: var(--color-text-hint); background: var(--color-surface-1); padding-block: 2px; }
+.diff-view [data-change="removed"] { background: color-mix(in srgb, var(--color-danger), transparent 88%); }
+.diff-view [data-change="added"] { background: color-mix(in srgb, var(--color-success), transparent 88%); }
+
 @media (max-width: 900px) {
   .notices { padding: 12px 16px 0; }
   .demo-band { padding: 10px 16px; }
@@ -239,4 +286,7 @@ pre.report {
   .page-split { height: auto; border: 0; border-radius: 0; background: none; overflow: visible; }
   .tab-content { padding: 12px 0; }
   .signin-box { padding: 24px 16px; }
+  .pool-grid > *, .pool-grid > .span-half { grid-column: 1 / -1; }
+  .mapping-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .mapping-row > [aria-hidden] { display: none; }
 }

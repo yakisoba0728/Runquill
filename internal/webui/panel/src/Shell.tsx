@@ -1,13 +1,13 @@
 // The signed-in frame (design §2.2, §4.2): nav with counts, live status, user menu, command palette, notices,
 // the sample-panel band and the current screen.
 import {
-  AppShell, Badge, CommandPalette, EmptyState, IconButton, Menu, Nav, Select, Toaster, toast, type CommandItem,
+  AppShell, Badge, CommandPalette, IconButton, Menu, Nav, Select, Toaster, toast, type CommandItem,
 } from "@yakihyuk0728/stratum-ui";
 import { Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { request, type ApiError } from "./api";
 import { attention } from "./attention";
 import { useCurrentCommands } from "./commands";
-import { Notice, Page, ScreenBoundary, UpdatedAgo } from "./components";
+import { Notice, ScreenBoundary, UpdatedAgo } from "./components";
 import type { Sample, Scenario } from "./demo";
 import { ConfirmHost } from "./dialogs";
 import { pendingJob, summary } from "./fleet";
@@ -16,7 +16,7 @@ import { fill, language, serverText, t } from "./i18n";
 import { stratum } from "./i18n/stratum";
 import { live, useLive, type Connection } from "./live";
 import { navigate, parse, resolve, useHash, type Route } from "./router";
-import { hasRole, visibleScreens, type Screen } from "./routes";
+import { hasRole, visibleScreens } from "./routes";
 import { languageURL, setTheme, useTheme, type Theme } from "./theme";
 import type { User } from "./types";
 
@@ -106,15 +106,6 @@ function DemoBand({ sample }: { sample: Sample }) {
       <span className="text-sm text-text-hint">{t(note)}</span>
       <a className="text-sm" href="https://github.com/yakisoba0728/Runquill#install-a-public-release" target="_blank" rel="noopener noreferrer">{t("Install Runquill")}</a>
     </div>
-  );
-}
-
-function Placeholder({ screen }: { screen: Screen }) {
-  return (
-    <Page title={t(screen.title)}>
-      <EmptyState title={t("Coming in a later step of panel v2")}
-        description={t("This screen is not rebuilt yet. The current panel still has it.")} />
-    </Page>
   );
 }
 
@@ -281,7 +272,7 @@ export function Shell({ user, sample }: { user: User | null; sample?: Sample }) 
         {sample && <DemoBand sample={sample} />}
         <Notices />
         <ScreenBoundary key={screen.id}>
-          <Suspense fallback={null}>{Content ? <Content route={route} /> : <Placeholder screen={screen} />}</Suspense>
+          <Suspense fallback={null}><Content route={route} /></Suspense>
         </ScreenBoundary>
       </AppShell>
       <CommandPalette items={items} open={palette} onOpenChange={setPalette} {...labels.palette} />

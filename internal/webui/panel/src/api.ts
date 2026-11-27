@@ -2,7 +2,6 @@
 // Origin header the server checks. Errors carry the HTTP status and a message already passed through serverText.
 // In the sample panel, GETs are answered by the fixtures in src/demo (registered by main.tsx) and everything else is
 // refused, so nothing leaves the browser (v1 createApi).
-// shortcut: request and stream only; download (the backup POST with progress) arrives with the backups screen (phase 4).
 import { serverText } from "./i18n";
 
 let unauthorized = () => {};
@@ -124,6 +123,35 @@ export async function stream(path: string, { signal }: { signal?: AbortSignal } 
     throw error;
   }
   return response;
+}
+
+/**
+ * POSTs to path without a deadline and reads the body in chunks, calling progress(received, total) as it arrives
+ * (total 0 when unknown). Resolves to a Blob. Refused in the sample panel.
+ */
+export async function download(path: string, type: string, progress: (received: number, total: number) => void = () => {}): Promise<Blob> {
+  if (sample) throw new ApiError(0, "Not available in the sample panel.");
+  let response: Response;
+  try {
+    response = await globalThis.fetch(path, { method: "POST", cache: "no-store" });
+  } catch (error) {
+    throw unreachable(error);
+  }
+  if (!response.ok) {
+    const error = new ApiError(response.status, await response.text().catch(() => ""));
+    if (response.status === 401) unauthorized();
+    throw error;
+  }
+  const total = Number(response.headers.get("Content-Length")) || 0;
+  const chunks: Uint8Array<ArrayBuffer>[] = [];
+  let received = 0;
+  const reader = response.body!.getReader();
+  for (let part = await reader.read(); !part.done; part = await reader.read()) {
+    chunks.push(part.value);
+    received += part.value.byteLength;
+    progress(received, total);
+  }
+  return new Blob(chunks, { type });
 }
 
 /** The message for anything a request rejected with (v1 errorText). */

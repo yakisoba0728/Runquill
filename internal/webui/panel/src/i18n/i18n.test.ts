@@ -44,7 +44,7 @@ describe("i18n", () => {
       }
     }
     // Codes and fixed text that are not translated.
-    const literal = new Set(["POST", "Meta+K /", "Control+K /", "Ctrl K", "English", "UTC",
+    const literal = new Set(["POST", "PUT", "Meta+K /", "Control+K /", "Ctrl K", "English", "UTC",
       "CORDONED", "RUNNING", "PAUSED", "STARTING", "CLEANUP", "UNKNOWN", "RETRY", "WAITING"]);
     const missing = [...keys].filter((key) => !Object.hasOwn(ko, key) && !literal.has(key));
     expect(missing).toEqual([]);

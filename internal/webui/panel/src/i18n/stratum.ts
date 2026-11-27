@@ -1,6 +1,7 @@
 // G8: Stratum's built-in wording is Korean, and it has no global way to change it, so every use passes its labels.
 // They are made here, once per page load (the language never changes without a reload).
-import { t } from ".";
+import type { ReactNode } from "react";
+import { fill, t } from ".";
 
 export const stratum = () => ({
   shell: { drawerLabel: t("Menu"), menuLabel: t("Open menu") },
@@ -18,7 +19,21 @@ export const stratum = () => ({
   toaster: { label: t("Notifications"), closeLabel: t("Close") },
   confirm: { cancelLabel: t("Cancel") },
   table: { empty: t("No entries.") },
-  // Only the labels a pane without unsaved changes shows; the settings screen (phase 4) adds the rest.
+  // Only the labels a pane without unsaved changes shows: no pane edits anything (settings edit on a page, with SaveBar).
   split: { close: t("Close"), back: t("Back to the list"), prev: t("Previous item"), next: t("Next item"), resize: t("Detail pane width") },
   search: { clearLabel: t("Clear search") },
+  saveBar: {
+    dirty: (n: ReactNode) => fill("{n} unsaved changes", { n }),
+    guard: (n: ReactNode) => fill("{n} unsaved changes kept you here. Save them, or discard them and leave.", { n }),
+    saving: t("Saving…"),
+    saved: t("Settings saved."),
+    error: (n: ReactNode, error: unknown) => fill("Not saved: {error} Your {n} changes are kept.", {
+      n, error: error instanceof Error && error.message ? error.message : t("Request failed."),
+    }),
+    save: t("Save"),
+    retry: t("Try again"),
+    revert: t("Revert"),
+    discard: t("Discard and leave"),
+    region: t("Unsaved changes"),
+  },
 });

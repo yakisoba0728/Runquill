@@ -1,6 +1,6 @@
 # 패널 v2 설계: Stratum으로 다시 만들기
 
-상태: 설계 확정(2026-11-28). [열린 질문](#9-열린-질문)은 모두 권하는 답으로 정했습니다. 1~3단계를 구현했습니다([§7.3](#73-1단계-프런트엔드-확인-결과), [§7.4](#74-2단계-읽기-화면-확인-결과), [§7.5](#75-3단계-operator-동작-확인-결과)).
+상태: 설계 확정(2026-11-28). [열린 질문](#9-열린-질문)은 모두 권하는 답으로 정했습니다. 1~4단계를 구현했습니다([§7.3](#73-1단계-프런트엔드-확인-결과), [§7.4](#74-2단계-읽기-화면-확인-결과), [§7.5](#75-3단계-operator-동작-확인-결과), [§7.6](#76-4단계-관리-화면-확인-결과)). 남은 것은 5단계 전환입니다.
 
 정해진 것: 관리자 패널을 정보 구조까지 처음부터 다시 만들고, UI는 사용자의 라이브러리 **Stratum**(`@yakihyuk0728/stratum-ui` 0.1.1, React 19 컴포넌트와 `stratum.css` 하나)으로 그립니다. React 19 + Stratum을 Vite로 빌드하고, 빌드 결과를 Go embed 디렉터리에 커밋해 `go build`와 릴리스에는 Node가 필요 없게 합니다. CI는 커밋된 번들이 소스와 같은지 확인합니다.
 
@@ -55,31 +55,31 @@
 | --- | --- | --- |
 | **Overview** `#/overview` · 스냅샷(`fleet:read`) · 샘플 있음 | 용량(실행 중, 대기 = 준비+재시도, 가장 긴 대기, 슬롯 사용 = 사용/한도, 여유·예약·미할당), 호스트 상태(전체·준비·오프라인·사용 불가·유지 보수, K8s면 "Runtime targets"), GitHub 연결(저장소 범위, 공개 저장소 허용, App 연결 증거, 마지막 웹훅, 마지막 폴링/실패), 첫 작업 체크리스트 3단계 + 설정 안내 링크(`README#verify-your-first-job`) + 첫 작업 GitHub 링크, 대기 작업 상위 8개와 "나머지는 대기열에서" (`pw/views/overview.js`) | **개요**. 같은 정보에 "주의 필요" 목록을 더합니다([§4.3](#43-개요)). |
 | **Queue** `#/queue`, `#/queue?job=ID` · 스냅샷 + `GET /api/jobs/{id}`(`fleet:read`) · 샘플 있음 | 대기·배정·정리됨 3개 목록, 저장소/작업 ID 검색, 풀 필터, 표(순서, 저장소, 작업, 풀+러너 OS, 상태+재시도 시각, 이유, 대기 시간, 호스트), 상세(상태, 발견 경로, 풀, 호스트, 러너, 라벨, OS, 이미지, 재시도 시각, 이유와 재시도 이유, 단계별 시간 막대, CPU·메모리, 관찰된 사건 타임라인, GitHub 링크), 상세가 선택한 작업을 따라 목록을 옮겨 다님, 사라지면 토스트 (`pw/views/queue.js:1-180`, `pw/views/jobinsight.js`) | ✅ 2단계. **작업** 탭 "대기", "실행 중", "정리됨" + 작업 상세 칸([§4.4](#44-작업)). |
-| 〃 재시도·취소 · `jobs:write`(operator) | `POST /api/jobs/{id}/retry`(재시도 예정 작업만), `POST /api/jobs/{id}/cancel`, 둘 다 확인 후, 끝나면 새로 고침 (`pw/fleet.js:25-55`) | ✅ 3단계. 작업 상세 칸 아래(`PaneFooter`)의 "지금 재시도"·"작업 취소"와 칸이 열려 있을 때의 팔레트 명령. 대기 탭 행의 `Menu`는 미룹니다([§7.5](#75-3단계-operator-동작-확인-결과)). |
+| 〃 재시도·취소 · `jobs:write`(operator) | `POST /api/jobs/{id}/retry`(재시도 예정 작업만), `POST /api/jobs/{id}/cancel`, 둘 다 확인 후, 끝나면 새로 고침 (`pw/fleet.js:25-55`) | ✅ 3단계. 작업 상세 칸 아래(`PaneFooter`)의 "지금 재시도"·"작업 취소"와 칸이 열려 있을 때의 팔레트 명령. ⏳ 대기 탭 행의 `Menu`는 5단계로 넘깁니다([§7.5](#75-3단계-operator-동작-확인-결과), [§7.6](#76-4단계-관리-화면-확인-결과)). |
 | 〃 "Missing a job?" 저장소 점검 · `admin` | `POST /api/diagnose {repository}`, 보고서 `<pre>`. admin이 아니면 `runquill diagnose OWNER/REPO` 안내만 (`pw/views/queue.js:190-206`). 샘플에서는 숨김 | ✅ 2·3단계. 안내 문구(`runquill diagnose OWNER/REPO`)는 대기 탭이 비었을 때 모든 역할에 보입니다. admin에게는 **작업** 머리글 동작과 빈 대기 탭의 "저장소 점검" 버튼, 팔레트 명령이 같은 `Dialog`(`POST`, 10초)를 엽니다. 샘플에서는 숨김. |
 | 〃 명령: 대기·배정·정리됨 보기, 필터 지우기 | `pw/views/queue.js:281-293` | ✅ 2단계. 탭 전환 명령 4개(대기·실행 중·정리됨·기록), 필터 지우기. |
 | **Jobs** `#/jobs`, `#/jobs?job=ID` · `GET /api/jobs?limit&repository&outcome&since&before`, `GET /api/jobs/{id}`(`fleet:read`) · 샘플 있음 | 7일 기록, 저장소·결과(대기/실행/완료/실패)·기간(1시간/24시간/7일) 필터, 25개씩 "이전 작업 더 보기"(`before` 커서), 새로 고침(필터와 열린 작업 유지), 표(저장소 GitHub 링크, 작업 ID+라벨, 결과+이유+재시도 시각, 풀+OS, 호스트, 대기·시작·종료 시각, 대기 시간), 상세(결과, 풀, 호스트, 라벨, OS, 시각, 단계 시간, 리소스), 대기 작업 재시도·취소(operator) (`pw/views/jobs.js`) | ✅ 2·3단계. **작업** 탭 "기록". 같은 상세 칸. 대기 작업의 재시도·취소는 칸 아래(행 버튼 대신). |
 | 〃 명령: 필터 지우기, 더 보기 | `pw/views/jobs.js:218-225` | ✅ 2단계. 같음. |
 | **Runners** `#/runners`, `#/runners?runner=NAME` · 스냅샷 · 샘플 있음 | 관찰 수와 관찰되지 않은 임대 수, 표(러너, 호스트, 풀, 런타임 상태, 준비 시각, 이미지+OS, GitHub 작업 또는 "추적되지 않은 러너"), 로그 링크(operator, local·ssh만), 사라지면 토스트 (`pw/views/runners.js`) | ✅ 2·3단계. **러너** 목록 + 러너 상세 칸. operator 이상(과 샘플)에게 "로그" 열의 "로그 보기" 링크(local·ssh만). |
-| **Logs** `#/logs`, `#/logs?runner=NAME` · `GET /api/runners/{name}/logs?tail&follow=1`(`browser` + operator, 토큰 불가) · 샘플 있음(고정 줄) | 작업 중인 러너 목록, 줄 수(100~2000), 따라가기, 줄바꿈, 일시 정지(대기 줄 수), 중지, 다시 연결, 복사, 다운로드, 지우기, 최신으로, 5000줄·줄당 4000자 제한과 버린 줄 안내, ANSI 제거, 타임스탬프 표시, 15분 따라가기 한도, 러너가 끝나면 스트림 종료, K8s·agent:// 불가 안내, 상태 문구(연결 중, 마지막 N줄, 따라가는 중, 8 MiB 한도에서 멈춤, 15분 한도, 스트림 끊김, 러너 종료), 연결 끊김·429·502·503일 때만 [다시 연결] (`pw/views/logs.js`) | ✅ 3단계. **러너** 상세 칸의 "로그" 탭(`#/runners/NAME/logs`). 별도 메뉴 항목은 없앱니다([§2.1](#21-설계-원칙과-바뀌는-점)). 폰에서 도구를 `Menu` 하나로 접는 것은 미룹니다([§7.5](#75-3단계-operator-동작-확인-결과)). |
+| **Logs** `#/logs`, `#/logs?runner=NAME` · `GET /api/runners/{name}/logs?tail&follow=1`(`browser` + operator, 토큰 불가) · 샘플 있음(고정 줄) | 작업 중인 러너 목록, 줄 수(100~2000), 따라가기, 줄바꿈, 일시 정지(대기 줄 수), 중지, 다시 연결, 복사, 다운로드, 지우기, 최신으로, 5000줄·줄당 4000자 제한과 버린 줄 안내, ANSI 제거, 타임스탬프 표시, 15분 따라가기 한도, 러너가 끝나면 스트림 종료, K8s·agent:// 불가 안내, 상태 문구(연결 중, 마지막 N줄, 따라가는 중, 8 MiB 한도에서 멈춤, 15분 한도, 스트림 끊김, 러너 종료), 연결 끊김·429·502·503일 때만 [다시 연결] (`pw/views/logs.js`) | ✅ 3단계. **러너** 상세 칸의 "로그" 탭(`#/runners/NAME/logs`). 별도 메뉴 항목은 없앱니다([§2.1](#21-설계-원칙과-바뀌는-점)). ⏳ 폰에서 도구를 `Menu` 하나로 접는 것은 5단계로 넘깁니다([§7.5](#75-3단계-operator-동작-확인-결과), [§7.6](#76-4단계-관리-화면-확인-결과)). |
 | 〃 명령: 러너별 로그 보기, 일시 정지/재개, 다시 연결, 중지, 다운로드 | `pw/views/logs.js:400-413` | ✅ 3단계. 같은 명령(러너별 로그 보기는 러너 화면 어디서나, 나머지는 로그 탭이 열려 있을 때). |
 | **Hosts & pools** `#/hosts`, `#/hosts?host=NAME` · 스냅샷 · 샘플 있음 | 호스트 표(이름+오류, 풀, 상태+이미지 상태+마지막 응답+웜 러너, 슬롯 한도·사용·예약·가능), 풀 표(준비 호스트, 사용, 예약, 가능, 한도, 웜 러너, 사용률 막대), 사라지면 토스트 (`pw/views/hosts.js:85-175`) | ✅ 2단계. **호스트** 탭 "호스트"·"풀" + 호스트 상세 칸. |
-| 〃 배정 중지/재개 · `hosts:write`(operator) | `POST /api/hosts/cordon {host, cordoned}`, 명령 "{host}에서 배정 중지/재개" | ✅ 3단계. 호스트 상세 칸 아래 동작과 팔레트 명령(확인 없음, v1과 같음). 행 `Menu`는 미룹니다([§7.5](#75-3단계-operator-동작-확인-결과)). |
+| 〃 배정 중지/재개 · `hosts:write`(operator) | `POST /api/hosts/cordon {host, cordoned}`, 명령 "{host}에서 배정 중지/재개" | ✅ 3단계. 호스트 상세 칸 아래 동작과 팔레트 명령(확인 없음, v1과 같음). ⏳ 행 `Menu`는 5단계로 넘깁니다([§7.5](#75-3단계-operator-동작-확인-결과), [§7.6](#76-4단계-관리-화면-확인-결과)). |
 | 〃 워커 등록 · `admin` | `agent://` 호스트에 `POST /api/hosts/{name}/enrollment`, 일회성 등록 명령과 재시작 명령, 복사, 만료 시각, 숨기기 (`pw/views/hosts.js:34-82`) | ✅ 3단계. 호스트 상세 칸의 "워커 등록"(`Dialog` 안 복사 필드). |
 | 〃 서버 리소스 · `GET /api/hosts/resources[?disk=1]`(`fleet:read`) | 용량, 슬롯, 예약 CPU·메모리, 러너 사용량, 디스크(요청 시 측정, 측정 중이면 5초마다 다시 묻기, 10분 보관 안내), agent·K8s "Not available", 30초 갱신 (`pw/views/hosts.js:290-400`) | ✅ 2단계(디스크 측정은 `GET`이라 포함). **호스트** 탭 "리소스" + 호스트 상세 칸 요약. |
 | 〃 탄력 한도 · `GET /api/elastic`(`fleet:read`) | 모드(off/observe/apply), 주기, 호스트별 여유·빌려준 CPU·메모리·잡아 둔 슬롯, 최근 결정(시각, 러너, 자원, 변화, 이유, 적용 여부·오류), 꺼져 있으면 설정 안내, 보고서 주기로 갱신 (`pw/views/hosts.js:180-288`) | ✅ 2단계. **호스트** 탭 "탄력 한도". |
 | **Usage** `#/usage` · `GET /api/usage?from&to&group&repository`(`fleet:read`) · 샘플 있음 | 범위(어제·오늘, 7·30·90일, 직접 입력 UTC 날짜, 최대 400일), 묶음(일·저장소·풀·호스트), 저장소 필터, 막대 기준 지표, 합계, 일별 막대 차트, 표와 상대 막대, "가장 바쁜 N개만" 안내, 설명 문구 (`pw/views/usage.js:1-160,255-300`) | ✅ 2단계. **사용량** 탭 "집계". 날짜는 `DateRangePicker` 대신 네이티브 날짜 입력 둘입니다([§7.4](#74-2단계-읽기-화면-확인-결과)). |
 | 〃 적정 크기 · `GET /api/usage/rightsizing?group&days`(`fleet:read`) | 풀/워크플로 작업별, 1~7일, 표본 수, CPU·메모리 판정(Tight, Oversized, Fits, Too few jobs, No limit), 메모리 종료 수 (`pw/views/usage.js:160-250`) | ✅ 2단계. **사용량** 탭 "적정 크기". |
 | 〃 명령: 7·30·90일 보기, 묶음 바꾸기 | `pw/views/usage.js:307-326` | ✅ 2단계. 같음. |
-| **Migrate** `#/migrate` · `GET /api/migrate/status`, `POST /api/migrate/preview`, `POST /api/migrate/open`(`admin`) · 샘플 있음(고정 미리보기, 열기 불가) | 1 권한(Contents, Pull requests, Workflows), 2 저장소와 runs-on→풀 매핑(최대 10라벨, 중복·표현식·self-hosted 거부, 설정의 풀 목록 `GET /api/settings`), 3 미리보기(기본 브랜치, 읽은 파일, 바꿀 작업, 파일별 diff 표와 남겨 둔 작업과 이유), 4 PR 열기(확인, 브랜치 `runquill/migrate-runs-on-<hash12>`, 기존 PR 링크, 미리보기가 낡으면 자동 갱신) (`pw/views/migrate.js`) | **이전** 화면, 같은 4단계([§4.11](#411-이전)). |
-| **Backups** `#/backups` · `GET /api/backups/status`, `POST /api/backups/verify`, `POST /api/backup`(`admin`) · 샘플 있음(다운로드 불가) | 일정(켜짐, 주기, 보관 수, 디렉터리, 봉인, 원격 사본), 마지막 실행(결과, 시도·성공 시각, 파일, 크기, 봉인, 원격 업로드, 업로드 대기·오류), 켜는 방법(환경 변수 5개), 최신 백업 검증(최대 30분), 큐 백업 다운로드(진행률, 감사 기록), 복원은 `runquill restore` 안내, 새로 고침 (`pw/views/backups.js`) | **백업** 화면. |
-| 〃 명령: 새로 고침, 검증, 다운로드 | `pw/views/backups.js:203-211` | 같음. |
-| **Audit** `#/audit` · `GET /api/audit?limit&action&actor&before`(`admin`) · 샘플 없음 | 동작 종류 10개 필터, 행위자 검색, 50개씩 더 보기, 새로 고침, 표(시각, 동작+원래 코드, 행위자, 대상) (`pw/views/audit.js`) | **감사** 화면. 필터는 주소에. |
-| **Team & tokens** `#/team` · 샘플 없음 | (admin) `GET /api/team?after`, `POST /api/team {login, role}`, `PUT /api/team/{id} {role, disabled}`: 로그인 또는 숫자 ID로 추가, 역할 바꾸기(고른 뒤 "역할 변경" 버튼, 확인), 사용 중지(세션·토큰 폐기 확인)·다시 사용, 100명씩 이전/다음 (`pw/views/team.js:95-180`) | **팀** 화면(admin). |
-| 〃 API 토큰 · `browser`(모든 역할, 세션만) | `GET /api/tokens`, `POST /api/tokens {name, scope, days}`, `DELETE /api/tokens/{id}`: 범위 3개(viewer는 `fleet:read`만 선택 가능), 1~90일, 비밀값 한 번 표시와 복사, 폐기 확인 (`pw/views/team.js:24-90`) | **API 토큰** 화면(모든 역할). |
-| **Settings** `#/settings` · `GET`/`PUT /api/settings`(`admin`, `panel.operations`가 있을 때만 등록) · 샘플 없음 | 전체 슬롯 한도, 폴링 주기(웹훅 상태 안내), 기본 러너 이미지, Docker 워커(주소, 워커별 한도, agent:// 읽기 전용), 워커 풀(이름, CPU, 메모리, 웜 러너, 웜 교체 분, 이미지, 허용 OS, 워커 주소, 저장소 제한, 권한 있는 DinD, 공유 빌드 캐시), 러너 이미지 카탈로그 읽기 전용, `revision` 충돌, 편집기에 없는 풀 필드 보존(`max_per_repository` 등), `privileged`가 없으면 기본값 유지, 풀 이름 중복 거부, 저장 안 한 변경이 있으면 떠나기·다시 불러오기·탭 닫기 전에 확인, 백업 화면 링크 (`pw/views/settings.js`) | **설정** 화면([§4.7](#47-설정), [§3.6](#36-설정과-저장-안-한-변경)). |
+| **Migrate** `#/migrate` · `GET /api/migrate/status`, `POST /api/migrate/preview`, `POST /api/migrate/open`(`admin`) · 샘플 있음(고정 미리보기, 열기 불가) | 1 권한(Contents, Pull requests, Workflows), 2 저장소와 runs-on→풀 매핑(최대 10라벨, 중복·표현식·self-hosted 거부, 설정의 풀 목록 `GET /api/settings`), 3 미리보기(기본 브랜치, 읽은 파일, 바꿀 작업, 파일별 diff 표와 남겨 둔 작업과 이유), 4 PR 열기(확인, 브랜치 `runquill/migrate-runs-on-<hash12>`, 기존 PR 링크, 미리보기가 낡으면 자동 갱신) (`pw/views/migrate.js`) | ✅ 4단계. **워크플로 이전** 화면, 같은 4단계([§4.11](#411-이전)). 매핑의 라벨은 v1처럼 쉼표로 구분한 입력입니다([§7.6](#76-4단계-관리-화면-확인-결과)). |
+| **Backups** `#/backups` · `GET /api/backups/status`, `POST /api/backups/verify`, `POST /api/backup`(`admin`) · 샘플 있음(다운로드 불가) | 일정(켜짐, 주기, 보관 수, 디렉터리, 봉인, 원격 사본), 마지막 실행(결과, 시도·성공 시각, 파일, 크기, 봉인, 원격 업로드, 업로드 대기·오류), 켜는 방법(환경 변수 5개), 최신 백업 검증(최대 30분), 큐 백업 다운로드(진행률, 감사 기록), 복원은 `runquill restore` 안내, 새로 고침 (`pw/views/backups.js`) | ✅ 4단계. **백업** 화면. 검증은 화면을 떠나도 계속되고, 돌아오면 진행 중 표시와 결과를 보입니다. |
+| 〃 명령: 새로 고침, 검증, 다운로드 | `pw/views/backups.js:203-211` | ✅ 4단계. 같음. |
+| **Audit** `#/audit` · `GET /api/audit?limit&action&actor&before`(`admin`) · 샘플 없음 | 동작 종류 10개 필터, 행위자 검색, 50개씩 더 보기, 새로 고침, 표(시각, 동작+원래 코드, 행위자, 대상) (`pw/views/audit.js`) | ✅ 4단계. **감사 기록** 화면. 필터는 주소에(`#/audit?action=job.&actor=octocat`). 팔레트 명령 "새로 고침". |
+| **Team & tokens** `#/team` · 샘플 없음 | (admin) `GET /api/team?after`, `POST /api/team {login, role}`, `PUT /api/team/{id} {role, disabled}`: 로그인 또는 숫자 ID로 추가, 역할 바꾸기(고른 뒤 "역할 변경" 버튼, 확인), 사용 중지(세션·토큰 폐기 확인)·다시 사용, 100명씩 이전/다음 (`pw/views/team.js:95-180`) | ✅ 4단계. **팀** 화면(admin). |
+| 〃 API 토큰 · `browser`(모든 역할, 세션만) | `GET /api/tokens`, `POST /api/tokens {name, scope, days}`, `DELETE /api/tokens/{id}`: 범위 3개(viewer는 `fleet:read`만 선택 가능), 1~90일, 비밀값 한 번 표시와 복사, 폐기 확인 (`pw/views/team.js:24-90`) | ✅ 4단계. **API 토큰** 화면(모든 역할, 사용자 메뉴). |
+| **Settings** `#/settings` · `GET`/`PUT /api/settings`(`admin`, `panel.operations`가 있을 때만 등록) · 샘플 없음 | 전체 슬롯 한도, 폴링 주기(웹훅 상태 안내), 기본 러너 이미지, Docker 워커(주소, 워커별 한도, agent:// 읽기 전용), 워커 풀(이름, CPU, 메모리, 웜 러너, 웜 교체 분, 이미지, 허용 OS, 워커 주소, 저장소 제한, 권한 있는 DinD, 공유 빌드 캐시), 러너 이미지 카탈로그 읽기 전용, `revision` 충돌, 편집기에 없는 풀 필드 보존(`max_per_repository` 등), `privileged`가 없으면 기본값 유지, 풀 이름 중복 거부, 저장 안 한 변경이 있으면 떠나기·다시 불러오기·탭 닫기 전에 확인, 백업 화면 링크 (`pw/views/settings.js`) | ✅ 4단계. **설정** 화면([§4.7](#47-설정), [§3.6](#36-설정과-저장-안-한-변경)). 떠나기는 `SaveBar` 가드(흔들림 + "버리고 이동")입니다. `cache_writes`·`max_per_repository` 같은 편집기에 없는 풀 필드는 그대로 저장됩니다. |
 
-표시: ✅는 구현한 단계, ⏳는 미룬 단계와 이유입니다. 표시가 없는 행은 아직 만들지 않은 4단계 화면입니다(1단계의 셸·개요는 §1.1과 [§7.3](#73-1단계-프런트엔드-확인-결과)).
+표시: ✅는 구현한 단계, ⏳는 5단계로 넘긴 것과 이유입니다. 4단계 뒤로 표시가 없는 행은 없습니다(1단계의 셸·개요·로그인은 §1.1과 [§7.3](#73-1단계-프런트엔드-확인-결과), 로그인 실패 이유는 [§7.6](#76-4단계-관리-화면-확인-결과)의 e2e로 확인).
 
 확인 수준: 셸, Overview, Queue, Jobs, Runners, Hosts, Settings, Team, Audit는 파일 전체를 읽고 적었습니다. Logs, Usage, Backups, Migrate는 함수·요청·문구 단위로 확인했습니다. 구현 단계의 §1 점검(§7.1 5단계)은 파일 단위로 다시 합니다.
 
@@ -1001,6 +1001,22 @@ React·ReactDOM과 Stratum JS의 압축 크기는 구현하면서 빌드 결과�
 
 한국어 카탈로그는 3단계에서 새 키가 3개뿐이라(나머지는 v1 문장) 거의 그대로입니다. 남은 4.5 KB로 4단계를 감당할 수 있는지는 4단계에서 다시 잽니다. 넘으면 1단계에 적은 대로 서버 문장과 화면 문장을 두 청크로 나눕니다.
 
+4단계 빌드의 측정값(설정, 팀, API 토큰, 감사 기록, 백업, 워크플로 이전 추가):
+
+| 대상 | 측정 | 예산 |
+| --- | --- | --- |
+| 첫 화면(`index.html` + 진입 청크 + 정적으로 부르는 공유 청크 + CSS) | 133.8 KB | ≤ 150 KB |
+| CSS | 28.7 KB | ≤ 35 KB |
+| 설정 화면 청크 | 7.0 KB | ≤ 30 KB |
+| 팀 · API 토큰 · 감사 기록 화면 청크 | 2.0 KB · 1.8 KB · 1.6 KB | 각 ≤ 30 KB |
+| 백업 화면 청크 | 3.1 KB | ≤ 30 KB |
+| 워크플로 이전 화면 청크(`DiffView` 포함) | 5.5 KB | ≤ 30 KB |
+| 한국어 카탈로그 청크(1,067개 키) | 25.7 KB(파일만 gzip -9 하면 24.6 KB) | ≤ 30 KB |
+| 샘플 청크 `demo-*.js`(백업 상태, 이전 미리보기 추가) | 5.9 KB | ≤ 30 KB |
+| `panelv2/` 원본 합계 | 751 KB | ≤ 1.2 MB |
+
+관리 화면 문장은 v1 카탈로그에 이미 있어 새 키가 10개뿐이었고, 카탈로그는 0.2 KB 늘었습니다. 30 KB를 넘지 않아 서버 문장과 화면 문장을 두 청크로 나누는 대안은 쓰지 않았습니다.
+
 ## 7. 이전 계획과 테스트
 
 ### 7.1 단계
@@ -1259,6 +1275,90 @@ lockfile에는 Linux용 `@rolldown/binding-linux-*`와 `lightningcss-linux-*`가
 - 한국어 카탈로그는 25.5 KB / 30 KB입니다. 4단계 화면 문장은 대부분 v1에 있지만, 넘으면 서버 문장과 화면 문장을 나눕니다.
 - `stratum.ts`의 `split` 문구에 저장하지 않은 변경 문구가 아직 없습니다(설정 화면에서 더함).
 - 행 `Menu`(작업·호스트)와 폰 로그 도구 `Menu`는 위의 이유로 미뤘습니다.
+
+### 7.6 4단계 관리 화면 확인 결과
+
+2026-11-28. 설정, 팀, API 토큰, 감사 기록, 백업, 워크플로 이전을 만들었습니다. API 호출, 검증, 역할 제한과 확인 문구는 v1과 같습니다. §1에서 열려 있는 것은 아래 "5단계에 넘기는 것"에 적은 항목뿐입니다.
+
+**만든 것.**
+
+- **설정**(`screens/settings/`). `GET`/`PUT /api/settings`(10초)입니다. 전체·Docker 워커·워커 풀 세 `FormSection`과 `SaveBar`(`docked`, ⌘S/Ctrl+S, 탭 닫기 경고)로 이뤄집니다.
+  - 변경 수는 `useFormDirty`(전체 설정 세 값)와 워커·풀 목록의 항목별 JSON 비교(추가·삭제·변경 각 1건)의 합입니다.
+  - 본문 조립은 순수 함수 `settingsBody`(`draft.ts`)로 뺐고 단위 테스트가 있습니다. 원래 풀 객체를 먼저 펼친 뒤 덮어씁니다. 그래서 `cache_writes`·`max_per_repository`처럼 편집기에 없는 필드가 그대로 저장됩니다. 그 밖의 v1 규칙도 같습니다:
+    - `privileged`가 원래 없었으면 없는 채로 둡니다.
+    - `warm`·`warm_max_idle_minutes`·`images`는 비면 보내지 않습니다.
+    - 저장소를 제한하지 않으면 `repositories: null`입니다.
+    - `host_limits`에는 값이 있는 워커만 넣습니다.
+    - 러너 OS 이름(형식, 64개)을 검사하고 풀 이름 중복을 거부합니다.
+  - 저장 실패(위 검사와 서버 문장, `revision` 충돌 포함)는 `SaveBar`의 오류 톤에 문장으로 나오고, 고친 값은 그대로 남습니다. 네이티브 검사(필수, 풀 이름 패턴, 숫자 범위)는 요청 전에 막고 첫 칸에 포커스를 줍니다. 접힌 풀 안의 잘못된 칸은 그 풀을 엽니다.
+  - `agent://` 워커는 읽기 전용이고 제거할 수 없습니다. 워커·풀 제거는 이름이 있을 때 위험 확인을 거치고, 포커스는 다음 항목이나 추가 버튼으로 갑니다.
+  - "저장된 설정 불러오기"(머리글과 팔레트)는 변경이 있으면 위험 확인을 거칩니다. `backend`가 `docker`가 아니면 v1처럼 워커와 풀 섹션을 숨깁니다(값은 그대로 저장).
+- **떠나기 가드**(`router.ts`의 `useLeaveGuard`). 설정 화면에 저장하지 않은 변경이 있으면, 다른 화면으로 가는 이동이 막힙니다. 링크, 팔레트, 뒤로 가기 모두 해당합니다. 주소는 `replaceState`로 되돌리고, `SaveBar`가 흔들리며 "변경 N건을 저장하지 않아 이동하지 않았습니다"와 "버리고 이동"을 보입니다. "버리고 이동"은 값을 되돌리고 막혔던 주소로 갑니다. 같은 화면 안의 쿼리 변경은 막지 않습니다.
+- **팀**(`screens/team/`, admin). 추가(숫자만이면 `PUT /api/team/{id}`, 아니면 `POST /api/team` 10초, `@1234`는 숫자 로그인), 역할 `Select`와 바뀌었을 때만 나타나는 "역할 변경"(확인), 사용 중지(위험 확인)·다시 사용, `after` 커서 100명씩 이전/다음(빈 다음 페이지면 머무름, v1과 같음). 추가 폼의 오류는 폼 아래, 행 동작의 실패는 토스트입니다.
+- **API 토큰**(`screens/tokens/`, 모든 역할, 사용자 메뉴). viewer는 `fleet:read`만 고를 수 있고 나머지는 비활성이며 이유가 보입니다. 만든 비밀값은 `CopyField`로 한 번 보이고 포커스·선택됩니다. "토큰 숨기기", 그 토큰 폐기, 화면 떠나기가 값을 지웁니다(상태에만 있음). 폐기는 위험 확인입니다. 만료일은 서버가 주는 Unix 초를 그대로 읽습니다(`format.ts`의 `toDate`가 v1처럼 숫자를 받게 바꿈).
+- **감사 기록**(`screens/audit/`, admin). 동작 종류와 행위자가 주소에 남습니다. 동작은 바꾸면 바로, 행위자는 입력이 450ms 멈춘 뒤(Enter는 바로) 다시 부릅니다. "이전 기록 더 보기"는 `before`, 50개 미만이면 숨깁니다. 영어 페이지에서는 동작 코드에 영어 문구가 없어 코드만 한 번 보입니다(v1은 같은 코드를 두 번 보였음).
+- **백업**(`screens/backups/`, admin, 샘플 있음). 일정·마지막 실행·검증·켜는 방법은 `GET /api/backups/status` 하나로 그립니다. 검증(`POST`, 30분+10초)은 모듈 수준 약속으로 두어 화면을 떠나도 계속됩니다. 돌아오면 진행 중 표시를 보이고, 끝나면 결과와 새 상태를 보입니다. 큐 백업 다운로드는 `api.ts`의 `download`(v1과 같이 제한 없음, 401이면 세션 종료, 샘플에서 거부)와 Stratum `Progress`(크기를 모르면 불확정)를 씁니다. 받은 Blob은 `actions.ts`의 `saveFile`로 저장합니다(러너 로그 다운로드와 공용).
+- **워크플로 이전**(`screens/migrate/`, admin, 샘플 있음). 1 권한(빠지면 안내, 실패하면 "다시 확인"), 2 저장소와 매핑(풀 목록은 스냅샷 + 라이브에서 `GET /api/settings`), 3 미리보기, 4 PR 열기입니다.
+  - 검증 규칙과 diff 해석은 순수 함수(`mapping.ts`)이고 단위 테스트가 있습니다. 문제가 있으면 그 칸에 `aria-invalid`와 포커스를 주고, 상태 줄에 이유를 보입니다.
+  - 미리보기는 파일마다 `Accordion` 항목입니다. 로컬 `DiffView`(G11, 이전·새 줄 번호, 낭독용 "삭제"/"추가", 가로 스크롤 영역)와 남긴 작업 표가 들어갑니다.
+  - 입력을 바꾸면 미리보기를 버립니다. PR 열기는 확인 뒤 `POST /api/migrate/open`입니다. `stale` 코드면 한 번 자동으로 다시 미리 보고, `branch_exists`면 기존 PR 링크나 브랜치 삭제 안내를 보입니다.
+  - 샘플은 고정 미리보기(`GET /api/migrate/preview` fixture)를 보이고 4단계를 그리지 않습니다.
+- **셸.** 라우트 표의 모든 화면에 컴포넌트가 생겨 자리표시자(`Placeholder`)와 그 문장 2개를 지웠습니다. 공용 `StatusLine`(설명 줄, `role="status"`)과 쓰기 도우미 `send(method, …)`(`post`는 그 위의 한 줄)를 더했습니다.
+
+**확인한 것.**
+
+- `npm run typecheck`, `npm test`(81개), `npm run build`(두 번 빌드해 `diff -r` 같음), `npm run size`, `go vet ./...`, `go test ./...`. `TestPanelV2SamplePanelIsReadOnly`와 Go 번역 테스트도 통과했습니다.
+- **Playwright e2e**(`npx playwright test`, 29개 × Chromium·Firefox·WebKit = 87개 통과). 새 파일 `e2e/admin.e2e.ts`(16개)는 모두 `startLive(page, role, snapshot)`로 라이브 모드를 띄웁니다.
+  - 로그인 실패 이유 5개(한 번 보이고 주소에서 지움, 다시 불러오면 없음)와 모르는 코드.
+  - 저장 안 한 변경 가드: 탐색 링크·팔레트·뒤로 가기가 모두 막히고 값이 남습니다. 머문 채 다시 고치면 경고가 사라지고, "버리고 이동"이 막혔던 화면을 엽니다.
+  - 설정 저장 왕복: 편집기에 없는 필드 보존과 `privileged` 부재를 확인합니다. 서버 400 문장이 저장 바에 나오고 값이 남습니다. ⌘S 저장 뒤 가드가 풀립니다. 네이티브 검사 실패는 요청을 보내지 않습니다.
+  - 토큰 한 번 표시(viewer 범위 제한, 포커스, 숨기기 뒤 페이지에 값 없음, 화면을 떠났다 오면 없음).
+  - 팀 역할 변경(확인 → `PUT {role, disabled}` → 토스트).
+  - 감사 필터의 주소와 이전 페이지.
+  - 백업 다운로드: 세 엔진 모두 실제 CSP 아래에서 `download` 이벤트와 파일 이름 `runquill-queue-backup.sqlite3`을 확인했습니다.
+  - 이전 미리보기(검증 포커스, 요청 본문, diff 줄 번호, 권한이 빠지면 열기 비활성, 입력 변경 시 미리보기 제거).
+  - 샘플 패널의 백업·이전 fixture, 쓰기 버튼 없음, `/api/` 요청 0건, 샘플에 없는 관리 화면은 개요로 이동.
+  - 매 테스트에서 CSP 위반과 콘솔 오류가 0건입니다.
+- **눈으로 본 것.** Go 데모 서버(실제 CSP)에서 라이브 모드를 가로채 Chromium으로 봤습니다.
+  - 여섯 화면을 영어·밝게와 한국어·어둡게로 확인했습니다. 저장 바 가드, 확인 대화상자, diff 표도 봤습니다.
+  - 폰 폭(390px)에서 페이지 가로 넘침이 없습니다. diff는 표 안에서 가로로 스크롤합니다.
+  - 영어 페이지 본문과 `aria-label`·`title`·`placeholder`에 한글이 없습니다(스크립트로 확인).
+  - 키보드: 설정에서 Tab이 전체 → 워커(입력, 제거) → 워커 추가 → 풀(접기 버튼, 칸, 풀 제거) → 풀 추가 → 저장 바 순서로 갑니다. 가드 상태에서는 "버리고 이동"에 닿습니다.
+
+**설계와 달라진 점·알게 된 것.**
+
+- **`TagInput` 대신 텍스트 입력.** 허용 OS(쉼표), 워커 주소·허용 저장소(한 줄에 하나, `Textarea`), 이전 매핑의 라벨(쉼표)은 v1과 같은 텍스트 입력입니다. Stratum 0.1.1 `TagInput`은 Enter나 쉼표를 누르지 않은 입력을 blur 때 칩으로 만들지 않습니다. 그래서 그대로 저장하면 마지막에 친 값이 조용히 빠집니다. 기본 문구도 한국어입니다. **Stratum에 제안할 것:** blur(또는 폼 제출) 때 남은 입력을 칩으로 추가하는 옵션. 저장 형식(배열)은 같습니다.
+- **`NumberInput` 대신 `Input type="number"`.** `NumberInput`의 증감 버튼 이름과 범위 문구 기본값이 한국어라 모든 칸에 넘겨야 합니다. 네이티브 숫자 입력과 브라우저의 검사 문구로 충분했습니다.
+- **라우터의 주소 저장소.** `useHash`가 `location.hash`가 아니라 "받아들인 주소"를 돌려줍니다. `location.hash = …`는 주소를 바로 바꾸지만 `hashchange`(와 가드)는 다음 작업에서 옵니다. 그 사이에 셸이 다시 그리면(팔레트가 닫히며 그럼) 가드가 돌기 전에 설정 화면이 사라집니다. 막힌 이동은 기록 항목 하나를 남깁니다(v1과 같음). 그래서 뒤로 가기로 막힌 뒤에는 같은 주소 항목이 둘이 됩니다.
+- **`SaveBar`는 폼과 같이 붙입니다.** `SaveBar`는 마운트할 때 감싼 폼의 `submit`에 한 번 붙습니다. 그래서 폼과 바를 설정을 불러온 뒤 함께 그리고, 폼은 `preventDefault`도 합니다. CSP의 `form-action 'none'` 때문에 네이티브 제출은 어차피 막힙니다.
+- **`useFormDirty.commit(next)`는 기준값만 바꿉니다.** 불러오기와 저장 뒤에는 `commit`과 `setValues`를 같이 부릅니다. 한 응답에서 만든 draft 하나를 기준과 현재 값에 함께 써서, 불러온 직후 변경 수가 0입니다(단위 테스트).
+- **팔레트 명령 목록은 안정된 값이어야 합니다**(§7.5). 감사 기록의 "새로 고침"처럼 `reload` 함수에 기대는 명령은 ref로 감쌌습니다.
+- **단계 표시.** §4.11의 `Steps` 머리띠 대신 "1. 권한"…"4. PR 열기" 블록 제목을 씁니다(v1과 같은 문장). 상태는 블록 안 `Badge`와 상태 줄이 보입니다.
+- **새 문장 10개.** 저장 바 문구 8개("{n} unsaved changes", "Discard and leave" 등), "Read-only: set in the deployment.", "Viewers can create read-only tokens."입니다. 나머지는 v1 문장입니다.
+- **서버 변경 없음.** Go 코드는 바꾸지 않았습니다.
+
+**확인하지 않은 것.**
+
+- 실제 매니저(GitHub 로그인 세션)로는 돌리지 않았습니다. 모든 라이브 확인은 §7.5와 같은 가로채기입니다. `PUT /api/settings`의 워커 제거 확인(연결 확인, 사용 중 거부)과 `revision` 충돌 문구는 서버 테스트와 문장 전달만 확인했습니다.
+- 30분짜리 백업 검증과 큰 큐 백업의 진행률(Content-Length가 있을 때의 퍼센트)은 작은 응답으로만 확인했습니다.
+- `stale`·`branch_exists` 분기는 v1 코드를 옮겼고 e2e로 돌리지 않았습니다.
+- 눈으로 본 확인은 Chromium만 했습니다. 스크린 리더로 듣지는 않았습니다.
+
+**5단계에 넘기는 것.**
+
+v2를 기본값으로 만들기 위해 5단계가 할 일입니다(§6, §7.1 "겹치는 동안의 값" 표).
+
+1. **출력 옮기기.** `vite.config.ts`의 `outDir`를 `../panelweb`으로 바꿉니다. v1 소스(`panelweb/*.js`, `views/`, `demo/`, `i18n.js`, CSS)는 `emptyOutDir` 전에 지우거나, 6단계까지 둘 경우 다른 곳으로 옮깁니다. `panelv2/`는 지웁니다. `.gitattributes`의 생성 표시와 README의 경로도 바꿉니다.
+2. **서빙 전환.** `internal/webui/assets.go`에서 `//go:embed panelv2`와 `PanelV2()`를 지우고 `panelweb`만 남깁니다. `internal/app/panel.go`에서 `RUNQUILL_PANEL_V2` 분기를 없애고 §6.4의 정적 라우트(`/`, `/theme.js`, `/assets/{file}`, 라이브에서 `demo-*` 404)만 남깁니다. v1의 `/views/*.js`·`/demo/*.js` 라우트도 지웁니다. `TestPanelRoutesAndFirstJobEvidence`와 임베드 참조 검사도 같이 바꿉니다.
+3. **번역 테스트.** Go의 `panelTranslations`에서 v1 `i18n.js` 읽기를 지우고 v2 JSON만 검사합니다. 서버 문장의 번역은 한 곳(`ko.json`, `server-patterns.json`)에만 넣습니다.
+4. **CI.** 최신성 검사 경로를 `internal/webui/panelweb`으로 바꿉니다(§6.5). `panel` 작업에 `npx playwright install --with-deps chromium`과 `npm run e2e`를 더합니다(Go가 필요함). 서버 라우트를 쓰는 다른 검사도 확인합니다.
+5. **Pages와 데모 tar.** GitHub Pages 배포와 릴리스의 데모 tar가 새 `panelweb/`(`index.html`, `theme.js`, `assets/`)를 올리는지 확인합니다. 해시 라우팅이라 서버 대체 라우트는 필요 없습니다.
+6. **문서.** `docs/panel.md`·`docs/panel.ko.md`를 새 화면 구성과 주소로 고칩니다: 작업 탭, 러너 로그 탭, API 토큰 화면, 설정 가드의 바뀐 동작, 예전 주소 표(§2.4), 지원 브라우저(§9 Q7). `docs/development.md`의 패널 빌드, README의 패널 설명(설치·첫 작업 앵커는 유지), `internal/webui/panel/README.md`의 출력 경로도 고칩니다. 릴리스 노트에는 화면 변경과 예전 주소 동작을 적습니다.
+7. **`api/openapi.yaml`.** 패널이 쓰는 응답 필드와 맞는지 확인합니다. 특히 `expires_at`·`occurred_at`이 Unix 초이고, `/api/migrate/preview`의 `files[].jobs`가 `null`일 수 있습니다.
+8. **§1 전체 점검**(파일 단위)과 남은 ⏳ 항목:
+   - 대기 탭 행과 호스트 행의 `Menu`. `DataTable`의 `onRowAction`과 셀 안 버튼의 충돌을 확인한 뒤 넣거나, Stratum 행 동작 열을 기다린다고 기록합니다.
+   - 폰 로그 도구 `Menu`.
+9. **Stratum 제안 정리**(§8과 §7.4~7.6): `TagInput`의 blur 추가, `NumberInput`·`DatePicker` 문구 prop, `DataTable` 행 높이와 현재 행, 행 동작 열.
 
 ## 8. Stratum에 없는 것
 

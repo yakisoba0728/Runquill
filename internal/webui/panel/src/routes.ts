@@ -10,8 +10,7 @@ export interface Screen {
   group?: "Operations" | "Administration";
   role: Role;
   demo: boolean;
-  /** Undefined while the screen is not built yet (phases 3-4): a placeholder shows. */
-  component?: ComponentType<{ route: Route }>;
+  component: ComponentType<{ route: Route }>;
 }
 
 export const screens: Screen[] = [
@@ -20,13 +19,13 @@ export const screens: Screen[] = [
   { id: "runners", title: "Runners", group: "Operations", role: "viewer", demo: true, component: lazy(() => import("./screens/runners/Runners")) },
   { id: "hosts", title: "Hosts", group: "Operations", role: "viewer", demo: true, component: lazy(() => import("./screens/hosts/Hosts")) },
   { id: "usage", title: "Usage", group: "Operations", role: "viewer", demo: true, component: lazy(() => import("./screens/usage/Usage")) },
-  { id: "settings", title: "Settings", group: "Administration", role: "admin", demo: false },
-  { id: "team", title: "Team", group: "Administration", role: "admin", demo: false },
-  { id: "audit", title: "Audit log", group: "Administration", role: "admin", demo: false },
-  { id: "backups", title: "Backups", group: "Administration", role: "admin", demo: true },
-  { id: "migrate", title: "Workflow migration", group: "Administration", role: "admin", demo: true },
+  { id: "settings", title: "Settings", group: "Administration", role: "admin", demo: false, component: lazy(() => import("./screens/settings/Settings")) },
+  { id: "team", title: "Team", group: "Administration", role: "admin", demo: false, component: lazy(() => import("./screens/team/Team")) },
+  { id: "audit", title: "Audit log", group: "Administration", role: "admin", demo: false, component: lazy(() => import("./screens/audit/Audit")) },
+  { id: "backups", title: "Backups", group: "Administration", role: "admin", demo: true, component: lazy(() => import("./screens/backups/Backups")) },
+  { id: "migrate", title: "Workflow migration", group: "Administration", role: "admin", demo: true, component: lazy(() => import("./screens/migrate/Migrate")) },
   // In the user menu, not the nav.
-  { id: "tokens", title: "API tokens", role: "viewer", demo: false },
+  { id: "tokens", title: "API tokens", role: "viewer", demo: false, component: lazy(() => import("./screens/tokens/Tokens")) },
 ];
 
 const rank: Record<Role, number> = { viewer: 1, operator: 2, admin: 3 };

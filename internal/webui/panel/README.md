@@ -1,6 +1,6 @@
 # Runquill panel v2 (source)
 
-The rebuilt operations panel: React 19, TypeScript and [Stratum](https://www.npmjs.com/package/@yakihyuk0728/stratum-ui) `0.1.1`, built with Vite. The design and its phases are in [docs/design/panel-v2.md](../../../docs/design/panel-v2.md). Phase 1 covers the shell, sign-in, live updates, routing, translations, the command palette and the Overview screen. Phase 2 adds the Jobs, Runners, Hosts and Usage screens. Phase 3 adds the operator and admin actions on them: job retry and cancel, the repository check, pausing a host, worker enrollment and the runner Logs tab. The administration screens and API tokens still show a placeholder.
+The rebuilt operations panel: React 19, TypeScript and [Stratum](https://www.npmjs.com/package/@yakihyuk0728/stratum-ui) `0.1.1`, built with Vite. The design and its phases are in [docs/design/panel-v2.md](../../../docs/design/panel-v2.md). Phase 1 covers the shell, sign-in, live updates, routing, translations, the command palette and the Overview screen. Phase 2 adds the Jobs, Runners, Hosts and Usage screens. Phase 3 adds the operator and admin actions on them: job retry and cancel, the repository check, pausing a host, worker enrollment and the runner Logs tab. Phase 4 adds the administration screens (Settings, Team, Audit log, Backups, Workflow migration) and API tokens. Phase 5 makes v2 the default panel.
 
 ## Build
 
@@ -14,7 +14,7 @@ RUNQUILL_PANEL_DEV_TARGET=http://127.0.0.1:8081 npm run dev   # proxies /api, /s
 npm run typecheck && npm test
 npm run build        # writes ../panelv2/, commit the result
 npm run size         # gzip budget, design §6.8
-npm run e2e          # Playwright against `go run . panel --demo` (Chromium; needs Go and a build)
+npm run e2e          # Playwright against `go run . panel --demo` (Chromium; needs Go and a build; stop any server on port 18181 first)
 npx playwright test --project firefox --project webkit   # the other engines, by hand
 ```
 
@@ -56,7 +56,8 @@ Keep the same headers as v1. That includes the CSP `default-src 'self'; img-src 
 - `src/router.ts`, `src/routes.ts`: hash routes, v1 address rewrites and the screen table.
 - `src/i18n/`: `ko.json` and `server-patterns.json`, converted once from v1 `panelweb/i18n.js`. The keys are the English text. Add a translation for every new English string. A test checks the literals in `src`. While v1 lives, server messages need a translation in both places.
 - `src/request.ts`: `useRequest` for screen REST loads, with optional polling. `src/commands.ts`: palette commands a screen (and its open pane) registers.
-- `src/session.ts`: `can(role)`, always false in the sample panel. `src/actions.ts`: `post()` for writes (failures, 403 included, as a toast) and `useBusy()` for a button's pending state. `src/dialogs.tsx`: `confirm()`.
+- `src/session.ts`: `can(role)`, always false in the sample panel. `src/actions.ts`: `send()`/`post()` for writes (failures, 403 included, as a toast), `useBusy()` for a button's pending state and `saveFile()`. `src/dialogs.tsx`: `confirm()`.
+- `src/router.ts` also holds the leave guard (`useLeaveGuard`): the settings screen blocks leaving with unsaved changes and its SaveBar offers "Discard and leave".
 - `src/components/`: local stand-ins for parts Stratum does not have yet (design §8). `index.tsx` is in the entry chunk; parts only screens use (`StageBar`, `ResourceMeters`, `BarChart`, `CopyField`) have their own files. The log viewer is `src/screens/runners/RunnerLogs.tsx`.
-- `src/screens/<id>/`: one lazy chunk per screen.
+- `src/screens/<id>/`: one lazy chunk per screen. Rules worth testing on their own live beside the screen (`settings/draft.ts`, `migrate/mapping.ts`).
 - `src/demo/`: sample scenarios and the GET fixtures (`fixtures.ts`, runner logs included), built into `demo-*` only. `main.tsx` registers `answer` with `answerSamples` in `api.ts`, so the sample panel never reaches a server.

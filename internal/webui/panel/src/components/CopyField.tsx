@@ -4,14 +4,14 @@ import { Button, Field, Input } from "@yakihyuk0728/stratum-ui";
 import { useRef } from "react";
 import { t } from "../i18n";
 
-export function CopyField({ label, value, copyLabel, report, autoFocus }: {
-  label: string; value: string; copyLabel: string; report: (text: string) => void; autoFocus?: boolean;
+export function CopyField({ label, value, copyLabel, copied = "Command copied.", description, report, autoFocus }: {
+  label: string; value: string; copyLabel: string; copied?: string; description?: string; report: (text: string) => void; autoFocus?: boolean;
 }) {
   const input = useRef<HTMLInputElement>(null);
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(value);
-      report(t("Command copied."));
+      report(t(copied));
     } catch {
       input.current?.focus();
       input.current?.select();
@@ -20,7 +20,7 @@ export function CopyField({ label, value, copyLabel, report, autoFocus }: {
   };
   return (
     <div className="copy-field">
-      <Field label={label} className="toolbar-grow">
+      <Field label={label} description={description} className="toolbar-grow">
         <Input ref={input} readOnly value={value} className="font-mono" data-autofocus={autoFocus || undefined}
           onFocus={(event) => event.currentTarget.select()} spellCheck={false} />
       </Field>

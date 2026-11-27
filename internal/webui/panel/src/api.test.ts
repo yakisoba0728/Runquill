@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { answerSamples, ApiError, onUnauthorized, request } from "./api";
+import { answerSamples, ApiError, download, onUnauthorized, request } from "./api";
 import { setCatalogue } from "./i18n";
 
 afterEach(() => {
@@ -53,6 +53,23 @@ describe("api", () => {
       await expect(request("./api/jobs/1/retry", { method: "POST" })).rejects.toMatchObject({ status: 0, message: "Not available in the sample panel." });
       await expect(request("./api/team")).rejects.toBeInstanceOf(ApiError);
       expect(network).not.toHaveBeenCalled();
+    } finally {
+      answerSamples(null);
+    }
+  });
+
+  it("downloads a body in chunks with progress, and refuses in the sample panel", async () => {
+    const body = new ReadableStream({ start(c) { c.enqueue(new Uint8Array([1, 2])); c.enqueue(new Uint8Array([3])); c.close(); } });
+    const fetch = vi.fn(async () => new Response(body, { headers: { "Content-Length": "3" } }));
+    vi.stubGlobal("fetch", fetch);
+    const progress = vi.fn();
+    const blob = await download("./api/backup", "application/vnd.sqlite3", progress);
+    expect([blob.size, blob.type]).toEqual([3, "application/vnd.sqlite3"]);
+    expect(progress.mock.calls).toEqual([[2, 3], [3, 3]]);
+    expect(fetch).toHaveBeenCalledWith("./api/backup", { method: "POST", cache: "no-store" });
+    answerSamples(() => undefined);
+    try {
+      await expect(download("./api/backup", "x")).rejects.toMatchObject({ message: "Not available in the sample panel." });
     } finally {
       answerSamples(null);
     }

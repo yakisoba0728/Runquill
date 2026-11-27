@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { changesScreen, format, parse, resolve, withParams } from "./router";
+import { act, renderHook } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { changesScreen, format, navigate, parse, resolve, useHash, useLeaveGuard, withParams } from "./router";
 
 const all = ["overview", "jobs", "runners", "hosts", "usage", "tokens", "settings", "team", "audit", "backups", "migrate"];
 const viewer = ["overview", "jobs", "runners", "hosts", "usage", "tokens"];
@@ -60,5 +61,36 @@ describe("router", () => {
     expect(changesScreen("jobs", "#/jobs?tab=history")).toBe(false);
     expect(changesScreen("overview", "#/jobs/4828")).toBe(true);
     expect(changesScreen("jobs", "#main")).toBe(false);
+  });
+
+  it("holds a guarded screen: undoes the move, then retry leaves", async () => {
+    const changed = () => new Promise((resolve) => addEventListener("hashchange", resolve, { once: true }));
+    act(() => navigate("#/settings", { replace: true }));
+    const blocked = vi.fn();
+    const { result, rerender } = renderHook(({ dirty }) => {
+      useLeaveGuard(dirty, blocked);
+      return useHash();
+    }, { initialProps: { dirty: true } });
+
+    location.hash = "#/jobs";
+    await act(changed);
+    expect(blocked).toHaveBeenCalledOnce();
+    expect([location.hash, result.current]).toEqual(["#/settings", "#/settings"]);
+
+    // A move inside the screen is not leaving it.
+    location.hash = "#/settings?x=1";
+    await act(changed);
+    expect(result.current).toBe("#/settings?x=1");
+
+    const retry = blocked.mock.calls[0][0] as () => void;
+    act(retry);
+    await act(changed);
+    expect(result.current).toBe("#/jobs");
+
+    rerender({ dirty: false });
+    location.hash = "#/usage";
+    await act(changed);
+    expect(result.current).toBe("#/usage");
+    expect(blocked).toHaveBeenCalledOnce();
   });
 });

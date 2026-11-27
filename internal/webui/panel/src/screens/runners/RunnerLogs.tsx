@@ -5,6 +5,7 @@
 // follow can add thousands; at most 5,000 stay.
 import { Button, Select, Switch, toast } from "@yakihyuk0728/stratum-ui";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { saveFile } from "../../actions";
 import { isSample, stream, type ApiError } from "../../api";
 import { useScreenCommands, type ScreenCommand } from "../../commands";
 import { runnerRows } from "../../fleet";
@@ -40,18 +41,6 @@ function lineNode(text: string) {
   time.textContent = timeOfDay(match[1]);
   line.append(time, " " + match[2]);
   return line;
-}
-
-function saveFile(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  link.hidden = true;
-  document.body.append(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 type Tone = "" | "waiting" | "failed";

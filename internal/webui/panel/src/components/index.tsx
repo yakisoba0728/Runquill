@@ -11,6 +11,11 @@ export function Notice({ tone = "warning", className = "", children, ...rest }: 
   return <div className={"notice " + className} data-tone={tone} {...rest}>{children}</div>;
 }
 
+/** A polite status line for an action's progress and result (v1 statusLine); an empty one stays in place, silent. */
+export function StatusLine({ text, tone }: { text?: ReactNode; tone?: "ok" | "failed" }) {
+  return <p role="status" className="status-line" data-tone={tone}>{text}</p>;
+}
+
 /** G5: a <dl> of label and value rows. Stratum DescriptionList later. */
 export function KeyValue({ rows, label }: { rows: [ReactNode, ReactNode][]; label?: string }) {
   return (
