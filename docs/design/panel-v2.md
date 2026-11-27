@@ -795,12 +795,12 @@ export default defineConfig({
     target: "es2023",
     modulePreload: { polyfill: false }, // 인라인·추가 코드 없이
     sourcemap: false,
-    // Vite 8에서는 rolldownOptions(이전 이름 rollupOptions). 이름은 구현할 때 설치된 버전에 맞춥니다.
+    // Vite 8에서는 rolldownOptions(이전 이름 rollupOptions).
     rolldownOptions: {
       output: {
         entryFileNames: "assets/panel-[hash].js",
-        // src/demo/ 아래 모듈은 모두 "demo" 그룹 하나로 (Rolldown advancedChunks.groups, Rollup이면 manualChunks)
-        advancedChunks: { groups: [{ name: "demo", test: /[\\/]src[\\/]demo[\\/]/ }] },
+        // src/demo/ 아래 모듈은 모두 "demo" 그룹 하나로. Rolldown 1.3부터 advancedChunks는 codeSplitting으로 바뀜(구현 확인)
+        codeSplitting: { groups: [{ name: "demo", test: /[\\/]src[\\/]demo[\\/]/ }] },
         chunkFileNames: (chunk) => (chunk.name === "demo" ? "assets/demo-[hash].js" : "assets/chunk-[hash].js"),
         assetFileNames: "assets/panel-[hash][extname]",
       },
@@ -852,6 +852,7 @@ mux.HandleFunc("GET /assets/{file}", func(w, r) {
   - 외부 출처 없음: 글꼴 CDN 불가, 이미지는 `'self'`와 `data:`만(Stratum `shell.css:132`의 `mask: url("data:image/svg+xml…")`은 허용 범위).
   - `form-action 'none'`: 모든 폼은 `onSubmit`에서 `preventDefault`. 로그인은 링크.
   - 다운로드(`saveFile`의 `blob:` 링크)는 지금과 같이 동작합니다.
+  - **1단계에서 확인함**([§7.3](#73-1단계-프런트엔드-확인-결과)): 빌드된 `index.html`에는 인라인 스크립트와 `style`이 없고, 실제 CSP 문자열 아래 Chromium에서 위반이 0건이었습니다.
 - `Cache-Control: no-store`는 그대로 둡니다. 해시가 붙은 `assets/`는 `immutable`로 캐시할 수 있지만, 지금 모든 응답이 `no-store`라고 문서화되어 있고(`api/openapi.yaml:9`) 번들이 작습니다([§9 Q12](#9-열린-질문)).
 - `index.html`의 `data-mode="demo"` 치환은 그대로입니다. Vite가 `<body>` 속성을 보존하는지 Go 테스트가 확인합니다.
 
@@ -890,6 +891,8 @@ panel:
 
 1을 권합니다.
 
+**1단계 결과: 바이트까지 같습니다**([§7.3](#73-1단계-프런트엔드-확인-결과)). 같은 lockfile과 Node 26.13.1로 macOS arm64, Linux arm64, Linux amd64에서 빌드한 결과가 `diff -r`로 같았습니다. 대안이 필요 없으므로 CI는 위의 `git diff --exit-code`를 그대로 씁니다.
+
 ### 6.6 개발 방식
 
 ```bash
@@ -925,7 +928,7 @@ go run . panel --demo               # (저장소 루트) 빌드 결과를 Go 서
 | `.github/scripts/*`, `Dockerfile` | 패널 파일 경로를 참조하지 않음(`grep`으로 확인). 변경 없음 |
 | `internal/app/*_test.go` | §7.2 |
 
-`go vet ./...`와 `go test ./...`는 Go 파일이 없는 디렉터리를 건너뛰지만, `node_modules` 안에 `.go` 파일이 든 npm 패키지가 있으면 패키지로 잡힐 수 있습니다. CI의 Go 작업은 `npm ci`를 하지 않아 영향이 없고, 로컬에서 문제가 되면 `internal/webui/panel/`에 빈 `go.mod`를 두어 별도 모듈로 빼면 `./...`에서 빠집니다. `gofmt -l .`은 모듈 경계와 상관없이 모든 `.go` 파일을 보므로 로컬에서만 같은 주의가 필요합니다. 1단계에서 실제로 확인합니다.
+`go vet ./...`와 `go test ./...`는 Go 파일이 없는 디렉터리를 건너뛰지만, `node_modules` 안에 `.go` 파일이 든 npm 패키지가 있으면 패키지로 잡힐 수 있습니다. CI의 Go 작업은 `npm ci`를 하지 않아 영향이 없고, 로컬에서 문제가 되면 `internal/webui/panel/`에 빈 `go.mod`를 두어 별도 모듈로 빼면 `./...`에서 빠집니다. `gofmt -l .`은 모듈 경계와 상관없이 모든 `.go` 파일을 보므로 로컬에서만 같은 주의가 필요합니다. 1단계 확인: 지금 의존성의 `node_modules`에는 `.go` 파일이 없고, 설치된 채로 `go test ./...`가 통과합니다. 빈 `go.mod`는 두지 않았습니다. 의존성을 바꿀 때 `find internal/webui/panel/node_modules -name '*.go'`로 다시 봅니다.
 
 ### 6.8 번들 크기 예산
 
@@ -947,6 +950,22 @@ React·ReactDOM과 Stratum JS의 압축 크기는 구현하면서 빌드 결과�
 | `panelweb/` 원본 합계(바이너리에 들어가는 양) | ≤ 1.2 MB |
 
 `scripts/size.mjs`(Node 기본 `zlib`만 사용)가 빌드 결과를 재고 넘으면 실패합니다. 화면은 `React.lazy`로 나눠 첫 화면에는 셸과 개요만 들어갑니다.
+
+1단계 빌드의 측정값(gzip -9, `npm run size`):
+
+| 대상 | 측정 | 예산 |
+| --- | --- | --- |
+| 첫 화면(`index.html` + 진입 청크 + CSS). 진입 청크는 정적 import가 없습니다 | 125.1 KB | ≤ 150 KB |
+| 〃 + 개요 화면 청크(첫 화면에서 바로 불러옴) | 132.2 KB | ≤ 150 KB |
+| 진입 청크 `panel-*.js`(React, ReactDOM, Stratum, 셸) | 원본 314 KB, gzip 97.6 KB | |
+| CSS(`stratum.css` + `panel.css`) | 27.1 KB | ≤ 35 KB |
+| 개요 화면 청크 | 7.1 KB | ≤ 30 KB |
+| 한국어 카탈로그 청크(`ko.json`, 1,042개 키) | 25.3 KB | ≤ 30 KB |
+| 서버 문장 템플릿 청크 | 1.0 KB | |
+| 샘플 청크 `demo-*.js` | 1.8 KB | |
+| `panelv2/` 원본 합계 | 576 KB | ≤ 1.2 MB |
+
+한국어 카탈로그는 v1 문장 전체를 한 청크로 받으므로 화면이 늘어도 크게 늘지 않지만, 예산까지 4.7 KB만 남았습니다. 넘으면 서버 문장(`serverText`용)과 화면 문장을 두 청크로 나눕니다.
 
 ## 7. 이전 계획과 테스트
 
@@ -993,7 +1012,7 @@ React·ReactDOM과 Stratum JS의 압축 크기는 구현하면서 빌드 결과�
 | `TestPanelSamplePanelIsReadOnly` (`app/panel_test.go:159`) | `views/*.js`, `demo/*.js` 등에서 fixture가 GET만 답하는지, 화면 코드가 `fetch`·`EventSource`·`XMLHttpRequest`·`sendBeacon`·`WebSocket`을 직접 쓰지 않는지 | 같은 검사를 소스 `internal/webui/panel/src/**/*.{ts,tsx}`에, `src/api.ts`와 `src/live.ts`만 예외로. 번들은 축약되어 검사할 수 없음 |
 | 나머지 패널 서버 테스트(`panel_access_test.go`, `panel_jobs_test.go`, `panel_settings_test.go`, `panel_backups_test.go`, `panel_migrate_test.go`, `panel_resources_test.go`, `panel_live_oauth_test.go`) | API 동작 | 그대로 |
 
-**프런트엔드 단위 테스트**(Vitest + Testing Library + jsdom, Stratum과 같은 도구)
+**프런트엔드 단위 테스트**(Vitest + Testing Library + jsdom, Stratum과 같은 도구). 1단계에는 `api`, `live`, `router`, `i18n`(소스의 모든 `t("…")` 키가 `ko.json`에 있는지 포함), 주의 항목·`summary`, `confirm()` 테스트가 있습니다.
 
 - `api.ts`: 일반 문장·JSON 오류 해석, 401 콜백, 시간 초과·네트워크 문구, 샘플 모드 거부.
 - `live.ts`: 가짜 타이머와 가짜 `EventSource`로 4초/10초/60초 규칙, 폴링 백오프, 숨은 탭, 401.
@@ -1009,6 +1028,59 @@ React·ReactDOM과 Stratum JS의 압축 크기는 구현하면서 빌드 결과�
 - 시나리오 3개 × 모든 샘플 화면 렌더, 예전 주소 리디렉션, 팔레트(⌘K, `/`, 영어·한국어 검색), 테마 저장, `?lang=ko`, 폰 크기(390×844)에서 서랍과 시트, `@axe-core/playwright` 위반 0.
 - 라이브 모드는 같은 서버의 HTML을 `page.route`로 `data-mode="live"`로 바꾸고 `/api/me`, `/api/events`(`text/event-stream` 본문 하나), 쓰기 API를 가로채서: 로그인 실패 이유 5개, 세션 만료, 연결 끊김 표시, 재시도·취소 확인, 설정 저장 안 한 변경 가드, 토큰 한 번 표시.
 - CI는 Chromium만. WebKit·Firefox는 수동 실행(Stratum과 같은 방식).
+
+### 7.3 1단계 프런트엔드 확인 결과
+
+2026-11-28, `internal/webui/panel/`의 첫 빌드 기준입니다. 빌드 방법과 결과 구조는 [`internal/webui/panel/README.md`](../../internal/webui/panel/README.md)에 있습니다.
+
+**CSP.** `app/panel.go:274`의 CSP 문자열을 그대로 보내는 임시 서버로 Chromium에서 확인했습니다. `securitypolicyviolation`은 0건이었습니다. 확인한 상황은 다음과 같습니다.
+
+- 샘플 패널: 하위 경로, 영어·한국어, 밝게·어둡게, 폰 폭(390×844) 서랍.
+- 라이브 패널: 로그인 화면과 `?signin=` 이유, 세션 확인 실패, SSE 실시간, 연결 끊김 카운트다운, 실패한 로그아웃 토스트, 401 뒤 로그인 화면.
+- 그 밖에 `Menu`, `Select`, `CommandPalette`, `Disclosure`를 열어 보았습니다.
+
+Stratum 0.1.1의 `dist`를 직접 읽은 결과도 같습니다.
+
+- `<style>` 주입과 `setAttribute("style")`이 없습니다.
+- 스타일은 React `style` prop(`SplitView`, `Progress`, `DataTable`, `Slider`)과 CSSOM(`.style.setProperty`, `.style.translate`, `popover/place.js`의 `style.cssText`)으로만 바꿉니다. CSP는 CSSOM을 막지 않습니다.
+- `Tooltip`의 `innerHTML`은 `style` 속성이 없는 고정 마크업입니다. 1단계 화면은 `Tooltip`을 쓰지 않으므로 브라우저에서는 확인하지 않았습니다.
+- `stratum.css`의 외부 `url()`은 `data:` SVG 하나뿐입니다.
+
+빌드된 `index.html`에는 `<script src>`와 `<link>`만 있습니다. 모듈 프리로드 폴리필은 껐습니다.
+
+**결정성.** 같은 lockfile과 Node 26.13.1로 빌드해 `diff -r`로 비교했고, 결과가 모두 같았습니다.
+
+- 같은 macOS arm64에서 두 번 빌드한 결과.
+- `rm -rf node_modules && npm ci` 뒤에 다시 빌드한 결과.
+- Docker `node:26.13.1-bookworm-slim` 컨테이너의 Linux arm64와 Linux amd64(에뮬레이션) 빌드 결과.
+
+lockfile에는 Linux용 `@rolldown/binding-linux-*`와 `lightningcss-linux-*`가 들어 있습니다. [§6.5](#65-ci-최신성-검사)의 대안은 필요 없습니다.
+
+**샘플 청크 분리.** `src/demo/` 아래 코드는 `demo-*.js` 하나에만 들어갑니다. 샘플 표식 `runquill-demo-`도 이 파일에만 있습니다. 진입 청크는 다른 청크를 정적으로 import하지 않고 모두 `import()`로 부르므로, 라이브 서버가 `demo-*`를 404로 답해도 라이브 패널은 영향을 받지 않습니다. 브라우저 확인에서 라이브 모드는 `demo-*`를 요청하지 않았습니다.
+
+**설계와 달라진 점.**
+
+- `rolldownOptions.output.codeSplitting`을 씁니다. `advancedChunks`는 Rolldown 1.3에서 폐기되었습니다.
+- 내비게이션 아이콘이 아직 없어 사이드바 레일(`⌘\`)을 `rail={false}`로 막았습니다.
+- `api.ts`에는 `request`만 옮겼습니다. `download`, `stream`, 샘플 응답용 `createApi`는 쓰는 화면과 함께 2~4단계에서 옮깁니다.
+- 떠나기 가드(`useLeaveGuard`)는 설정 화면(4단계)과 함께 만듭니다.
+- `ko.json`은 v1 `words`를 그대로 옮기고 v2 문장을 더했습니다. `"Jobs"`만 "작업 기록"에서 "작업"으로 바꿨습니다(대기열과 기록을 합친 화면).
+
+**Go·CI 단계에 넘기는 것**(이번 커밋에서 하지 않음).
+
+1. `internal/webui/assets.go`에 `//go:embed panelv2`와 `PanelV2()`를 더합니다. `panelv2/`에는 `_`나 `.`로 시작하는 파일이 없어 `all:`이 필요 없습니다.
+2. `RUNQUILL_PANEL_V2=1`이면 라이브 패널과 `panel --demo` 모두 v2를 서빙합니다. 경로는 `GET /`(라이브면 `data-mode` 치환), `GET /theme.js`, `GET /assets/{file}`입니다. `{file}`은 `^(?:panel|chunk|demo)-[A-Za-z0-9_-]+\.(?:js|css)$`가 아니면 400이고, 라이브면 `demo-*`는 404입니다. CSP와 `no-store`는 v1과 같습니다. 아니면 v1 라우트를 그대로 둡니다.
+3. [§7.2](#72-테스트)의 Go 테스트를 `panelv2` 기준으로 더합니다.
+   - 임베드된 `index.html`이 참조하는 파일이 200인지 확인합니다. 진입 청크는 `import("./chunk-…")`처럼 같은 디렉터리 상대 경로로 청크를 부릅니다.
+   - `demo-*` 분리와 404를 확인합니다.
+   - 번역 테스트가 v1 `i18n.js`와 `internal/webui/panel/src/i18n/ko.json`, `server-patterns.json`을 둘 다 검사하게 합니다.
+4. `.github/workflows/ci.yml`에 `panel` 작업을 더합니다([§6.5](#65-ci-최신성-검사), 경로는 `internal/webui/panelv2`). 순서는 `npm ci`, `npm run typecheck`, `npm test`, `npm run build`, `git diff --exit-code -- ../panelv2`와 `git status --porcelain -- ../panelv2`가 비었는지 확인, `npm run size`입니다.
+   - `-diff` 속성 때문에 `git diff`는 내용을 보여 주지 않습니다. 종료 코드는 그대로이므로 실패 안내 문구를 함께 출력합니다.
+   - 빌드는 Vite 경고 `<script src="./theme.js"> … can't be bundled without type="module"`를 출력합니다. 의도한 동작입니다.
+5. `.dockerignore`에 `internal/webui/panel/`을 더합니다. 이미지에는 커밋된 `panelv2/`만 필요합니다.
+6. Playwright e2e([§7.2](#72-테스트))를 Go 서버 대상으로 만들 때 1단계 확인 항목을 옮기면 됩니다.
+   - 샘플: 개요 렌더, `/` 팔레트 → 호스트 → 제목 포커스, `#/queue?job=4828` → `#/jobs/4828`, 시나리오 전환, 테마 저장, 영어 페이지에 한글 없음, 폰 서랍.
+   - 라이브: `?signin=not_enrolled`, `/api/me` 500, SSE, `/snapshot` 401, 연결 끊김.
 
 ## 8. Stratum에 없는 것
 
