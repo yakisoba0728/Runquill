@@ -2794,5 +2794,11 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/JSONRPCResponse'
+        '500':
+          description: The server could not encode the MCP response (code -32603).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JSONRPCResponse'
         '503':
           $ref: '#/components/responses/AccessUnavailable'
