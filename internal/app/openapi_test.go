@@ -149,6 +149,9 @@ func TestOpenAPIOperationsAreComplete(t *testing.T) {
 			if panelTokenCanCall(permission) {
 				want = []string{"bearerToken", "sessionCookie"}
 			}
+			if key == "POST /mcp" {
+				want = []string{"bearerToken"}
+			}
 			if !slices.Equal(schemes, want) {
 				t.Errorf("%s with permission %s declares security %v, want %v", where, permission, schemes, want)
 			}

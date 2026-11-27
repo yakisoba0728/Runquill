@@ -124,19 +124,30 @@ function teamBlock(ctx) {
   });
   let cursors = [0];
   let nextCursor = 0;
+  let loading = Promise.resolve();
   const previous = button("Previous page", () => guarded(output, () => load(cursors.slice(0, -1))), { disabled: true });
   const next = button("Next page", () => guarded(output, () => load([...cursors, nextCursor])), { disabled: true });
-  async function load(pageCursors = cursors) {
-    previous.disabled = next.disabled = true;
-    try {
-      const members = await ctx.api.get("./api/team?after=" + encodeURIComponent(pageCursors.at(-1)));
-      table.update(members);
-      cursors = pageCursors;
-      nextCursor = members.length === 100 ? members.at(-1).github_id : 0;
-    } finally {
-      previous.disabled = cursors.length === 1;
-      next.disabled = !nextCursor;
-    }
+  function load(pageCursors) {
+    loading = loading.catch(() => {}).then(async () => {
+      const focused = [previous, next].find((control) => document.activeElement === control);
+      previous.disabled = next.disabled = true;
+      try {
+        const page = pageCursors ?? cursors;
+        const members = await ctx.api.get("./api/team?after=" + encodeURIComponent(page.at(-1)));
+        nextCursor = members.length === 100 ? members.at(-1).github_id : 0;
+        if (members.length || page.length <= cursors.length) {
+          table.update(members);
+          cursors = page;
+        }
+      } finally {
+        previous.disabled = cursors.length === 1;
+        next.disabled = !nextCursor;
+        if (focused && (document.activeElement === document.body || document.activeElement === focused)) {
+          (focused.disabled ? table.element : focused).focus({ preventScroll: true });
+        }
+      }
+    });
+    return loading;
   }
   submitForm(form, output, async (data) => {
     const account = String(data.get("account")).trim();
