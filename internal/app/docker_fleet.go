@@ -50,7 +50,15 @@ type dockerHostSnapshot struct {
 const dockerHostProbeTimeout = 5 * time.Second
 
 func newDockerFleet(image, hosts string) (*dockerFleet, error) {
-	fleet, err := parseDockerFleet(image, hosts)
+	mirror, err := registryMirror()
+	if err != nil {
+		return nil, err
+	}
+	return loadDockerFleet(image, hosts, mirror)
+}
+
+func loadDockerFleet(image, hosts, mirror string) (*dockerFleet, error) {
+	fleet, err := parseDockerHosts(image, hosts, mirror)
 	if err != nil {
 		return nil, err
 	}
@@ -65,11 +73,15 @@ func newDockerFleet(image, hosts string) (*dockerFleet, error) {
 }
 
 func parseDockerFleet(image, hosts string) (*dockerFleet, error) {
-	engine, err := configuredContainerEngine()
+	mirror, err := registryMirror()
 	if err != nil {
 		return nil, err
 	}
-	mirror, err := registryMirror()
+	return parseDockerHosts(image, hosts, mirror)
+}
+
+func parseDockerHosts(image, hosts, mirror string) (*dockerFleet, error) {
+	engine, err := configuredContainerEngine()
 	if err != nil {
 		return nil, err
 	}
@@ -114,8 +126,10 @@ func parseDockerFleet(image, hosts string) (*dockerFleet, error) {
 	return fleet, nil
 }
 
+var errInvalidRegistryMirror = errors.New("RUNQUILL_REGISTRY_MIRROR must be an http:// or https:// origin that runner containers can reach, such as http://10.0.0.5:5000")
+
 // registryMirror reads the Docker Hub pull-through mirror that Docker-in-Docker runners pass to their own dockerd.
-// A value dockerd rejects would stop every DinD runner, so only a reachable http(s) origin is accepted.
+// A value dockerd rejects would stop every DinD runner, so only an http(s) origin is accepted.
 func registryMirror() (string, error) {
 	raw := os.Getenv("RUNQUILL_REGISTRY_MIRROR")
 	if raw == "" {
@@ -125,7 +139,7 @@ func registryMirror() (string, error) {
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.Opaque != "" ||
 		(u.Path != "" && u.Path != "/") || u.RawPath != "" || strings.ContainsAny(raw, "?# \t") ||
 		strings.HasSuffix(u.Host, ":") || !validMirrorHost(u.Hostname()) {
-		return "", errors.New("RUNQUILL_REGISTRY_MIRROR must be an http:// or https:// origin that runner containers can reach, such as http://10.0.0.5:5000")
+		return "", errInvalidRegistryMirror
 	}
 	return strings.TrimSuffix(raw, "/"), nil
 }

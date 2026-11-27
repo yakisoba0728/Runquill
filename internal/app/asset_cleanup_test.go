@@ -770,7 +770,7 @@ func TestDoctorReportsRunnerAssets(t *testing.T) {
 	var out []string
 	reportRunnerAssetsWith(t.Context(), f.engine.run, path, &dockerFleet{hosts: f.hosts}, func(name string, err error) {
 		out = append(out, fmt.Sprintf("%s %v", name, err))
-	})
+	}, func(string) {})
 	want := "local runner images and cache volumes: 1 cache volumes (1.5 MB), 1 Runquill-pulled images (2.0 MB) <nil>"
 	if !slices.Equal(out, []string{want}) {
 		t.Fatalf("doctor %q", out)

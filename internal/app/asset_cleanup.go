@@ -968,11 +968,11 @@ func (h *assetHousekeeping) stop() {
 }
 
 // reportRunnerAssets prints, per local and SSH Docker host, the cache volumes and Runquill-pulled images present.
-func reportRunnerAssets(ctx context.Context, fleet *dockerFleet, report func(string, error)) {
-	reportRunnerAssetsWith(ctx, runImageCommand, env("RUNQUILL_DB", "runquill.sqlite3"), fleet, report)
+func reportRunnerAssets(ctx context.Context, fleet *dockerFleet, report func(string, error), info func(string)) {
+	reportRunnerAssetsWith(ctx, runImageCommand, env("RUNQUILL_DB", "runquill.sqlite3"), fleet, report, info)
 }
 
-func reportRunnerAssetsWith(ctx context.Context, run imageCommand, path string, fleet *dockerFleet, report func(string, error)) {
+func reportRunnerAssetsWith(ctx context.Context, run imageCommand, path string, fleet *dockerFleet, report func(string, error), info func(string)) {
 	topology := assetTopologyOf(runnerConfiguration{runtime: fleet, kind: "docker"})
 	var db *sql.DB
 	if _, err := os.Stat(path); err == nil {
@@ -984,6 +984,9 @@ func reportRunnerAssetsWith(ctx context.Context, run imageCommand, path string, 
 	for _, target := range topology.hosts {
 		name := target.label() + " runner images and cache volumes"
 		use, err := measureRunnerDisk(ctx, cleaner, db, target)
+		if target.cache && err == nil {
+			info(fmt.Sprintf("worker pool %q cache volumes on %s: %d", target.pool, target.label(), use.CacheVolumes))
+		}
 		if err != nil {
 			report(name, err)
 			continue
