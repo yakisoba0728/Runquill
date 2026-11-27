@@ -11,17 +11,24 @@ export interface ScreenCommand {
 
 let current: ScreenCommand[] = [];
 const listeners = new Set<() => void>();
+// A screen and its open detail pane may each register a list; the palette shows them together.
+const lists = new Set<{ commands: ScreenCommand[] }>();
 
-function set(next: ScreenCommand[]) {
-  current = next;
+function update() {
+  current = [...lists].flatMap((entry) => entry.commands);
   for (const fn of listeners) fn();
 }
 
-/** Pass a memoised list; it is withdrawn when the screen goes. */
+/** Pass a memoised list; it is withdrawn when the component goes. */
 export function useScreenCommands(commands: ScreenCommand[]) {
   useEffect(() => {
-    set(commands);
-    return () => set([]);
+    const entry = { commands };
+    lists.add(entry);
+    update();
+    return () => {
+      lists.delete(entry);
+      update();
+    };
   }, [commands]);
 }
 

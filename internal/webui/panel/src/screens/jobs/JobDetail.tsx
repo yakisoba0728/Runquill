@@ -1,16 +1,20 @@
 // The job detail pane (design §3.3): state, reason, stage timing, resources, details and timeline. A job in the live
 // snapshot shows its live fields; GET /api/jobs/{id} adds resources and execution time, and stands in once the job
-// has left the snapshot. Retry and cancel join the footer in phase 3.
-import { Button, Skeleton, SplitView } from "@yakihyuk0728/stratum-ui";
-import { useEffect, useRef, type ReactNode } from "react";
+// has left the snapshot. Operators retry or cancel a job waiting without a runner from the footer or the palette.
+import { Button, Skeleton, SplitView, toast } from "@yakihyuk0728/stratum-ui";
+import { useEffect, useMemo, useRef, type ReactNode } from "react";
+import { post, useBusy } from "../../actions";
 import type { ApiError } from "../../api";
+import { useScreenCommands, type ScreenCommand } from "../../commands";
 import { KeyValue, Notice, StatusBadge } from "../../components";
 import { ResourceMeters } from "../../components/ResourceMeters";
 import { StageBar } from "../../components/StageBar";
-import { isGitHubJobURL, jobReason, jobStatus, poolName } from "../../fleet";
+import { confirm } from "../../dialogs";
+import { isGitHubJobURL, jobReason, jobStatus, pendingJob, poolName } from "../../fleet";
 import { timeOfDay, date } from "../../format";
 import { serverText, t } from "../../i18n";
 import { useRequest } from "../../request";
+import { can } from "../../session";
 import type { HistoryJob, Job } from "../../types";
 
 const enc = encodeURIComponent;
@@ -22,7 +26,62 @@ export const outcomeStatus = (job: HistoryJob) => (job.outcome === "waiting" ? (
 export const historyReason = (job: HistoryJob) =>
   serverText(job.failure || job.diagnostic?.message || (job.outcome === "waiting" ? job.retry_reason : "") || "");
 
-export function JobPane({ id, live, refresh }: { id: number; live?: Job; refresh: number }) {
+type Action = "retry" | "cancel";
+
+const actionText: Record<Action, { label: string; command: string; question: string; done: string }> = {
+  retry: {
+    label: "Retry now", command: "Retry job #{id} now", done: "The job will be retried on the next scheduler pass.",
+    question: "Retry job #{id} now? Runquill tries to start a runner on its next pass.",
+  },
+  cancel: {
+    label: "Cancel job", command: "Cancel job #{id}", done: "Job cancelled.",
+    question: "Cancel job #{id} in Runquill? It is marked failed and no runner starts for it. The run stays queued on GitHub until you cancel it there.",
+  },
+};
+
+/**
+ * Retry and cancel for operators (v1 jobActionButtons): only for a job waiting without a runner, retry only while it
+ * has a retry delay. Each asks first; onDone runs after the server applied the change. The palette offers the same
+ * while the pane is open.
+ */
+function JobActions({ id, live, history, open, onDone }: {
+  id: number; live?: Job; history?: HistoryJob; open: boolean; onDone: () => void;
+}) {
+  const waiting = live ? pendingJob(live) && !live.runner : history?.outcome === "waiting";
+  const kinds: Action[] = !can("operator") || !waiting ? [] : (live ?? history)?.retry_at ? ["retry", "cancel"] : ["cancel"];
+  const [busy, run] = useBusy<Action>();
+  const buttons = useRef<Partial<Record<Action, HTMLButtonElement | null>>>({});
+  const act = async (kind: Action) => {
+    const text = actionText[kind];
+    const yes = await confirm({
+      title: t("Job #{id}", { id }), description: t(text.question, { id }), confirmLabel: t(text.label), danger: kind === "cancel",
+      returnFocus: buttons.current[kind],
+    });
+    if (!yes) return;
+    await run(kind, async () => {
+      if ((await post("./api/jobs/" + id + "/" + kind)) === undefined) return;
+      toast(t(text.done), { tone: "success" });
+      onDone();
+    });
+  };
+  const latest = useRef(act);
+  latest.current = act;
+  const commands = useMemo<ScreenCommand[]>(() => (open ? kinds : []).map((kind) => (
+    { id: "job-" + kind, label: actionText[kind].command, values: { id: String(id) }, run: () => void latest.current(kind) }
+  )), [open, kinds.join(), id]);
+  useScreenCommands(commands);
+  if (!kinds.length) return null;
+  return (
+    <SplitView.PaneFooter className="pane-actions">
+      {kinds.map((kind) => (
+        <Button key={kind} ref={(button) => void (buttons.current[kind] = button)} variant={kind === "cancel" ? "danger" : "secondary"} size="sm" loading={busy === kind} onClick={() => void act(kind)}
+          aria-label={t("{action} for job {id}", { action: t(actionText[kind].label), id })}>{t(actionText[kind].label)}</Button>
+      ))}
+    </SplitView.PaneFooter>
+  );
+}
+
+export function JobPane({ id, live, refresh, open, onDone }: { id: number; live?: Job; refresh: number; open: boolean; onDone: () => void }) {
   const status = live ? jobStatus(live) : "";
   const loaded = useRequest<HistoryJob>("./api/jobs/" + id);
   // Load again when the live state moves on (v1 loadInsight keyed by id and state) or on Refresh.
@@ -48,6 +107,7 @@ export function JobPane({ id, live, refresh }: { id: number; live?: Job; refresh
     <>
       <SplitView.PaneHeader title={t("Job #{id}", { id })} subtitle={repository} />
       <SplitView.PaneBody>{body}</SplitView.PaneBody>
+      <JobActions id={id} live={live} history={history} open={open} onDone={onDone} />
     </>
   );
 }

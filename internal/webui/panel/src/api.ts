@@ -2,7 +2,7 @@
 // Origin header the server checks. Errors carry the HTTP status and a message already passed through serverText.
 // In the sample panel, GETs are answered by the fixtures in src/demo (registered by main.tsx) and everything else is
 // refused, so nothing leaves the browser (v1 createApi).
-// shortcut: request only; download and stream arrive with the screens that use them (phases 3-4).
+// shortcut: request and stream only; download (the backup POST with progress) arrives with the backups screen (phase 4).
 import { serverText } from "./i18n";
 
 let unauthorized = () => {};
@@ -104,3 +104,27 @@ export async function request<T>(path: string, { method = "GET", data, timeout =
   }
   return (response.status === 204 ? null : await response.json()) as T;
 }
+
+/**
+ * GETs path without a deadline and resolves to the Response once its headers arrive, for bodies read as they come
+ * (runner logs). Failures are ApiErrors like any request, so a 401 still ends the session; aborting signal rejects with
+ * the AbortError. The sample panel answers from its fixture as one finished body.
+ */
+export async function stream(path: string, { signal }: { signal?: AbortSignal } = {}): Promise<Response> {
+  if (sample) return new Response(String(await sampleRequest<string>(path, "GET")));
+  let response: Response;
+  try {
+    response = await globalThis.fetch(path, { cache: "no-store", signal });
+  } catch (error) {
+    throw unreachable(error, signal);
+  }
+  if (!response.ok) {
+    const error = new ApiError(response.status, await response.text().catch(() => ""));
+    if (response.status === 401) unauthorized();
+    throw error;
+  }
+  return response;
+}
+
+/** The message for anything a request rejected with (v1 errorText). */
+export const errorText = (error: unknown) => (error instanceof ApiError ? error.message : serverText("Request failed."));

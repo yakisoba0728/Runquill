@@ -1,15 +1,19 @@
 // Runners (design §4.5): every runner container or Pod Runquill observes, and the leases it holds without an
-// observation, with a detail pane. Ported from panelweb/views/runners.js.
-// shortcut: the pane has the information only; phase 3 adds the Info/Logs tabs (#/runners/NAME/logs opens Info until then).
-import { DataTable, EmptyState, SplitView, useSplitViewNavigation, type Column } from "@yakihyuk0728/stratum-ui";
+// observation, with a detail pane. Ported from panelweb/views/runners.js. The pane has Details and, for operators and
+// admins (and the sample panel, as in v1), Logs: #/runners/NAME/logs (v1 views/logs.js, RunnerLogs.tsx).
+import { DataTable, EmptyState, SplitView, Tabs, useSplitViewNavigation, type Column } from "@yakihyuk0728/stratum-ui";
 import { useMemo, useRef, type ReactNode } from "react";
-import { KeyValue, Page, StatusBadge } from "../../components";
+import { isSample } from "../../api";
+import { useScreenCommands, type ScreenCommand } from "../../commands";
+import { KeyValue, Notice, Page, StatusBadge } from "../../components";
 import { isGitHubJobURL, poolName, runnerRows, runnerStatus, type RunnerRow } from "../../fleet";
 import { date } from "../../format";
 import { t } from "../../i18n";
 import { stratum } from "../../i18n/stratum";
 import { useLive } from "../../live";
 import { format, navigate, type Route } from "../../router";
+import { can } from "../../session";
+import { RunnerLogs, unreadable } from "./RunnerLogs";
 
 const labels = stratum();
 const enc = encodeURIComponent;
@@ -27,6 +31,10 @@ function JobLink({ runner }: { runner: RunnerRow }) {
   return <a href={"#/jobs/" + job.id}>{job.repository + " #" + job.id}</a>;
 }
 
+/** Runner logs: operators and admins with a session; the sample panel shows its fixed lines to everyone (v1). */
+const logsAllowed = () => isSample() || can("operator");
+const logsHref = (name: string) => "#/runners/" + enc(name) + "/logs";
+
 const columns: Column<RunnerRow>[] = [
   { key: "name", header: t("Runner"), sticky: true, width: 220, cell: (runner) => <span className="font-mono">{runner.name}</span> },
   { key: "host", header: t("Host"), cell: (runner) => runner.host || "—" },
@@ -40,7 +48,18 @@ const columns: Column<RunnerRow>[] = [
   { key: "job", header: t("GitHub job"), width: "minmax(200px, 2fr)", cell: (runner) => <JobLink runner={runner} /> },
 ];
 
-function RunnerPane({ name, runner }: { name: string; runner?: RunnerRow }) {
+const logsColumn: Column<RunnerRow> = {
+  key: "logs", header: t("Logs"), width: 110, cell: (runner) => unreadable(runner) ? null
+    : <a href={logsHref(runner.name)} aria-label={t("View logs for {runner}", { runner: runner.name })}>{t("View logs")}</a>,
+};
+
+function RunnerPane({ name, runner, tab, open }: { name: string; runner?: RunnerRow; tab: "details" | "logs"; open: boolean }) {
+  // Logs keep their last lines once the runner has gone, so the tab stays for a runner that had them.
+  const reason = runner ? unreadable(runner) : "";
+  const hadLogs = useRef(false);
+  if (runner && !reason) hadLogs.current = true;
+  const logs = logsAllowed() && (hadLogs.current || !!reason);
+  const shownTab = logs ? tab : "details";
   let body: ReactNode = <p className="text-sm text-text-hint">{t("The runner {name} is no longer listed.", { name })}</p>;
   if (runner) {
     const job = runner.job;
@@ -60,11 +79,32 @@ function RunnerPane({ name, runner }: { name: string; runner?: RunnerRow }) {
       </div>
     );
   }
+  if (!logs) {
+    return (
+      <>
+        <SplitView.PaneHeader title={name} />
+        <SplitView.PaneBody>{body}</SplitView.PaneBody>
+      </>
+    );
+  }
+  const select = (value: string) => navigate(value === "logs" ? logsHref(name) : "#/runners/" + enc(name), { replace: true });
   return (
-    <>
+    <Tabs value={shownTab} onValueChange={select} className="pane-tabs">
       <SplitView.PaneHeader title={name} />
-      <SplitView.PaneBody>{body}</SplitView.PaneBody>
-    </>
+      <Tabs.List aria-label={t("Runner")}>
+        <Tabs.Tab value="details">{t("Details")}</Tabs.Tab>
+        <Tabs.Tab value="logs">{t("Logs")}</Tabs.Tab>
+      </Tabs.List>
+      <SplitView.PaneBody>
+        <Tabs.Panels>
+          <Tabs.Panel value="details">{shownTab === "details" && body}</Tabs.Panel>
+          <Tabs.Panel value="logs">
+            {shownTab === "logs" && (reason ? <Notice role="status"><p>{t(reason)}</p></Notice>
+              : <RunnerLogs name={name} active={open} gone={!runner} />)}
+          </Tabs.Panel>
+        </Tabs.Panels>
+      </SplitView.PaneBody>
+    </Tabs>
   );
 }
 
@@ -78,6 +118,12 @@ export default function Runners({ route }: { route: Route }) {
   const shown = useRef(name);
   if (name !== null) shown.current = name;
   const fleet = snapshot?.fleet;
+  const allowed = logsAllowed();
+  const commands = useMemo<ScreenCommand[]>(() => (allowed ? rows : [])
+    .filter((runner) => !unreadable(runner) && !(runner.name === name && route.sub === "logs"))
+    .map((runner) => ({ id: "logs:" + runner.name, label: "View logs for {runner}", values: { runner: runner.name }, run: () => navigate(logsHref(runner.name)) })),
+  [rows, name, route.sub, allowed]);
+  useScreenCommands(commands);
   return (
     <Page title={t("Runners")} description={fleet ? t("{observed} observed, {leases} unobserved leases", { observed, leases: rows.length - observed }) : undefined}>
       <SplitView className="page-split" open={name !== null} onOpenChange={(next) => !next && navigate("#/runners")} navigation={navigation} labels={labels.split}>
@@ -86,7 +132,7 @@ export default function Runners({ route }: { route: Route }) {
             <DataTable
               className="rows-2"
               aria-label={t("Runner inventory")}
-              columns={columns}
+              columns={allowed ? [...columns, logsColumn] : columns}
               rows={rows}
               getRowId={(runner) => runner.name}
               onRowAction={(runner) => open(runner.name)}
@@ -96,7 +142,10 @@ export default function Runners({ route }: { route: Route }) {
           </div>
         </SplitView.List>
         <SplitView.Pane>
-          {shown.current !== null && <RunnerPane name={shown.current} runner={rows.find((runner) => runner.name === shown.current)} />}
+          {shown.current !== null && (
+            <RunnerPane key={shown.current} name={shown.current} runner={rows.find((runner) => runner.name === shown.current)}
+              tab={route.sub === "logs" ? "logs" : "details"} open={name !== null} />
+          )}
         </SplitView.Pane>
       </SplitView>
     </Page>

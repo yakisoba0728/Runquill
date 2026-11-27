@@ -6,6 +6,7 @@ import { createRoot } from "react-dom/client";
 import { answerSamples, onUnauthorized, request, type ApiError } from "./api";
 import { preferredLanguage, setLanguage } from "./i18n";
 import { live } from "./live";
+import { setUser } from "./session";
 import { Shell } from "./Shell";
 import { SignIn, takeSignInReason } from "./SignIn";
 import type { User } from "./types";
@@ -36,6 +37,7 @@ async function start() {
   }
   // Any later 401 (a request or /snapshot) ends the session: the shell unmounts, closing open dialogs.
   onUnauthorized(() => signedOut("Your session ended. Sign in again to view the fleet.", true));
+  setUser(user);
   live.start();
   root.render(<Shell user={user} />);
 }

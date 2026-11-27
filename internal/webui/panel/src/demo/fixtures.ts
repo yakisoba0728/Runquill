@@ -211,6 +211,28 @@ function hostResources(query: URLSearchParams): ResourceReport {
   };
 }
 
+// GET /api/runners/{name}/logs: the runner container's output as plain text with Docker timestamps. The sample panel
+// cannot stream, so every runner answers with the same fixed lines (v1 demo/logs.js).
+function logs(name: string, query: URLSearchParams) {
+  const tail = Math.min(2000, Number(query.get("tail") ?? 200));
+  const start = Date.now() - 180 * 1000;
+  const stamp = (seconds: number) => new Date(start + seconds * 1000).toISOString().replace("Z", "000000Z");
+  const job = name.replace(/^runquill-demo-/, "");
+  const lines: [number, string][] = [
+    [0, "Runquill runner entrypoint: configuring ephemeral runner " + name],
+    [1, "\u001b[1m√ Connected to GitHub\u001b[0m"],
+    [2, ""],
+    [2, "Current runner version: '2.329.0'"],
+    [2, "2026-11-19 09:14:02Z: Listening for Jobs"],
+    [4, "2026-11-19 09:14:04Z: Running job: build (job " + job + ")"],
+    [5, "\u001b[32m[RUNNER 2026-11-19 09:14:05Z INFO JobDispatcher]\u001b[0m Successfully renew job request " + job + ", job is valid till 2026-11-19 09:24:05Z"],
+    [35, "\u001b[32m[RUNNER 2026-11-19 09:14:35Z INFO JobDispatcher]\u001b[0m Successfully renew job request " + job + ", job is valid till 2026-11-19 09:24:35Z"],
+    [65, "\u001b[33m[WORKER 2026-11-19 09:15:05Z WARN ProcessInvokerWrapper]\u001b[0m Process exited with code 0 after 59.8s"],
+    [95, "\u001b[32m[RUNNER 2026-11-19 09:15:35Z INFO JobDispatcher]\u001b[0m Successfully renew job request " + job + ", job is valid till 2026-11-19 09:25:35Z"],
+  ];
+  return lines.slice(-tail || lines.length).map(([at, text]) => stamp(at) + " " + text).join("\n") + "\n";
+}
+
 const routes: Record<string, (query: URLSearchParams) => unknown> = {
   "GET /api/jobs": history,
   "GET /api/usage": usage,
@@ -223,5 +245,7 @@ const routes: Record<string, (query: URLSearchParams) => unknown> = {
 export function answer(path: string, query: URLSearchParams): unknown {
   const job = /^\/api\/jobs\/(\d+)$/.exec(path);
   if (job) return detail(Number(job[1])) ?? null;
+  const runner = /^\/api\/runners\/([^/]+)\/logs$/.exec(path);
+  if (runner) return logs(decodeURIComponent(runner[1]), query);
   return routes["GET " + path]?.(query);
 }

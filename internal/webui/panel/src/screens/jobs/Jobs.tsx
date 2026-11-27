@@ -1,7 +1,6 @@
 // Jobs (design §3.3, §3.4, §4.4): the live queue (waiting, running, cleaned up) from the snapshot and the 7-day
-// history from GET /api/jobs, one detail pane for all four. Ported from panelweb/views/queue.js and jobs.js.
-// shortcut: the admin "Check repository" dialog (POST /api/diagnose) is not built yet; every role sees the
-// `runquill diagnose` hint instead. Retry and cancel arrive in phase 3.
+// history from GET /api/jobs, one detail pane for all four. Ported from panelweb/views/queue.js and jobs.js. Admins
+// check a repository from the header ("Missing a job?"); operators retry and cancel from the pane (JobDetail.tsx).
 import {
   Button, DataTable, EmptyState, Field, Input, SearchInput, Select, SplitView, Tabs, useSplitViewNavigation, type Column,
 } from "@yakihyuk0728/stratum-ui";
@@ -13,9 +12,11 @@ import { filterJobs, isGitHubJobURL, jobLists, jobReason, jobStatus, poolName } 
 import { timeOfDay, date, duration, number } from "../../format";
 import { fill, t } from "../../i18n";
 import { stratum } from "../../i18n/stratum";
-import { useLive } from "../../live";
+import { live as liveStore, useLive } from "../../live";
 import { format, navigate, setParams, withParams, type Route } from "../../router";
 import type { HistoryJob, Job } from "../../types";
+import { can } from "../../session";
+import { Diagnose } from "./Diagnose";
 import { historyReason, JobPane, outcomeStatus } from "./JobDetail";
 import { historyQuery, holder, jobId, outcomes, pickTab, ranges, tabs, type Tab } from "./params";
 
@@ -113,6 +114,8 @@ export default function Jobs({ route }: { route: Route }) {
   const query = route.params.get("q") ?? "";
   const pool = route.params.get("pool") ?? "";
   const [round, setRound] = useState(0);
+  const [diagnose, setDiagnose] = useState(false);
+  const admin = can("admin");
   const history = useHistory(route.params, tab === "history", round);
 
   const pools = useMemo(() => [...new Set([...(lists ? [...lists.waiting, ...lists.running, ...lists.cleaned] : []),
@@ -138,7 +141,8 @@ export default function Jobs({ route }: { route: Route }) {
     ...(filtered || route.params.get("repo") || route.params.get("outcome") || route.params.get("range")
       ? [{ id: "clear", label: "Clear job filters", run: () => setParams({ q: null, pool: null, repo: null, outcome: null, range: null }) }] : []),
     ...(tab === "history" && history.next && !history.loading ? [{ id: "more", label: "Load older jobs", run: history.loadMore }] : []),
-  ], [filtered, route, tab, id, history.next, history.loading]);
+    ...(admin ? [{ id: "diagnose", label: "Check repository", run: () => setDiagnose(true) }] : []),
+  ], [filtered, route, tab, id, history.next, history.loading, admin]);
   useScreenCommands(commands);
 
   // Keep the last pane content through the SplitView's closing slide.
@@ -176,7 +180,8 @@ export default function Jobs({ route }: { route: Route }) {
           ? <EmptyState title={t("No jobs match these filters.")} actions={<Button variant="secondary" size="sm" onClick={clearFilters}>{t("Clear filters")}</Button>} />
           : <EmptyState title={t(emptyText[tab])} description={tab === "waiting"
             ? fill("Missing a job? Run {command} to check GitHub App access, its job label and delivery.", { command: <code>runquill diagnose OWNER/REPO</code> })
-            : undefined} />}
+            : undefined} actions={tab === "waiting" && admin
+            ? <Button variant="secondary" size="sm" onClick={() => setDiagnose(true)}>{t("Check repository")}</Button> : undefined} />}
       />
     </>
   );
@@ -209,7 +214,8 @@ export default function Jobs({ route }: { route: Route }) {
 
   return (
     <Tabs value={tab} onValueChange={showTab}>
-      <Page title={t("Jobs")} description={t("The live queue and the 7-day job history")} tabs={tabList}>
+      <Page title={t("Jobs")} description={t("The live queue and the 7-day job history")} tabs={tabList}
+        actions={admin && <Button variant="secondary" onClick={() => setDiagnose(true)}>{t("Check repository")}</Button>}>
         <SplitView className="page-split" open={id !== null} onOpenChange={(next) => !next && close()} navigation={navigation} labels={labels.split}>
           <SplitView.List>
             <Tabs.Panels>
@@ -221,10 +227,16 @@ export default function Jobs({ route }: { route: Route }) {
             </Tabs.Panels>
           </SplitView.List>
           <SplitView.Pane>
-            {shown.current !== null && <JobPane key={shown.current} id={shown.current} live={live} refresh={round} />}
+            {shown.current !== null && <JobPane key={shown.current} id={shown.current} live={live} refresh={round} open={id !== null} onDone={() => {
+              // The job leaves the queue (v1): close the pane, read the snapshot now and reload the history.
+              close();
+              void liveStore.refresh();
+              setRound((n) => n + 1);
+            }} />}
           </SplitView.Pane>
         </SplitView>
       </Page>
+      {admin && <Diagnose open={diagnose} onOpenChange={setDiagnose} />}
     </Tabs>
   );
 }

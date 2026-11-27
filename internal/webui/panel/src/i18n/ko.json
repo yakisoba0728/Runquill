@@ -1054,5 +1054,8 @@
   "Clear filters": "필터 지우기",
   "The live queue and the 7-day job history": "실시간 대기열과 7일 작업 기록",
   "Slots": "슬롯",
-  "No runners on this host.": "이 호스트에 러너가 없습니다."
+  "No runners on this host.": "이 호스트에 러너가 없습니다.",
+  "Report": "보고서",
+  "Retry job #{id} now": "작업 #{id} 지금 재시도",
+  "Cancel job #{id}": "작업 #{id} 취소"
 }

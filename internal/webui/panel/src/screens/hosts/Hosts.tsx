@@ -1,18 +1,25 @@
 // Hosts (design §3.5, §4.6): worker hosts (or Kubernetes targets), the same capacity per pool, server resources and
 // elastic limits, with a host detail pane. Ported from panelweb/views/hosts.js. Resources and elastic limits poll only
 // while their tab is shown.
-// shortcut: read-only; pause/resume assignments and worker enrollment join the pane footer in phase 3.
-import { Badge, Button, DataTable, EmptyState, Skeleton, SplitView, Tabs, useSplitViewNavigation, type Column } from "@yakihyuk0728/stratum-ui";
+// Operators pause and resume assignments (pane footer and palette, no confirmation as in v1); admins enroll an
+// outbound agent:// worker.
+import {
+  Badge, Button, DataTable, Dialog, EmptyState, Skeleton, SplitView, Tabs, toast, useSplitViewNavigation, type Column,
+} from "@yakihyuk0728/stratum-ui";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { post, useBusy } from "../../actions";
 import type { ApiError } from "../../api";
+import { useScreenCommands, type ScreenCommand } from "../../commands";
 import { Ago, KeyValue, Meter, Notice, Page, StatusBadge } from "../../components";
+import { CopyField } from "../../components/CopyField";
 import { availableSlots, poolName, pools, runnerRows, workerState, type PoolRow } from "../../fleet";
 import { bytes, cpus, date, duration, mib, number, timeOfDay } from "../../format";
 import { fill, serverText, t } from "../../i18n";
 import { stratum } from "../../i18n/stratum";
-import { useLive } from "../../live";
+import { live, useLive } from "../../live";
 import { format, navigate, setParams, type Route } from "../../router";
 import { useRequest } from "../../request";
+import { can } from "../../session";
 import type { ElasticReport, Host, ResourceReport } from "../../types";
 
 const labels = stratum();
@@ -230,7 +237,61 @@ function Elastic() {
   );
 }
 
-function HostPane({ name, host }: { name: string; host?: Host }) {
+/** POST /api/hosts/cordon for one host at a time; the snapshot is read again after it. */
+function useCordon() {
+  const [busy, run] = useBusy<string>();
+  const cordon = (host: Host) => run(host.name, async () => {
+    if ((await post("./api/hosts/cordon", { host: host.name, cordoned: !host.cordoned })) === undefined) return;
+    toast(t(host.cordoned ? "New assignments resumed." : "New assignments paused. Existing jobs can finish."), { tone: "success" });
+    await live.refresh();
+  });
+  return { busy, cordon };
+}
+
+interface Enrollment {
+  command: string;
+  start_command: string;
+  expires_at: string;
+}
+
+/** Admins: a one-time enrollment command for an outbound agent:// worker (v1 workerEnrollment). Shown once, never kept. */
+function Enroll({ host }: { host: Host }) {
+  const [busy, run] = useBusy<"enroll">();
+  const [result, setResult] = useState<Enrollment | null>(null);
+  const [copied, setCopied] = useState("");
+  const issue = () => run("enroll", async () => {
+    const answer = await post<Enrollment>("./api/hosts/" + enc(host.name.slice("agent://".length)) + "/enrollment");
+    if (answer) {
+      setCopied("");
+      setResult(answer);
+    }
+  });
+  return (
+    <>
+      <Button variant="secondary" size="sm" loading={busy === "enroll"} onClick={() => void issue()}
+        aria-label={t("{action} on {host}", { action: t("Enroll worker"), host: host.name })}>{t("Enroll worker")}</Button>
+      <Dialog open={!!result} onOpenChange={(open) => !open && setResult(null)} size="lg">
+        <Dialog.Body>
+          <Dialog.Title>{t("Enroll worker")}</Dialog.Title>
+          {result && (
+            <>
+              <Dialog.Description>{fill("Run this command on {host} before {time}.", { host: <code>{host.name}</code>, time: timeOfDay(result.expires_at) })}</Dialog.Description>
+              <CopyField label={t("Enrollment command")} value={result.command} copyLabel={t("Copy enrollment command")} report={setCopied} autoFocus />
+              <p className="text-sm">{t("After enrollment, use this command to restart the worker.")}</p>
+              <CopyField label={t("Worker start command")} value={result.start_command} copyLabel={t("Copy start command")} report={setCopied} />
+              <p className="text-sm text-text-hint" role="status">{copied}</p>
+            </>
+          )}
+        </Dialog.Body>
+        <Dialog.Actions>
+          <Button onClick={() => setResult(null)}>{t("Hide commands")}</Button>
+        </Dialog.Actions>
+      </Dialog>
+    </>
+  );
+}
+
+function HostPane({ name, host, cordon }: { name: string; host?: Host; cordon: ReturnType<typeof useCordon> }) {
   const snapshot = useLive((s) => s.snapshot);
   const runners = useMemo(() => runnerRows(snapshot).filter((runner) => runner.host === name), [snapshot, name]);
   const resources = useRequest<ResourceReport>("./api/hosts/resources");
@@ -272,10 +333,19 @@ function HostPane({ name, host }: { name: string; host?: Host }) {
       </div>
     );
   }
+  const enroll = host && can("admin") && host.enrollment_available && host.name.startsWith("agent://");
+  const label = host?.cordoned ? "Resume assignments" : "Pause assignments";
   return (
     <>
       <SplitView.PaneHeader title={name} />
       <SplitView.PaneBody>{body}</SplitView.PaneBody>
+      {host && can("operator") && (
+        <SplitView.PaneFooter className="pane-actions">
+          <Button variant="secondary" size="sm" loading={cordon.busy === host.name} onClick={() => void cordon.cordon(host)}
+            aria-label={t("{action} on {host}", { action: t(label), host: host.name })}>{t(label)}</Button>
+          {enroll && <Enroll host={host} />}
+        </SplitView.PaneFooter>
+      )}
     </>
   );
 }
@@ -294,6 +364,14 @@ export default function Hosts({ route }: { route: Route }) {
   const poolRows = useMemo(() => pools(hosts), [hosts]);
   const tabNames: Record<Tab, string> = { hosts: kubernetes ? "Runtime targets" : "Hosts", pools: "Worker pools", resources: "Server resources", elastic: "Elastic limits" };
   const empty = <EmptyState title={t("No host observations yet.")} />;
+  const cordon = useCordon();
+  const latest = useRef(cordon);
+  latest.current = cordon;
+  const commands = useMemo<ScreenCommand[]>(() => (can("operator") ? hosts : []).map((host) => ({
+    id: "cordon:" + host.name, label: host.cordoned ? "Resume assignments on {host}" : "Pause assignments on {host}",
+    values: { host: host.name }, run: () => void latest.current.cordon(host),
+  })), [hosts]);
+  useScreenCommands(commands);
 
   const content: Record<Tab, () => ReactNode> = {
     hosts: () => (
@@ -327,7 +405,7 @@ export default function Hosts({ route }: { route: Route }) {
             </Tabs.Panels>
           </SplitView.List>
           <SplitView.Pane>
-            {shown.current !== null && <HostPane key={shown.current} name={shown.current} host={hosts.find((host) => host.name === shown.current)} />}
+            {shown.current !== null && <HostPane key={shown.current} name={shown.current} host={hosts.find((host) => host.name === shown.current)} cordon={cordon} />}
           </SplitView.Pane>
         </SplitView>
       </Page>

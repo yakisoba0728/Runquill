@@ -1,6 +1,6 @@
 # Runquill panel v2 (source)
 
-The rebuilt operations panel: React 19, TypeScript and [Stratum](https://www.npmjs.com/package/@yakihyuk0728/stratum-ui) `0.1.1`, built with Vite. The design and its phases are in [docs/design/panel-v2.md](../../../docs/design/panel-v2.md). Phase 1 covers the shell, sign-in, live updates, routing, translations, the command palette and the Overview screen. Phase 2 adds the read-only Jobs, Runners, Hosts and Usage screens. The administration screens and API tokens still show a placeholder.
+The rebuilt operations panel: React 19, TypeScript and [Stratum](https://www.npmjs.com/package/@yakihyuk0728/stratum-ui) `0.1.1`, built with Vite. The design and its phases are in [docs/design/panel-v2.md](../../../docs/design/panel-v2.md). Phase 1 covers the shell, sign-in, live updates, routing, translations, the command palette and the Overview screen. Phase 2 adds the Jobs, Runners, Hosts and Usage screens. Phase 3 adds the operator and admin actions on them: job retry and cancel, the repository check, pausing a host, worker enrollment and the runner Logs tab. The administration screens and API tokens still show a placeholder.
 
 ## Build
 
@@ -14,7 +14,11 @@ RUNQUILL_PANEL_DEV_TARGET=http://127.0.0.1:8081 npm run dev   # proxies /api, /s
 npm run typecheck && npm test
 npm run build        # writes ../panelv2/, commit the result
 npm run size         # gzip budget, design §6.8
+npm run e2e          # Playwright against `go run . panel --demo` (Chromium; needs Go and a build)
+npx playwright test --project firefox --project webkit   # the other engines, by hand
 ```
+
+The e2e tests use the committed `panelv2/` build that the Go server embeds, so run `npm run build` first. `@playwright/test` is pinned to the release whose browsers match the Playwright cache; `npx playwright install chromium` fetches them otherwise. Live-mode tests keep the server's page and CSP but answer `/api/*` and `/snapshot` themselves (`e2e/live.ts`): a real manager session needs a GitHub sign-in.
 
 The build is byte-identical across runs and across macOS arm64, Linux arm64 and Linux amd64 with the same lockfile and Node version. `go build` never needs Node, because the output is committed. From the repository root, run `RUNQUILL_PANEL_V2=1 go run . panel --demo` to try the embedded preview. `.gitattributes` marks the directory as generated.
 
@@ -24,9 +28,10 @@ The build is byte-identical across runs and across macOS arm64, Linux arm64 and 
 internal/webui/panelv2/
   index.html                  <body data-mode="demo">; one <script src> per file, no inline script or style
   theme.js                    public/theme.js as is: applies the saved theme before the first paint
-  assets/panel-<hash>.js      entry: shell, sign-in, live store, router (loads every other chunk with import(`./…`))
+  assets/panel-<hash>.js      entry: shell, sign-in, live store, router (loads the screens with import(`./…`))
   assets/panel-<hash>.css     stratum.css + src/panel.css
-  assets/chunk-<hash>.js      lazy: each screen, the Korean catalogue, the server message templates (screens import the entry back)
+  assets/chunk-<hash>.js      lazy: each screen, the Korean catalogue, the server message templates; a few are shared
+                              chunks the entry imports statically (the bundler's choice, design §7.5)
   assets/demo-<hash>.js       lazy, sample panel only: everything under src/demo/
 ```
 
@@ -50,7 +55,8 @@ Keep the same headers as v1. That includes the CSP `default-src 'self'; img-src 
 - `src/live.ts`: the SSE/polling state machine from v1, as a store for `useSyncExternalStore`.
 - `src/router.ts`, `src/routes.ts`: hash routes, v1 address rewrites and the screen table.
 - `src/i18n/`: `ko.json` and `server-patterns.json`, converted once from v1 `panelweb/i18n.js`. The keys are the English text. Add a translation for every new English string. A test checks the literals in `src`. While v1 lives, server messages need a translation in both places.
-- `src/request.ts`: `useRequest` for screen REST loads, with optional polling. `src/commands.ts`: palette commands a screen registers.
-- `src/components/`: local stand-ins for parts Stratum does not have yet (design §8). `index.tsx` is in the entry chunk; parts only screens use (`StageBar`, `ResourceMeters`, `BarChart`) have their own files.
+- `src/request.ts`: `useRequest` for screen REST loads, with optional polling. `src/commands.ts`: palette commands a screen (and its open pane) registers.
+- `src/session.ts`: `can(role)`, always false in the sample panel. `src/actions.ts`: `post()` for writes (failures, 403 included, as a toast) and `useBusy()` for a button's pending state. `src/dialogs.tsx`: `confirm()`.
+- `src/components/`: local stand-ins for parts Stratum does not have yet (design §8). `index.tsx` is in the entry chunk; parts only screens use (`StageBar`, `ResourceMeters`, `BarChart`, `CopyField`) have their own files. The log viewer is `src/screens/runners/RunnerLogs.tsx`.
 - `src/screens/<id>/`: one lazy chunk per screen.
-- `src/demo/`: sample scenarios and the GET fixtures (`fixtures.ts`), built into `demo-*` only. `main.tsx` registers `answer` with `answerSamples` in `api.ts`, so the sample panel never reaches a server.
+- `src/demo/`: sample scenarios and the GET fixtures (`fixtures.ts`, runner logs included), built into `demo-*` only. `main.tsx` registers `answer` with `answerSamples` in `api.ts`, so the sample panel never reaches a server.
