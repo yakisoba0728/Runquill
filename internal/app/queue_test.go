@@ -172,4 +172,3 @@ func TestQueueRecordKeepsJobPhaseAndLeaseOnRedelivery(t *testing.T) {
 		})
 	}
 }
-
