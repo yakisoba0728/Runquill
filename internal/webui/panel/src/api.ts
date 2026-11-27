@@ -1,0 +1,84 @@
+// Panel API client, ported from panelweb/api.js. Same-origin fetches, so the browser sends the session cookie and the
+// Origin header the server checks. Errors carry the HTTP status and a message already passed through serverText.
+// shortcut: request only; download, stream and the sample-panel createApi arrive with the screens that use them (phases 2-4).
+import { serverText } from "./i18n";
+
+let unauthorized = () => {};
+
+/** main.tsx registers the sign-in screen here; any 401 ends the session. */
+export function onUnauthorized(handler: () => void) {
+  unauthorized = handler;
+}
+
+export function signalUnauthorized() {
+  unauthorized();
+}
+
+/**
+ * Every failed request. Most handlers answer with a plain-text sentence; some send JSON {error, code, pull_request}.
+ * status is 0 when no response arrived.
+ */
+export class ApiError extends Error {
+  status: number;
+  raw: string;
+  code = "";
+  pullRequest = "";
+
+  constructor(status: number, raw: string) {
+    let text = String(raw ?? "").trim();
+    let code = "";
+    let pullRequest = "";
+    if (text.startsWith("{")) {
+      try {
+        const body = JSON.parse(text);
+        if (body && typeof body.error === "string") {
+          text = body.error;
+          code = typeof body.code === "string" ? body.code : "";
+          pullRequest = typeof body.pull_request === "string" ? body.pull_request : "";
+        }
+      } catch {}
+    }
+    super(serverText(text) || serverText("Request failed."));
+    this.status = status;
+    this.raw = raw;
+    this.code = code;
+    this.pullRequest = pullRequest;
+  }
+}
+
+function unreachable(error: unknown, signal?: AbortSignal) {
+  if (signal?.aborted && (error as Error)?.name === "AbortError") return error;
+  return new ApiError(0, (error as Error)?.name === "TimeoutError"
+    ? "The manager did not answer in time. Try again."
+    : "Could not reach the manager. Check the connection.");
+}
+
+interface RequestOptions {
+  method?: string;
+  data?: unknown;
+  timeout?: number;
+  signal?: AbortSignal;
+}
+
+/** Sends JSON when data is given; resolves to the decoded body, or null for 204. */
+export async function request<T>(path: string, { method = "GET", data, timeout = 7000, signal }: RequestOptions = {}): Promise<T> {
+  const deadline = AbortSignal.timeout(timeout);
+  let response: Response;
+  try {
+    response = await globalThis.fetch(path, {
+      method,
+      cache: "no-store",
+      signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
+      headers: data === undefined ? undefined : { "Content-Type": "application/json" },
+      body: data === undefined ? undefined : JSON.stringify(data),
+    });
+  } catch (error) {
+    throw unreachable(error, signal);
+  }
+  if (!response.ok) {
+    const error = new ApiError(response.status, await response.text().catch(() => ""));
+    if (response.status === 401) unauthorized();
+    throw error;
+  }
+  return (response.status === 204 ? null : await response.json()) as T;
+}

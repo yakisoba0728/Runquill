@@ -1,2 +1,4 @@
 # Check out text files with LF on every OS so gofmt, scripts and tests agree.
 * text=auto eol=lf
+# Built panel v2 (internal/webui/panel): reviewed as source, checked by CI.
+internal/webui/panelv2/** linguist-generated=true -diff
