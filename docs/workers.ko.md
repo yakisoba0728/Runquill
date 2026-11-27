@@ -54,21 +54,22 @@ runs-on: ${{ format('runquill-{0}-{1}-pool__build__compile-{2}', github.run_id, 
 
 라벨에 설정되지 않은 풀을 지정했거나 풀이 허용하지 않는 저장소라면 작업은 `worker pool "build" is not configured` 같은 재시도 이유와 함께 대기합니다. 패널의 **설정**에서 풀을 고치면 매니저를 재시작하지 않아도 이후 스케줄링에서 작업이 시작됩니다. 실패로 기록되는 경우는 24시간 기한이 지났을 때뿐입니다.
 
-풀에는 다음 다섯 가지 선택 항목도 쓸 수 있습니다.
+풀에는 다음 여섯 가지 선택 항목도 쓸 수 있습니다.
 
 ```dotenv
 RUNQUILL_WORKER_POOLS='{"lint":{"hosts":["local"],"privileged":false,"cache":true,"cache_writes":"default_branch","max_per_repository":2,"images":["ubuntu22.04"]}}'
 ```
 
-- `privileged`의 기본값은 `true`이며, 러너마다 `--privileged`와 내부 Docker 데몬을 사용합니다. `false`로 설정하면 러너를 UID 1001로 실행하고 모든 capability를 제거하며 `no-new-privileges`를 적용합니다. 이 풀의 작업은 `docker`, 서비스 컨테이너, 작업 컨테이너, `sudo`를 사용할 수 없습니다. 이런 풀에 사용자 지정 `image`를 쓰려면 `/home/runner`를 소유한 UID 1001 러너 사용자가 이미지에 있어야 합니다.
+- `privileged`의 기본값은 `true`이며, 러너마다 자체 Docker 데몬을 실행합니다. 런타임이 `sysbox-runc`일 때를 제외하고 `--privileged`를 붙입니다. `false`로 설정하면 러너를 UID 1001로 실행하고 모든 capability를 제거하며 `no-new-privileges`를 적용합니다. 이 풀의 작업은 `docker`, 서비스 컨테이너, 작업 컨테이너, `sudo`를 사용할 수 없습니다. 이런 풀에 사용자 지정 `image`를 쓰려면 `/home/runner`를 소유한 UID 1001 러너 사용자가 이미지에 있어야 합니다.
 - `cache: true`는 `runquill-cache-<저장소 ID>`라는 Docker 볼륨을 `/home/runner/.cache`에 마운트합니다. 같은 호스트의 같은 저장소 작업은 패키지와 빌드 도구 캐시를 공유하며, 러너가 이 볼륨으로 옮기는 npm, Go 모듈, NuGet, Bun 캐시도 여기에 포함됩니다. `RUNNER_TOOL_CACHE` 경로인 `/home/runner/.cache/tools`에는 저장소, 이미지 ID, 플랫폼별 볼륨을 따로 마운트하므로 `actions/setup-*`가 받은 도구는 같은 이미지를 쓰는 작업에서 재사용합니다. 각 호스트는 자체 볼륨을 유지합니다. 로컬과 SSH 호스트에서는 매니저가 30일 동안 러너가 쓰지 않은 볼륨을 삭제합니다. 목록은 `docker volume ls -f label=io.runquill.cache=1`로 확인합니다. [도구 캐시와 정리](runner-images.ko.md#도구-캐시) · [Docker 빌드 레이어 캐시](workflows.ko.md#다음-작업에서-docker-빌드-레이어-재사용)
 - `cache_writes`는 `cache: true` 풀에서 공유 캐시 볼륨을 쓸 작업을 정합니다. `all`은 모든 작업이 읽고 쓰게 합니다. `default_branch`는 기본 브랜치 실행에만 공유 캐시를 주고, 나머지 작업은 빈 캐시로 시작합니다. 생략하면 비공개 저장소는 `all`, 공개 저장소는 `default_branch`를 씁니다. [공유 캐시 보호](#공유-캐시-보호)
+- `runtime`은 풀의 러너를 `sysbox-runc` 같은 다른 OCI 런타임으로 시작합니다. [특권 없이 Docker-in-Docker 실행](#특권-없이-docker-in-docker-실행)
 - `max_per_repository`는 해당 풀에서 저장소 하나가 사용할 수 있는 러너 수를 제한하며, 그 풀에서는 `RUNQUILL_MAX_PER_REPOSITORY`보다 우선합니다. 둘 다 없으면 저장소 하나가 빈 슬롯을 모두 쓸 수 있습니다.
 - `images`는 풀의 작업이 `os__NAME__`으로 고를 수 있는 [러너 OS](workflows.ko.md#러너-os-선택) 이름 목록입니다. 생략하면 모든 이름을 허용합니다.
 
-`privileged: false`, `cache: true`, `cache_writes` 중 하나를 설정한 풀의 [아웃바운드 워커](outbound-workers.ko.md)는 매니저와 같은 Runquill 릴리스를 실행해야 합니다. 이전 버전 에이전트는 이 설정이 담긴 러너 작업을 거부하므로 매니저와 함께 워커도 업그레이드하세요.
+`privileged: false`, `cache: true`, `cache_writes`, `runtime` 중 하나를 설정한 풀의 [아웃바운드 워커](outbound-workers.ko.md)는 매니저와 같은 Runquill 릴리스를 실행해야 합니다. 이전 버전 에이전트는 이 설정이 담긴 러너 작업을 거부하므로 매니저와 함께 워커도 업그레이드하세요.
 
-관리자 패널의 풀 편집기에서 Docker-in-Docker, 공유 캐시, 허용할 러너 OS 이름, `warm`, `warm_max_idle_minutes`를 설정할 수 있습니다. 저장할 때 `cache_writes`와 `max_per_repository` 값은 유지됩니다. 패널에서 설정을 한 번 저장하면 그 값이 `RUNQUILL_WORKER_POOLS`보다 우선합니다.
+관리자 패널의 풀 편집기에서 Docker-in-Docker, 공유 캐시, 허용할 러너 OS 이름, `warm`, `warm_max_idle_minutes`를 설정할 수 있습니다. 저장할 때 `cache_writes`, `runtime`, `max_per_repository` 값은 유지됩니다. 패널에서 설정을 한 번 저장하면 그 값이 `RUNQUILL_WORKER_POOLS`보다 우선합니다.
 
 ### 공유 캐시 보호
 
@@ -84,8 +85,23 @@ Runquill은 러너를 등록하기 직전에 판단합니다. 이벤트, head �
 
 - 검사와 러너가 작업을 받는 사이 몇 초 동안 같은 레이블을 요청한 작업은 여전히 공유 캐시를 받을 수 있습니다.
 - GitHub는 실행의 head 브랜치가 브랜치인지 태그인지 알려 주지 않습니다. 쓰기 권한이 있는 사람이 기본 브랜치와 이름이 같은 태그를 푸시하면 기본 브랜치로 취급됩니다. 태그 룰셋으로 그런 태그를 막으세요.
-- `privileged`가 기본값 `true`이면 작업은 호스트의 root이므로 어차피 공유 볼륨에 접근할 수 있습니다. 악의적인 작업까지 막아야 한다면 `privileged: false`를 쓰세요.
+- `--privileged`로 시작한 러너의 작업은 호스트의 공유 볼륨에 접근할 수 있습니다. 악의적인 작업까지 막아야 한다면 `privileged: false`를 쓰세요.
 - 아웃바운드 워커는 이 릴리스가 필요합니다. 이전 버전 에이전트는 작업을 거부하고, 작업은 워커를 업그레이드할 때까지 다시 시도합니다.
+
+### 특권 없이 Docker-in-Docker 실행
+
+풀에 `runtime`을 설정하면 러너를 `--runtime NAME`으로 시작합니다. `"runtime":"sysbox-runc"`이면 Docker-in-Docker 러너가 `--privileged` 없이 시작하면서도 자체 Docker 데몬을 실행합니다. Sysbox는 컨테이너마다 별도의 사용자 네임스페이스를 사용합니다. [Sysbox](https://github.com/nestybox/sysbox)
+
+```dotenv
+RUNQUILL_WORKER_POOLS='{"default":{"runtime":"sysbox-runc"}}'
+```
+
+- 풀의 모든 Docker 호스트에 Sysbox를 설치한 뒤 `docker info --format '{{json .Runtimes}}'`의 목록에 `sysbox-runc`가 있는지 확인합니다. [Sysbox 설치 및 호스트 요구 사항](https://github.com/nestybox/sysbox/blob/master/docs/user-guide/install-package.md)
+- Runquill은 테스트용 엔진으로 컨테이너 엔진 인수를 확인합니다. Sysbox 러너는 아직 실제 호스트에서 검증되지 않았습니다.
+- `privileged: false`이면 일반 러너를 Sysbox에서 실행합니다.
+- 내부 Docker 데몬은 계속 `RUNQUILL_REGISTRY_MIRROR`를 받으며 `vfs` 스토리지 드라이버를 씁니다.
+- `runsc` 같은 다른 이름은 그대로 `--runtime`으로 전달되며, Docker-in-Docker에서는 `--privileged`도 유지됩니다. 이름은 ASCII 영문자나 숫자로 시작해야 하며, ASCII 영문자와 숫자, `.`, `_`, `-`를 포함해 최대 64자까지 쓸 수 있습니다. `runtime`을 생략하면 엔진의 기본값을 사용합니다. 엔진이 이름을 인식하지 못하면 엔진 오류를 사유로 작업을 다시 시도합니다.
+- 미리 띄운 러너도 풀의 런타임을 쓰며, 런타임을 바꾸면 새로 띄웁니다. 이 설정은 Docker 워커 풀에 적용됩니다.
 
 ## 러너를 미리 띄워 두기
 

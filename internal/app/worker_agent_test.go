@@ -261,7 +261,9 @@ func TestOutboundWorkerCarriesPoolRuntimeOptions(t *testing.T) {
 	dir := workerTestDocker(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	fleet.hosts[0].unprivileged, fleet.hosts[0].cache = true, true
+	if _, err := fleet.configurePools(`{"default":{"privileged":false,"cache":true,"runtime":"runsc"}}`); err != nil {
+		t.Fatal(err)
+	}
 	if err := fleet.startOn(ctx, testWorkerHost, testWorkerJob, "test-jit"); err == nil {
 		t.Fatal("dispatched a cached runner without a repository")
 	}
@@ -286,7 +288,7 @@ func TestOutboundWorkerCarriesPoolRuntimeOptions(t *testing.T) {
 		t.Fatalf("start: %v, worker: %v", err, runErr)
 	}
 	log, err := os.ReadFile(filepath.Join(dir, "commands"))
-	if err != nil || !strings.Contains(string(log), "--user 1001:1001") || strings.Contains(string(log), "--privileged") ||
+	if err != nil || !strings.Contains(string(log), "--runtime runsc --user 1001:1001") || strings.Contains(string(log), "--privileged") ||
 		!strings.Contains(string(log), "type=volume,src=runquill-cache-42,dst=/home/runner/.cache") ||
 		!strings.Contains(string(log), "type=volume,src=runquill-cache-42-tools-") ||
 		!strings.Contains(string(log), "--env RUNNER_TOOL_CACHE=/home/runner/.cache/tools "+cacheFixtureImageID) {
@@ -298,10 +300,42 @@ func TestOutboundWorkerCarriesPoolRuntimeOptions(t *testing.T) {
 		{ID: "a", Operation: "start", Name: testWorkerJob, Image: testWorkerImage, JIT: "x", CacheRepository: -1, Expires: time.Now()},
 		{ID: "a", Operation: "start", Name: testWorkerJob, Image: testWorkerImage, JIT: "x", ScratchCache: true, Expires: time.Now()},
 		{ID: "a", Operation: "remove", Name: testWorkerJob, ScratchCache: true, Expires: time.Now()},
+		{ID: "a", Operation: "remove", Name: testWorkerJob, Runtime: "sysbox-runc", Expires: time.Now()},
+		{ID: "a", Operation: "start", Name: testWorkerJob, Image: testWorkerImage, JIT: "x", Runtime: "-v", Expires: time.Now()},
+		{ID: "a", Operation: "start", Name: testWorkerJob, Image: testWorkerImage, JIT: "x", Runtime: "/bin/sh", Expires: time.Now()},
 	} {
 		if validWorkerTask(task) {
 			t.Errorf("accepted invalid worker task %+v", task)
 		}
+	}
+}
+
+func TestLegacyWorkerRejectsRuntimeTask(t *testing.T) {
+	// Use the strict decoder with the fields a pre-runtime agent sees in this start task.
+	var legacy struct {
+		ID        string    `json:"id"`
+		Operation string    `json:"operation"`
+		Name      string    `json:"name"`
+		Image     string    `json:"image"`
+		JIT       string    `json:"jit"`
+		Expires   time.Time `json:"expires_at"`
+	}
+	task := workerTask{ID: rand.Text(), Operation: "start", Name: testWorkerJob, Image: testWorkerImage,
+		JIT: "test-jit", Expires: time.Now().Add(workerTaskTTL)}
+	data, err := json.Marshal(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := decodeWorkerJSON(bytes.NewReader(data), &legacy); err != nil {
+		t.Fatalf("legacy worker rejected a default runtime task: %v", err)
+	}
+	task.Runtime = sysboxRuntime
+	data, err = json.Marshal(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := decodeWorkerJSON(bytes.NewReader(data), &legacy); err == nil || err.Error() != `json: unknown field "runtime"` {
+		t.Fatalf("legacy worker runtime rejection: %v", err)
 	}
 }
 
@@ -320,6 +354,23 @@ func TestWorkerStartsScratchCacheWithoutSharedVolumes(t *testing.T) {
 	if err != nil || !strings.Contains(string(log), "--mount type=volume,dst=/home/runner/.cache --env RUNNER_TOOL_CACHE=/home/runner/.cache/tools "+testWorkerImage) ||
 		strings.Contains(string(log), "runquill-cache-42") || strings.Contains(string(log), "image inspect") {
 		t.Fatalf("scratch cache runner mounted the shared cache: %s (%v)", log, err)
+	}
+}
+
+func TestWorkerStartsSysboxRunnerWithoutPrivileged(t *testing.T) {
+	dir := workerTestDocker(t)
+	task := workerTask{ID: rand.Text(), Operation: "start", Name: testWorkerJob, Image: testWorkerImage, JIT: "test-jit",
+		Runtime: sysboxRuntime, Expires: time.Now().Add(15 * time.Second)}
+	if !validWorkerTask(task) {
+		t.Fatal("rejected a sysbox task")
+	}
+	c := &workerClient{engine: "worker-engine", target: docker{image: testWorkerImage, worker: testWorkerName}}
+	if err := c.apply(t.Context(), task, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	log, err := os.ReadFile(filepath.Join(dir, "commands"))
+	if err != nil || !strings.Contains(string(log), "--runtime sysbox-runc "+testWorkerImage) || strings.Contains(string(log), "--privileged") {
+		t.Fatalf("worker did not start the sysbox runner: %s (%v)", log, err)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -28,6 +29,14 @@ var packageCacheEnv = []string{
 	"NUGET_PACKAGES=" + runnerCachePath + "/nuget-packages",
 	"BUN_INSTALL_CACHE_DIR=" + runnerCachePath + "/bun",
 }
+
+// sysboxRuntime runs Docker-in-Docker without --privileged; see https://github.com/nestybox/sysbox.
+const sysboxRuntime = "sysbox-runc"
+
+// runtimeNamePattern accepts a runtime name, never a path or an option, so it cannot change other engine flags.
+var runtimeNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+
+func validRuntimeName(name string) bool { return runtimeNamePattern.MatchString(name) }
 
 type runnerRepositoryKey struct{}
 
@@ -109,6 +118,8 @@ type docker struct {
 	warmMaxIdle time.Duration
 	// scratchCache replaces the shared cache volumes with one anonymous volume that "rm -v" removes.
 	scratchCache bool
+	// runtime is the pool's OCI runtime; sysboxRuntime runs Docker-in-Docker without --privileged.
+	runtime string
 }
 
 func (d docker) command(ctx context.Context, input []byte, args ...string) (string, error) {
@@ -200,13 +211,18 @@ func (d docker) createPlan(engine *containerEngine, name, cacheVolume, toolVolum
 	if d.worker != "" {
 		args = append(args, "--label", workerLabel+"="+d.worker)
 	}
+	if d.runtime != "" {
+		args = append(args, "--runtime", d.runtime)
+	}
 	if unprivileged {
 		plan.jitPath, plan.jitOwner = "run/runquill/jit", runnerUID
 		args = append(args, "--user", "1001:1001", "--security-opt", "no-new-privileges", "--cap-drop", "ALL",
 			"--env", "RUNQUILL_RUNNER_MODE=plain", "--env", "RUNQUILL_JIT_FILE=/"+plan.jitPath)
 		plan.dirs = append(plan.dirs, "run/runquill/")
 	} else {
-		args = append(args, "--privileged")
+		if d.runtime != sysboxRuntime {
+			args = append(args, "--privileged")
+		}
 		if d.mirror != "" {
 			// Only the DinD entrypoint starts a dockerd that reads it; older images ignore it.
 			args = append(args, "--env", "RUNQUILL_REGISTRY_MIRROR="+d.mirror)

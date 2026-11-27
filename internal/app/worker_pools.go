@@ -26,6 +26,8 @@ type workerPool struct {
 	Cache        bool     `json:"cache,omitempty"`
 	// CacheWrites is "all" or "default_branch"; empty means "all", or "default_branch" for public repositories.
 	CacheWrites string `json:"cache_writes,omitempty"`
+	// Runtime is the OCI runtime name passed to --runtime; empty keeps the engine's default.
+	Runtime string `json:"runtime,omitempty"`
 	// MaxPerRepository caps one repository's runners in this pool; 0 uses RUNQUILL_MAX_PER_REPOSITORY.
 	MaxPerRepository int `json:"max_per_repository,omitempty"`
 	// Images limits the runner image catalogue names jobs in this pool may select; nil allows all.
@@ -77,6 +79,9 @@ func (f *dockerFleet) configurePools(raw string) (workerPools, error) {
 		if pool.CacheWrites != "" && pool.CacheWrites != cacheWritesAll && pool.CacheWrites != cacheWritesDefaultBranch {
 			return nil, fmt.Errorf("worker pool %q: cache_writes must be %q or %q", name, cacheWritesAll, cacheWritesDefaultBranch)
 		}
+		if pool.Runtime != "" && !validRuntimeName(pool.Runtime) {
+			return nil, fmt.Errorf("worker pool %q: runtime must be an OCI runtime name matching %s", name, runtimeNamePattern)
+		}
 		if err := checkPoolImageNames(pool.Images); err != nil {
 			return nil, fmt.Errorf("worker pool %q: %w", name, err)
 		}
@@ -114,7 +119,7 @@ func (f *dockerFleet) configurePools(raw string) (workerPools, error) {
 		}
 		pool := pools[host.pool]
 		host.cpus, host.memoryMiB = pool.CPUs, pool.MemoryMiB
-		host.unprivileged, host.cache = pool.Privileged != nil && !*pool.Privileged, pool.Cache
+		host.unprivileged, host.cache, host.runtime = pool.Privileged != nil && !*pool.Privileged, pool.Cache, pool.Runtime
 		if pool.Image != "" {
 			host.image = pool.Image
 		}

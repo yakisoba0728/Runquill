@@ -315,7 +315,7 @@ func (f *dockerFleet) startOn(ctx context.Context, target, name, jit string) err
 	}
 	if host.agentName() != "" {
 		task := workerTask{Operation: "start", Name: name, JIT: jit,
-			Image: host.image, CPUs: host.cpus, MemoryMiB: host.memoryMiB, Unprivileged: host.unprivileged}
+			Image: host.image, CPUs: host.cpus, MemoryMiB: host.memoryMiB, Unprivileged: host.unprivileged, Runtime: host.runtime}
 		if host.cache {
 			if task.CacheRepository, err = runnerCacheRepository(ctx); err != nil {
 				return err

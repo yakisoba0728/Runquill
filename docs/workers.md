@@ -54,21 +54,22 @@ Waiting jobs use slots in their requested pool, and available pools can advance 
 
 A label that names an unconfigured pool, or a repository the pool does not allow, keeps the job waiting with a retry reason such as `worker pool "build" is not configured`. Fix the pool in the panel's **Settings** and the job starts on a later pass without a manager restart. Only the 24-hour expiry fails it.
 
-Pools accept five more optional keys.
+Pools accept six more optional keys.
 
 ```dotenv
 RUNQUILL_WORKER_POOLS='{"lint":{"hosts":["local"],"privileged":false,"cache":true,"cache_writes":"default_branch","max_per_repository":2,"images":["ubuntu22.04"]}}'
 ```
 
-- `privileged` defaults to `true`, which starts each runner with `--privileged` and its own Docker daemon. Set it to `false` to run the runner as UID 1001 with all capabilities dropped and `no-new-privileges`. Those jobs cannot use `docker`, service containers, job containers or `sudo`. A custom `image` for such a pool needs a runner user with UID 1001 that owns `/home/runner`.
+- `privileged` defaults to `true`, which gives each runner its own Docker daemon and adds `--privileged` unless the runtime is `sysbox-runc`. Set it to `false` to run the runner as UID 1001 with all capabilities dropped and `no-new-privileges`. Those jobs cannot use `docker`, service containers, job containers or `sudo`. A custom `image` for such a pool needs a runner user with UID 1001 that owns `/home/runner`.
 - `cache: true` mounts a named Docker volume `runquill-cache-<repository ID>` at `/home/runner/.cache`. Jobs from the same repository on the same host share these package and build-tool caches, including the npm, Go module, NuGet and Bun caches that the runner points there. The runner mounts `RUNNER_TOOL_CACHE` at `/home/runner/.cache/tools` in a separate volume for the repository, image ID and platform, so `actions/setup-*` reuses tools for the same image. Each host keeps its own volumes. On local and SSH hosts the manager removes a volume that no runner has used for 30 days. List volumes with `docker volume ls -f label=io.runquill.cache=1`. [Tool cache and cleanup](runner-images.md#tool-cache) · [Docker build layers](workflows.md#reuse-docker-build-layers-across-jobs)
 - `cache_writes` chooses which jobs of a `cache: true` pool use the shared cache volumes. `all` lets every job read and write them. `default_branch` gives them only to runs on the default branch, and other jobs start with an empty cache. Without the key, private repositories use `all` and public repositories use `default_branch`. [Protect the shared cache](#protect-the-shared-cache)
+- `runtime` starts the pool's runners with another OCI runtime, such as `sysbox-runc`. [Run Docker-in-Docker without privileged](#run-docker-in-docker-without-privileged)
 - `max_per_repository` caps how many runners one repository can hold in that pool. It overrides `RUNQUILL_MAX_PER_REPOSITORY` for the pool. Without either value, a repository can use every free slot.
 - `images` lists the [runner OS](workflows.md#choose-the-runner-os) names that jobs in the pool may select with `os__NAME__`. Omit it to allow every name.
 
-[Outbound workers](outbound-workers.md) in a pool with `privileged: false`, `cache: true` or `cache_writes` must run the same Runquill release as the manager. Older agents reject runner tasks that carry these settings, so upgrade the workers along with the manager.
+[Outbound workers](outbound-workers.md) in a pool with `privileged: false`, `cache: true`, `cache_writes` or `runtime` must run the same Runquill release as the manager. Older agents reject runner tasks that carry these settings, so upgrade the workers along with the manager.
 
-The administrator panel's pool editor lets you set Docker-in-Docker, shared caching, allowed runner OS names, `warm` and `warm_max_idle_minutes`. It preserves `cache_writes` and `max_per_repository` when you save. Once settings have been saved in the panel, they take precedence over `RUNQUILL_WORKER_POOLS`.
+The administrator panel's pool editor lets you set Docker-in-Docker, shared caching, allowed runner OS names, `warm` and `warm_max_idle_minutes`. It preserves `cache_writes`, `runtime` and `max_per_repository` when you save. Once settings have been saved in the panel, they take precedence over `RUNQUILL_WORKER_POOLS`.
 
 ### Protect the shared cache
 
@@ -84,8 +85,23 @@ Runquill decides just before it registers the runner. It reads the event, head b
 
 - A job that asks for the same label in the seconds between the check and the runner taking its job can still get the shared cache.
 - GitHub does not say whether a run's head branch is a branch or a tag. A tag with the default branch's name, pushed by someone with write access, counts as the default branch. Block such tags with a tag ruleset.
-- With `privileged` left at `true`, a job is root on the host, so it can reach the shared volumes anyway. Use `privileged: false` where the protection must hold against a hostile job.
+- A job in a runner started with `--privileged` can reach shared volumes on the host. Use `privileged: false` where the protection must hold against a hostile job.
 - Outbound workers need this release. Older agents reject the task, and the job retries until the worker is upgraded.
+
+### Run Docker-in-Docker without privileged
+
+Set `runtime` on a pool to start its runners with `--runtime NAME`. With `"runtime":"sysbox-runc"`, Docker-in-Docker runners start without `--privileged` and still run their own Docker daemon. Sysbox uses a separate user namespace for each container. [Sysbox](https://github.com/nestybox/sysbox)
+
+```dotenv
+RUNQUILL_WORKER_POOLS='{"default":{"runtime":"sysbox-runc"}}'
+```
+
+- Install Sysbox on every Docker host in the pool and confirm that `docker info --format '{{json .Runtimes}}'` lists `sysbox-runc`. [Sysbox installation and host requirements](https://github.com/nestybox/sysbox/blob/master/docs/user-guide/install-package.md)
+- Runquill tests the container engine arguments with fixtures. Sysbox runners have yet to be exercised on a real host.
+- With `privileged: false`, the pool runs the plain runner under Sysbox.
+- The inner Docker daemon still receives `RUNQUILL_REGISTRY_MIRROR` and keeps the `vfs` storage driver.
+- Other names, such as `runsc`, are passed through as `--runtime` and keep `--privileged` for Docker-in-Docker. A name must start with an ASCII letter or digit and can contain up to 64 ASCII letters, digits, `.`, `_` and `-`. Omit `runtime` to use the engine's default. If the engine does not recognize the name, the job retries with the engine's error.
+- Warm runners use the pool runtime. Changing it replaces them. This setting applies to Docker worker pools.
 
 ## Keep runners warm
 

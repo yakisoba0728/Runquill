@@ -277,7 +277,7 @@ func (c *workerClient) apply(ctx context.Context, task workerTask, received time
 	}
 	target := c.target
 	target.cpus, target.memoryMiB = task.CPUs, task.MemoryMiB
-	target.unprivileged, target.cache = task.Unprivileged, task.CacheRepository > 0
+	target.unprivileged, target.cache, target.runtime = task.Unprivileged, task.CacheRepository > 0, task.Runtime
 	start := withRunnerRepository(ctx, task.CacheRepository)
 	if task.ScratchCache {
 		start = withScratchCache(start)

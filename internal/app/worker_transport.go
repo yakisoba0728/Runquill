@@ -79,6 +79,7 @@ type workerTask struct {
 	Unprivileged    bool      `json:"unprivileged,omitempty"`
 	CacheRepository int64     `json:"cache_repository_id,omitempty"`
 	ScratchCache    bool      `json:"scratch_cache,omitempty"`
+	Runtime         string    `json:"runtime,omitempty"`
 	Expires         time.Time `json:"expires_at"`
 	// Remaining milliseconds at delivery, sent only to workers that advertise workerFeatureTTL.
 	TTL *int64 `json:"ttl_ms,omitempty"`
@@ -470,10 +471,11 @@ func validWorkerTask(task workerTask) bool {
 		return validWorkerImage(task.Image) && len(task.JIT) > 0 && len(task.JIT) <= workerJITLimit &&
 			task.CPUs >= 0 && task.CPUs <= 1_000_000 && (task.CPUs == 0 || task.CPUs >= 0.01) &&
 			task.MemoryMiB >= 0 && task.MemoryMiB <= (1<<63-1)>>20 && (task.MemoryMiB == 0 || task.MemoryMiB >= 6) &&
-			task.CacheRepository >= 0 && (!task.ScratchCache || task.CacheRepository > 0)
+			task.CacheRepository >= 0 && (!task.ScratchCache || task.CacheRepository > 0) &&
+			(task.Runtime == "" || validRuntimeName(task.Runtime))
 	case "remove":
 		return task.Image == "" && task.JIT == "" && task.CPUs == 0 && task.MemoryMiB == 0 &&
-			!task.Unprivileged && task.CacheRepository == 0 && !task.ScratchCache
+			!task.Unprivileged && task.CacheRepository == 0 && !task.ScratchCache && task.Runtime == ""
 	default:
 		return false
 	}

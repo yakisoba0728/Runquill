@@ -743,6 +743,10 @@ components:
           type: string
           enum: [all, default_branch]
           description: Which runs may write the shared cache. With default_branch, other runs get an empty cache that is removed with the runner. Absent means all, or default_branch for public repositories.
+        runtime:
+          type: string
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
+          description: OCI runtime name passed to --runtime. sysbox-runc runs Docker-in-Docker without --privileged; absent uses the engine default.
         max_per_repository:
           type: integer
         images:

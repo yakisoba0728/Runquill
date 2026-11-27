@@ -22,7 +22,7 @@ import (
 
 func TestWorkerPoolsValidatePolicyAndSetDockerResources(t *testing.T) {
 	fleet, logPath := testDockerFleet(t)
-	raw := fmt.Sprintf(`{"build":{"hosts":[%q],"repositories":["Owner/project"],"cpus":2.5,"memory_mib":4096,"image":"registry.example/runquill:build"}}`, fleetTestWorker)
+	raw := fmt.Sprintf(`{"build":{"hosts":[%q],"repositories":["Owner/project"],"cpus":2.5,"memory_mib":4096,"image":"registry.example/runquill:build","runtime":"sysbox-runc"}}`, fleetTestWorker)
 	pools, err := fleet.configurePools(raw)
 	if err != nil {
 		t.Fatal(err)
@@ -52,10 +52,12 @@ func TestWorkerPoolsValidatePolicyAndSetDockerResources(t *testing.T) {
 	var buildFlags, defaultFlags bool
 	for line := range strings.SplitSeq(string(data), "\n") {
 		if strings.Contains(line, "create --name build-runner") {
-			buildFlags = strings.Contains(line, "--cpus 2.5 --memory 4096m --memory-swap 4096m") && strings.HasSuffix(line, " registry.example/runquill:build")
+			buildFlags = strings.Contains(line, "--cpus 2.5 --memory 4096m --memory-swap 4096m") && strings.HasSuffix(line, " registry.example/runquill:build") &&
+				strings.Contains(line, "--runtime sysbox-runc ") && !strings.Contains(line, "--privileged")
 		}
 		if strings.Contains(line, "create --name default-runner") {
-			defaultFlags = !strings.Contains(line, "--memory") && !strings.Contains(line, "--cpus") && !strings.Contains(line, "registry.example/runquill:build")
+			defaultFlags = !strings.Contains(line, "--memory") && !strings.Contains(line, "--cpus") && !strings.Contains(line, "registry.example/runquill:build") &&
+				!strings.Contains(line, "--runtime") && strings.Contains(line, "--privileged")
 		}
 	}
 	if !buildFlags || !defaultFlags {
@@ -71,10 +73,19 @@ func TestWorkerPoolsValidatePolicyAndSetDockerResources(t *testing.T) {
 		`{"build": {"hosts":["local"],"cache":"/cache"}}`,
 		`{"build": {"hosts":["local"],"cache":true,"cache_writes":"main"}}`,
 		`{"build": {"hosts":["local"],"cache":true,"cache_writes":"Default_Branch"}}`,
+		`{"build": {"hosts":["local"],"runtime":"--privileged"}}`,
+		`{"build": {"hosts":["local"],"runtime":"/usr/bin/sysbox-runc"}}`,
+		`{"build": {"hosts":["local"],"runtime":"sysbox runc"}}`,
+		`{"build": {"hosts":["local"],"runtime":"` + strings.Repeat("r", 65) + `"}}`,
 		raw + raw,
 	} {
 		if _, err := fleet.configurePools(input); err == nil {
 			t.Errorf("accepted invalid worker pools: %s", input)
+		}
+	}
+	for _, runtime := range []string{"sysbox-runc", "runsc", "io.containerd.kata.v2", "R_1", strings.Repeat("r", 64)} {
+		if _, err := fleet.configurePools(`{"build":{"hosts":["local"],"runtime":"` + runtime + `"}}`); err != nil {
+			t.Errorf("rejected runtime %q: %v", runtime, err)
 		}
 	}
 	for _, writes := range []string{"all", "default_branch"} {

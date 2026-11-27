@@ -365,6 +365,20 @@ func TestWarmMaintenance(t *testing.T) {
 		t.Fatalf("warm runner name %q", name)
 	}
 
+	// A pool runtime change makes a previously usable warm runner stale.
+	fleet, read = warmTestFleet(t, good+"\trunning\n", "")
+	if _, err := fleet.configurePools(`{"default":{"runtime":"sysbox-runc","privileged":false,"warm":2}}`); err != nil {
+		t.Fatal(err)
+	}
+	newKey := warmKey(t, fleet.hosts[0])
+	fleet.maintainWarm(t.Context(), capacity(0, false), 10, now)
+	log = read()
+	creates = calls(log, "create --name "+warmPrefix+newKey+"-")
+	if newKey == key || !slices.Equal(removed(log), []string{good}) || len(creates) != 1 ||
+		!strings.Contains(creates[0], "--runtime sysbox-runc ") || len(calls(log, "start "+warmPrefix+newKey+"-")) != 1 {
+		t.Fatalf("runtime change did not replace the warm runner: %q", log)
+	}
+
 	// Warm runners only fill slots that jobs and the global limit leave free.
 	for _, test := range []struct {
 		occupied, free int

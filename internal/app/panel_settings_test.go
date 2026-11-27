@@ -17,7 +17,7 @@ func TestPanelSettingsAreAuditedAndAppliedWithoutRestart(t *testing.T) {
 	t.Setenv("RUNQUILL_BACKEND", "docker")
 	t.Setenv("RUNQUILL_DOCKER_HOSTS", "local")
 	t.Setenv("RUNQUILL_DOCKER_HOST_LIMITS", "")
-	t.Setenv("RUNQUILL_WORKER_POOLS", "")
+	t.Setenv("RUNQUILL_WORKER_POOLS", `{"build":{"hosts":["local"],"cpus":2,"runtime":"sysbox-runc"}}`)
 	bin := t.TempDir()
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
@@ -53,7 +53,7 @@ func TestPanelSettingsAreAuditedAndAppliedWithoutRestart(t *testing.T) {
 	}
 	admin, viewer := login(101), login(102)
 	handler := panelHandler(panel, access)
-	call := func(method, session, origin string, policy operationPolicy, expected int) {
+	call := func(method, session, origin string, policy operationPolicy, expected int) operationPolicy {
 		t.Helper()
 		body, err := json.Marshal(policy)
 		if err != nil {
@@ -70,12 +70,24 @@ func TestPanelSettingsAreAuditedAndAppliedWithoutRestart(t *testing.T) {
 		if res.Code != expected {
 			t.Fatalf("%s settings returned %d, want %d: %s", method, res.Code, expected, res.Body)
 		}
+		var response operationSettingsResponse
+		if expected == http.StatusOK {
+			if err := json.Unmarshal(res.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return response.Policy
 	}
 	initial := ops.current.Load()
-	policy := initial.policy
+	policy := call("GET", admin, "", operationPolicy{}, http.StatusOK)
+	build := policy.Pools["build"]
+	if build.Runtime != sysboxRuntime {
+		t.Fatalf("settings did not expose the configured runtime: %+v", build)
+	}
+	build.CPUs = 3
+	policy.Pools["build"] = build
 	policy.Limit, policy.PollInterval = 4, "45s"
 	policy.HostLimits = map[string]int{"local": 3}
-	policy.Pools = workerPools{"build": {Hosts: []string{"local"}, CPUs: 2}}
 	call("GET", "", "", policy, http.StatusUnauthorized)
 	call("GET", viewer, "", policy, http.StatusForbidden)
 	call("PUT", viewer, access.cfg.origin, policy, http.StatusForbidden)
@@ -83,7 +95,10 @@ func TestPanelSettingsAreAuditedAndAppliedWithoutRestart(t *testing.T) {
 	invalid := policy
 	invalid.PollInterval = "0"
 	call("PUT", admin, access.cfg.origin, invalid, http.StatusBadRequest)
-	call("PUT", admin, access.cfg.origin, policy, http.StatusOK)
+	saved := call("PUT", admin, access.cfg.origin, policy, http.StatusOK)
+	if saved.Pools["build"].Runtime != sysboxRuntime {
+		t.Fatalf("saving settings lost the runtime: %+v", saved.Pools)
+	}
 	call("PUT", admin, access.cfg.origin, policy, http.StatusConflict)
 	select {
 	case <-initial.pollEdited:
@@ -107,7 +122,8 @@ func TestPanelSettingsAreAuditedAndAppliedWithoutRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	state := restarted.current.Load()
-	if state.policy.Revision != 1 || state.policy.Limit != 4 || state.interval != 45*time.Second {
+	if state.policy.Revision != 1 || state.policy.Limit != 4 || state.interval != 45*time.Second ||
+		state.policy.Pools["build"].Runtime != sysboxRuntime || state.runners.runtime.(*dockerFleet).hosts[0].runtime != sysboxRuntime {
 		t.Fatalf("saved configuration could not be reloaded: %+v", state.policy)
 	}
 	cfg.runnerImage = "runquill-runner:upgraded"
@@ -129,7 +145,7 @@ func TestPanelSettingsAreAuditedAndAppliedWithoutRestart(t *testing.T) {
 	}
 	var target string
 	if err := q.QueryRow("SELECT target FROM panel_audit WHERE action='settings.update'").Scan(&target); err != nil ||
-		target != "docker: slot_limit 2 -> 4; poll_interval 30s -> 45s; host_limits[local] unset -> 3; worker_pools +build" {
+		target != "docker: slot_limit 2 -> 4; poll_interval 30s -> 45s; host_limits[local] unset -> 3; worker_pools[build].cpus 2 -> 3" {
 		t.Fatalf("settings audit target %q: %v", target, err)
 	}
 }
