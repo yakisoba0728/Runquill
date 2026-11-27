@@ -19,7 +19,7 @@ export function sample(name) {
   const at = (seconds) => new Date(Date.now() - seconds * 1000).toISOString();
   const host = (name, limit, occupied, reserved = 0, extra = {}) => ({
     name, pool: name === "local" ? "default" : "build", status: reserved ? "OFFLINE" : "UP", slot_limit: limit,
-    occupied_slots: occupied, reserved_slots: reserved, image_status: reserved ? undefined : "ready", ...extra,
+    occupied_slots: occupied, reserved_slots: reserved, image_status: reserved ? undefined : "ready", last_seen: reserved ? at(1260) : undefined, ...extra,
   });
   const runnerImage = "ghcr.io/yakisoba0728/runquill-runner:v0.3.3";
   const job = (id, repository, status, runner_host, extra = {}) => ({

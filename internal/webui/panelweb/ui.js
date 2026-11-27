@@ -217,8 +217,9 @@ export function createTable({ label, columns, key, empty = "No entries.", rowCla
   const caption = h("caption", { class: "visually-hidden" }, tr(label));
   const head = h("thead", {}, h("tr", {}, ...columns.map((column) =>
     h("th", { scope: "col", class: column.num ? "num" : null }, column.label ? tr(column.label) : h("span", { class: "visually-hidden" }, tr("Actions"))))));
-  const element = h("div", { class: "table-wrap", role: "region", tabindex: "0", "aria-label": tr(label) },
-    h("table", {}, caption, head, body));
+  const table = h("table", {}, caption, head, body);
+  const element = h("div", { class: "table-wrap" }, table);
+  scrollStop(element, tr(label), table);
   const controls = "button, a, input, select";
   const headerColumn = Math.max(0, columns.findIndex((column) => column.rowHeader));
   // The markup a row was built with, by key; a row built the same way again keeps its live node.
@@ -287,6 +288,57 @@ export function createTable({ label, columns, key, empty = "No entries.", rowCla
     return true;
   }
   return { element, update, focus };
+}
+
+// scrollStop makes a horizontally scrolling container a labelled region and a
+// tab stop, so keyboard users can scroll it, only while it actually scrolls.
+// Otherwise it stays focusable from script (tabindex -1), as a focus fallback
+// when the row a closed detail belonged to is gone. It returns element.
+export function scrollStop(element, label, content = element.firstElementChild) {
+  const set = (scrolls) => {
+    element.tabIndex = scrolls ? 0 : -1;
+    for (const [name, value] of [["role", "region"], ["aria-label", label]]) {
+      if (scrolls) element.setAttribute(name, value);
+      else element.removeAttribute(name);
+    }
+  };
+  if (typeof ResizeObserver !== "function") {
+    set(true);
+    return element;
+  }
+  const observer = new ResizeObserver(() => set(element.scrollWidth > element.clientWidth + 1));
+  observer.observe(element);
+  if (content) observer.observe(content);
+  return element;
+}
+
+// settled runs fn once a select has stayed on a value for a moment, so moving
+// through options with the arrow keys (which fires change in some browsers)
+// does not load each one. Selects that change data use a button instead.
+// Nothing runs once the select has left the page (its screen closed).
+export function settled(fn, delay = 450) {
+  let timer = 0;
+  return (event, ...rest) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      if (event?.target?.isConnected !== false) fn(event, ...rest);
+    }, delay);
+  };
+}
+
+// copyButton copies an input's value, or selects it for a manual copy when the
+// clipboard is not available, and reports the result in output.
+export function copyButton(input, label, output, done = "Copied.") {
+  return button(label, async () => {
+    try {
+      await navigator.clipboard.writeText(input.value);
+      message(output, tr(done), "ok");
+    } catch {
+      input.focus();
+      input.select();
+      message(output, tr("Copy the selected text."));
+    }
+  });
 }
 
 // linkTarget follows the item a deep link names, such as #/runners?runner=X.
@@ -369,13 +421,17 @@ export function errorText(error) {
 let dialogResolve = null;
 
 // confirmAction asks a yes/no question in a modal dialog and resolves to true
-// when the person confirms.
-export function confirmAction(message, confirmLabel = "Confirm") {
+// when the person confirms. Every destructive action (removing, revoking,
+// disabling, cancelling, discarding edits) passes danger, which colours the
+// confirm button; focus always starts on Cancel.
+export function confirmAction(message, confirmLabel = "Confirm", { danger = false } = {}) {
   const dialog = document.getElementById("confirm-dialog");
   if (!dialog?.showModal) return Promise.resolve(window.confirm(message));
   dialogResolve?.(false);
   document.getElementById("confirm-text").textContent = message;
-  document.getElementById("confirm-ok").textContent = tr(confirmLabel);
+  const ok = document.getElementById("confirm-ok");
+  ok.textContent = tr(confirmLabel);
+  ok.classList.toggle("danger", danger);
   const opener = document.activeElement;
   const table = opener?.closest(".table-wrap");
   const detail = opener?.closest(".detail");

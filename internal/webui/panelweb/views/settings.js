@@ -1,8 +1,20 @@
 // Settings: the operational policy from GET/PUT /api/settings (applies
 // without a restart). Admins only. Queue backups live on the Backups screen.
+// Unsaved edits are guarded: leaving the screen, reloading the saved
+// settings or closing the tab asks first.
 import { ApiError } from "../api.js";
 import { tr } from "../i18n.js";
-import { block, button, errorText, field, fill, h, intro, message, pageHead, statusLine, submitForm } from "../ui.js";
+import { block, button, errorText, field, fill, h, intro, message, pageHead, scrollStop, statusLine, submitForm } from "../ui.js";
+
+// removeEntry deletes a worker row or pool after asking, then moves focus to
+// the next entry's first control, or the previous one's, or fallback.
+async function removeEntry(entry, question, name, fallback) {
+  if (name && !await parts.ctx.confirm(tr(question, { name }), "Remove", { danger: true })) return;
+  const next = entry.nextElementSibling || entry.previousElementSibling;
+  entry.remove();
+  parts.dirty = true;
+  (next?.querySelector("input, textarea, select") || fallback())?.focus();
+}
 
 let parts = null;
 
@@ -26,11 +38,8 @@ function hostRow(list, address = "", limit = "") {
   input.value = address;
   const limitInput = h("input", { name: "limit", type: "number", min: 1, placeholder: tr("Use fleet limit"), "aria-label": tr("Worker slot limit") });
   limitInput.value = limit ?? "";
-  const remove = button("Remove", async () => {
-    const name = input.value.trim();
-    if (name && !await parts.ctx.confirm(tr("Remove the worker {name} from these settings? The change applies when you save.", { name }), "Remove")) return;
-    row.remove();
-  }, { small: true });
+  const remove = button("Remove", () => removeEntry(row, "Remove the worker {name} from these settings? The change applies when you save.",
+    input.value.trim(), () => list.closest("section")?.querySelector(".block-head button")), { small: true, "aria-label": tr("Remove worker {name}", { name: address || tr("New worker") }) });
   // Outbound agents enroll with deployment credentials, not from the panel.
   if (address.startsWith("agent://")) {
     input.readOnly = true;
@@ -74,11 +83,8 @@ function poolEntry(list, originals, name = "", pool = {}) {
       h("label", { class: "check" }, h("input", { type: "checkbox", name: "privileged", checked: pool.privileged !== false }), tr("Run Docker-in-Docker (privileged)")),
       h("label", { class: "check" }, h("input", { type: "checkbox", name: "cache", checked: pool.cache === true }), tr("Keep a shared build cache")),
       h("label", { class: "check" }, restrict, tr("Restrict repositories")),
-      button("Remove pool", async () => {
-        const value = poolName.value.trim();
-        if (value && !await parts.ctx.confirm(tr("Remove the pool {name} from these settings? The change applies when you save.", { name: value }), "Remove")) return;
-        entry.remove();
-      }, { small: true })));
+      button("Remove pool", () => removeEntry(entry, "Remove the pool {name} from these settings? The change applies when you save.",
+        poolName.value.trim(), () => list.closest("section")?.querySelector(".block-head button")), { small: true })));
   // Each entry keeps the object it was loaded from, so fields this editor
   // does not show (such as max_per_repository) are saved back unchanged.
   originals.set(entry, pool);
@@ -108,13 +114,13 @@ function settingsForm(ctx) {
   const docker = h("div", { hidden: true },
     block("Docker workers", {
       note: "SSH workers use the manager's configured SSH credentials. Outbound agents use deployment credentials.",
-      actions: [button("Add worker", () => hostRow(hostList).focus())],
-    }, h("div", { class: "table-wrap", role: "region", tabindex: "0", "aria-label": tr("Docker workers") }, h("table", {},
+      actions: [button("Add worker", () => { parts.dirty = true; hostRow(hostList).focus(); })],
+    }, scrollStop(h("div", { class: "table-wrap" }, h("table", {},
       h("caption", { class: "visually-hidden" }, tr("Docker workers")),
       h("thead", {}, h("tr", {}, h("th", { scope: "col" }, tr("Worker address")), h("th", { scope: "col" }, tr("Worker slot limit")),
         h("th", { scope: "col" }, h("span", { class: "visually-hidden" }, tr("Actions"))))),
-      hostList))),
-    block("Worker pools", { actions: [button("Add pool", () => poolEntry(poolList, originals).focus())] }, catalogue, poolList));
+      hostList)), tr("Docker workers"))),
+    block("Worker pools", { actions: [button("Add pool", () => { parts.dirty = true; poolEntry(poolList, originals).focus(); })] }, catalogue, poolList));
   const form = h("form", { "aria-label": tr("Operational settings"), hidden: true },
     block("Fleet", {}, h("div", { class: "form-grid" },
       h("label", { for: "set-slot-limit" }, tr("Fleet slot limit")), fleetFields.slot_limit,
@@ -140,6 +146,7 @@ function settingsForm(ctx) {
     for (const address of policy.docker_hosts || []) hostRow(hostList, address, policy.host_limits?.[address]);
     for (const [name, pool] of Object.entries(policy.worker_pools || {})) poolEntry(poolList, originals, name, pool);
     form.hidden = false;
+    if (parts) parts.dirty = false; // a load can finish after the screen closed
   }
 
   const lines = (value) => value.split(/[,\n]/).map((part) => part.trim()).filter(Boolean);
@@ -170,9 +177,12 @@ function settingsForm(ctx) {
     populate(saved);
     message(output, tr("Settings saved."), "ok");
   });
+  form.addEventListener("input", () => { parts.dirty = true; });
+  form.addEventListener("change", () => { parts.dirty = true; });
 
   const loading = h("p", { class: "placeholder" }, tr("Loading…"));
   async function load() {
+    if (parts.dirty && !await discard()) return;
     message(output, "");
     try {
       populate(await ctx.api.get("./api/settings"));
@@ -185,12 +195,23 @@ function settingsForm(ctx) {
   return { form, output, load, loading };
 }
 
+function discard() {
+  return parts.ctx.confirm(tr("Discard your unsaved settings changes?"), "Discard changes", { danger: true });
+}
+
+function warnUnload(event) {
+  if (!parts?.dirty) return;
+  event.preventDefault();
+  event.returnValue = "";
+}
+
 export default {
   id: "settings",
   title: "Settings",
 
   mount(root, ctx) {
-    parts = { ctx };
+    parts = { ctx, dirty: false };
+    window.addEventListener("beforeunload", warnUnload);
     const settings = settingsForm(ctx);
     root.append(
       pageHead("Settings", button("Reload saved settings", () => void settings.load())),
@@ -205,7 +226,12 @@ export default {
     void settings.load();
   },
 
+  canLeave() {
+    return !parts?.dirty || discard();
+  },
+
   unmount() {
+    window.removeEventListener("beforeunload", warnUnload);
     parts = null;
   },
 };

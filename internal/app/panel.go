@@ -57,6 +57,9 @@ type panelState struct {
 	maxPerRepository int
 	disk             hostDiskCache
 	engineRun        imageCommand // nil runs the engine CLI; tests replace it
+	// hostSeen is when each host last answered, kept in memory: a restarted
+	// manager shows no last-seen time until a host answers again.
+	hostSeen map[string]time.Time
 }
 
 func newPanel(cfg config) *panelState {
@@ -121,12 +124,29 @@ func (p *panelState) capture(ctx context.Context, q *queue, hosts []hostCapacity
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.stampHostsSeen(&report, now)
 	p.snapshot.Fleet = &report
 	p.snapshot.Inventory = inventory
 	p.snapshot.Recent = recent
 	p.snapshot.SampledAt = &now
 	p.snapshot.FirstJobSeen = firstSeen
 	p.snapshot.FirstJobClean = firstClean
+}
+
+// stampHostsSeen records when each reachable host answered and gives each
+// offline host the last time it did. The caller holds p.mu.
+func (p *panelState) stampHostsSeen(report *statusReport, now time.Time) {
+	if p.hostSeen == nil {
+		p.hostSeen = make(map[string]time.Time)
+	}
+	for i := range report.Hosts {
+		host := &report.Hosts[i]
+		if host.Status != "OFFLINE" {
+			p.hostSeen[host.Name] = now
+		} else if seen, ok := p.hostSeen[host.Name]; ok {
+			host.LastSeen = &seen
+		}
+	}
 }
 
 func readPanelCompleted(ctx context.Context, q *queue, now time.Time, pools workerPools) ([]panelCompleted, *panelCompleted, error) {

@@ -4,7 +4,7 @@
 import { poolName } from "../fleet.js";
 import { language, tr } from "../i18n.js";
 import {
-  block, button, createKv, createTable, errorText, field, format, h, loadStyle, message, pageHead, select, state, statusLine,
+  block, button, createKv, createTable, errorText, field, format, h, loadStyle, message, pageHead, select, settled, state, statusLine,
 } from "../ui.js";
 
 const maxDays = 400;
@@ -241,6 +241,7 @@ function rightsizingSection(ctx) {
     event.preventDefault();
     void load();
   });
+  for (const name of ["group", "days"]) form.elements[name].addEventListener("change", settled(() => void load()));
   table.update([], "Loading…");
   void load();
   return block("Right-sizing", {
@@ -271,13 +272,14 @@ export default {
       event.preventDefault();
       void load();
     });
-    form.elements.range.addEventListener("change", () => {
-      if (!form.elements.range.value) return form.elements.from.focus();
+    // Custom dates leaves the dates for the person to edit and apply; focus stays on the select.
+    form.elements.range.addEventListener("change", settled(() => {
+      if (!form.elements.range.value) return;
       applyPreset(form);
       void load();
-    });
+    }));
     for (const name of ["from", "to"]) form.elements[name].addEventListener("change", () => { form.elements.range.value = ""; });
-    form.elements.group.addEventListener("change", () => void load());
+    form.elements.group.addEventListener("change", settled(() => void load()));
     form.elements.metric.addEventListener("change", () => render());
 
     const totals = createKv([

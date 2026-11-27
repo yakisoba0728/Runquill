@@ -499,3 +499,18 @@ func TestPanelRunnerInventoryKeepsUnobservedLeases(t *testing.T) {
 		t.Fatalf("unexpected runner inventory: %+v", rows)
 	}
 }
+
+func TestPanelRemembersWhenOfflineHostsWereLastSeen(t *testing.T) {
+	p := &panelState{}
+	first := time.Date(2026, 11, 24, 10, 0, 0, 0, time.UTC)
+	report := statusReport{Hosts: []statusHost{{Name: "local", Status: "UP"}, {Name: "ssh://b", Status: "OFFLINE"}}}
+	p.stampHostsSeen(&report, first)
+	if report.Hosts[0].LastSeen != nil || report.Hosts[1].LastSeen != nil {
+		t.Fatalf("last seen before any offline host was reachable: %+v", report.Hosts)
+	}
+	report = statusReport{Hosts: []statusHost{{Name: "local", Status: "OFFLINE"}, {Name: "ssh://b", Status: "OFFLINE"}}}
+	p.stampHostsSeen(&report, first.Add(time.Minute))
+	if seen := report.Hosts[0].LastSeen; seen == nil || !seen.Equal(first) || report.Hosts[1].LastSeen != nil {
+		t.Fatalf("offline hosts = %+v, want local last seen at %s", report.Hosts, first)
+	}
+}

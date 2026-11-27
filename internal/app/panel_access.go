@@ -321,35 +321,41 @@ func (a *panelAccess) githubCallback(w http.ResponseWriter, r *http.Request) {
 	cookie, err := r.Cookie(a.cookieName("oauth"))
 	a.setCookie(w, "oauth", "", -1)
 	if err != nil || len(state) != panelSecretLength {
-		http.Error(w, "Sign-in expired. Return to the panel and try again.", http.StatusBadRequest)
+		signInFailed(w, r, "expired")
 		return
 	}
 	sealed, verifier, ok := a.openLogin(cookie.Value, now)
 	if !ok || subtle.ConstantTimeCompare([]byte(sealed), []byte(state)) != 1 {
-		http.Error(w, "Sign-in expired. Return to the panel and try again.", http.StatusBadRequest)
+		signInFailed(w, r, "expired")
 		return
 	}
 	if a.spent(state, now) || code == "" || len(code) > 512 {
-		http.Error(w, "Sign-in expired or cancelled. Return to the panel and try again.", http.StatusBadRequest)
+		signInFailed(w, r, "cancelled")
 		return
 	}
 	var user panelIdentity
 	if err := a.exchangeGitHubIdentity(ctx, code, verifier, &user); err != nil {
-		http.Error(w, "Could not verify the GitHub login. Try again.", http.StatusBadGateway)
+		signInFailed(w, r, "github")
 		return
 	}
 	key, err := a.startSession(ctx, user)
 	if errors.Is(err, sql.ErrNoRows) {
-		http.Error(w, "Your GitHub account is not enrolled in this Runquill panel.", http.StatusForbidden)
+		signInFailed(w, r, "not_enrolled")
 		return
 	}
 	if err != nil {
-		http.Error(w, "Could not start a panel session.", http.StatusServiceUnavailable)
+		signInFailed(w, r, "unavailable")
 		return
 	}
 	a.spend(state, now)
 	a.setCookie(w, "session", key, int(panelSessionLifetime.Seconds()))
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// signInFailed returns the browser to the panel with a fixed reason code, which
+// the sign-in screen shows translated; nothing from the request is reflected.
+func signInFailed(w http.ResponseWriter, r *http.Request, code string) {
+	http.Redirect(w, r, "/?signin="+code, http.StatusSeeOther)
 }
 
 func (a *panelAccess) exchangeGitHubIdentity(ctx context.Context, code, verifier string, user *panelIdentity) error {

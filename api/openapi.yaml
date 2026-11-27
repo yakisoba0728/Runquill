@@ -486,6 +486,10 @@ components:
         warm_target:
           type: integer
           description: The warm runners its worker pool keeps on each local or SSH host. Absent when the pool keeps none or the host is an outbound worker.
+        last_seen:
+          type: string
+          format: date-time
+          description: In the panel snapshot only, when an OFFLINE host last answered. Kept in memory, so absent until the host has answered since the manager started.
     StatusJob:
       type: object
       required: [id, repository, status]
@@ -1476,31 +1480,7 @@ paths:
             maxLength: 512
       responses:
         '303':
-          description: Signed in; redirect to /.
-        '400':
-          description: 'State missing or expired ("Sign-in expired. Return to the panel and try again." or "Sign-in expired or cancelled. Return to the panel and try again.").'
-          content:
-            text/plain:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '403':
-          description: 'Body "Your GitHub account is not enrolled in this Runquill panel."'
-          content:
-            text/plain:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '502':
-          description: 'Body "Could not verify the GitHub login. Try again."'
-          content:
-            text/plain:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '503':
-          description: 'Body "Could not start a panel session."'
-          content:
-            text/plain:
-              schema:
-                $ref: '#/components/schemas/Error'
+          description: 'Signed in, redirect to /. A refused sign-in also redirects, to /?signin=CODE, whose reason the sign-in screen shows: expired (state missing, mismatched or expired), cancelled (cancelled at GitHub or already used), github (GitHub did not verify the login), not_enrolled (the account is not enrolled) or unavailable (no session could be started).'
   /api/me:
     get:
       operationId: getMe

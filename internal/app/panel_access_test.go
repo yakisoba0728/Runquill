@@ -115,7 +115,7 @@ func TestGitHubPanelLoginRolesAndTokens(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
 	})
 	callback := "/auth/github/callback?code=test&state=" + state
-	assertStatus(request("GET", callback+"wrong", "", "", "", stateCookie), 400)
+	assertSignInFailed(t, request("GET", callback+"wrong", "", "", "", stateCookie), "expired")
 	if calls != 0 {
 		t.Fatal("mismatched state reached GitHub")
 	}
@@ -124,7 +124,7 @@ func TestGitHubPanelLoginRolesAndTokens(t *testing.T) {
 	if calls != 2 {
 		t.Fatalf("GitHub calls: %d", calls)
 	}
-	assertStatus(request("GET", callback, "", "", "", stateCookie), 400)
+	assertSignInFailed(t, request("GET", callback, "", "", "", stateCookie), "cancelled")
 	var adminCookie *http.Cookie
 	for _, cookie := range result.Result().Cookies() {
 		if cookie.Name == access.cookieName("session") {
@@ -284,8 +284,8 @@ func TestPanelSignInSurvivesAnonymousFloodAndRejectsForeignCookies(t *testing.T)
 		"other browser":    request("/auth/github/callback?code=test&state="+state, otherCookie),
 		"raw state cookie": request("/auth/github/callback?code=test&state="+state, &http.Cookie{Name: cookie.Name, Value: state}),
 	} {
-		if rec.Code != http.StatusBadRequest {
-			t.Fatalf("%s: got HTTP %d", name, rec.Code)
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/?signin=expired" {
+			t.Fatalf("%s: got HTTP %d to %q", name, rec.Code, rec.Header().Get("Location"))
 		}
 	}
 	if calls != 0 {
@@ -295,7 +295,16 @@ func TestPanelSignInSurvivesAnonymousFloodAndRejectsForeignCookies(t *testing.T)
 	if result.Code != http.StatusSeeOther || calls != 2 {
 		t.Fatalf("sign-in after the flood: HTTP %d, %d GitHub calls: %s", result.Code, calls, result.Body)
 	}
-	if rec := request("/auth/github/callback?code=test&state="+state, cookie); rec.Code != http.StatusBadRequest || calls != 2 {
-		t.Fatalf("replayed callback: HTTP %d", rec.Code)
+	if rec := request("/auth/github/callback?code=test&state="+state, cookie); rec.Header().Get("Location") != "/?signin=cancelled" || calls != 2 {
+		t.Fatalf("replayed callback: HTTP %d to %q", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
+// assertSignInFailed checks that a refused callback sends the browser back to
+// the panel with the reason code its sign-in screen translates.
+func assertSignInFailed(t *testing.T, rec *httptest.ResponseRecorder, code string) {
+	t.Helper()
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/?signin="+code {
+		t.Fatalf("sign-in failure: HTTP %d to %q, want /?signin=%s", rec.Code, rec.Header().Get("Location"), code)
 	}
 }

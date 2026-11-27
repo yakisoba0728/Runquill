@@ -148,6 +148,8 @@ code { background: var(--bg-code); padding: 1px 4px; border-radius: 2px; }
 .button.primary { background: var(--text); border-color: var(--text); color: var(--bg); }
 .button.primary:hover { opacity: .88; }
 .button.small { height: 24px; padding: 0 8px; font-size: 12px; }
+.button.danger { background: var(--failed); border-color: var(--failed); color: var(--bg); }
+.button.danger:hover { opacity: .88; }
 
 input, select, textarea {
   font: inherit; color: var(--text); background: var(--bg-input);
@@ -306,6 +308,7 @@ tbody :is(td, th).id { font-family: var(--mono); font-size: 12px; }
 /* A long note under a host name (an image pull error) wraps instead of widening the column. */
 :is(td, th).id.long .sub { white-space: normal; overflow-wrap: anywhere; }
 td .row-actions { display: flex; gap: 6px; justify-content: flex-end; }
+td .role-pick { justify-content: flex-start; }
 /* Long values (100-character repository names, Korean sentences) wrap
    instead of widening the table past its scroll container. */
 :is(td, th).long { white-space: normal; overflow-wrap: anywhere; min-width: 160px; max-width: 360px; }

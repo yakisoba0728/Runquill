@@ -5,7 +5,14 @@
 // The repository, labels and diff are user input or repository content: text only.
 import { language, serverText, tr } from "../i18n.js";
 import { poolName } from "../fleet.js";
-import { block, button, errorText, fill, format, h, kv, loadStyle, message, pageHead, state, statusLine } from "../ui.js";
+import { block, button, errorText, fill, format, h, kv, loadStyle, message, pageHead, scrollStop, state, statusLine } from "../ui.js";
+
+// wrapTable puts a table in a horizontal scroller that is a tab stop only while it scrolls.
+function wrapTable(label, table) {
+  const wrap = h("div", { class: "table-wrap" }, table);
+  scrollStop(wrap, label, table);
+  return wrap;
+}
 
 // Previews read up to 50 files and opening commits each changed file; the
 // server allows 90 seconds.
@@ -208,7 +215,10 @@ async function runPreview(request, { automatic = false } = {}) {
     if (parts !== current) return;
     current.preview = result;
     current.request = request;
-    message(current.formOutput, automatic ? tr("The preview was refreshed with the current workflow files. Review it again before opening the pull request.") : "");
+    // The preview itself is not a live region; this one line says it is ready.
+    const sum = totals(result);
+    message(current.formOutput, automatic ? tr("The preview was refreshed with the current workflow files. Review it again before opening the pull request.")
+      : tr("Preview ready: {jobs} jobs change in {files} files.", { jobs: sum.changedJobs, files: sum.changedFiles }), "ok");
   } catch (error) {
     if (parts !== current) return;
     message(current.formOutput, error.status === 401 ? "" : failure(error).text, "failed");
@@ -265,7 +275,7 @@ function diffTable(path, diff) {
       h("td", { class: "migrate-marker" }, marker, spoken ? h("span", { class: "visually-hidden" }, spoken) : null),
       h("td", { class: "migrate-code" }, text)));
   }
-  return h("div", { class: "table-wrap", role: "region", tabindex: "0", "aria-label": tr("Changes in {path}", { path }) },
+  return wrapTable(tr("Changes in {path}", { path }),
     h("table", { class: "migrate-diff" },
       h("caption", { class: "visually-hidden" }, tr("Changes in {path}", { path })),
       h("thead", {}, h("tr", {},
@@ -277,7 +287,7 @@ function diffTable(path, diff) {
 }
 
 function leftAloneTable(path, jobs) {
-  return h("div", { class: "table-wrap", role: "region", tabindex: "0", "aria-label": tr("Jobs left alone in {path}", { path }) },
+  return wrapTable(tr("Jobs left alone in {path}", { path }),
     h("table", {},
       h("caption", { class: "visually-hidden" }, tr("Jobs left alone in {path}", { path })),
       h("thead", {}, h("tr", {},
@@ -438,7 +448,7 @@ export default {
     // 1. Permissions.
     const permRows = new Map(Object.entries(permissionNames).map(([name, label]) => [name, h("tr", {},
       h("td", {}, tr(label)), h("td", {}, tr("Read and write")), h("td", {}, "—"))]));
-    const permTable = h("div", { class: "table-wrap", role: "region", tabindex: "0", "aria-label": tr("GitHub App permissions") },
+    const permTable = wrapTable(tr("GitHub App permissions"),
       h("table", {},
         h("caption", { class: "visually-hidden" }, tr("GitHub App permissions")),
         h("thead", {}, h("tr", {},
@@ -496,7 +506,7 @@ export default {
     const openButton = button("Open pull request", () => void openPullRequest(), { primary: true });
     const openOutput = statusLine();
 
-    const previewBlock = block("3. Preview", {}, h("div", { "aria-live": "polite" }, previewBody));
+    const previewBlock = block("3. Preview", {}, previewBody);
     previewBlock.hidden = true;
     const openBlock = block("4. Open pull request", {}, openSummary, openHint, h("div", { class: "form-actions" }, openButton), openOutput);
     openBlock.hidden = true;

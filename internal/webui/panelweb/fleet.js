@@ -32,7 +32,7 @@ export function jobActionButtons(ctx, job, done) {
       const question = kind === "cancel"
         ? "Cancel job #{id} in Runquill? It is marked failed and no runner starts for it. The run stays queued on GitHub until you cancel it there."
         : "Retry job #{id} now? Runquill tries to start a runner on its next pass.";
-      if (!await ctx.confirm(tr(question, { id: job.id }), label)) return;
+      if (!await ctx.confirm(tr(question, { id: job.id }), label, { danger: kind === "cancel" })) return;
       control.disabled = true;
       try {
         await ctx.api.post("./api/jobs/" + encodeURIComponent(job.id) + "/" + kind);

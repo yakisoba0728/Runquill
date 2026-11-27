@@ -10,6 +10,8 @@
 //     update(snapshot) {},         // optional: each new fleet snapshot while mounted
 //     unmount() {},                // optional: stop timers and requests
 //     params(search) {},           // optional: deep links (see below)
+//     canLeave() {},               // optional: false (or a promise of it) keeps
+//                                  // the screen open, e.g. for unsaved edits
 //     commands(ctx) { return []; },// optional: extra command palette entries
 //   };
 //
@@ -28,7 +30,7 @@
 //                   whose default export maps "GET /api/..." to (query, body) => data;
 //                   everything else is refused.
 //   ctx.refresh()   fetch a fresh snapshot now (after a change)
-//   ctx.toast(text, state), ctx.confirm(text, confirmLabel), ctx.navigate(id, params)
+//   ctx.toast(text, state), ctx.confirm(text, confirmLabel, { danger }), ctx.navigate(id, params)
 //   ctx.params()    URLSearchParams of the hash query, e.g. #/hosts?host=local
 //
 // Deep links: a route may carry a query (#/queue?job=4828). The command
@@ -178,6 +180,16 @@ async function route(focus) {
   if (location.hash && !match) return; // an in-page anchor, not a route
   const visible = routes.filter(allowed);
   const next = visible.find((candidate) => candidate.id === match?.[1]) || visible[0];
+  if (active && active.route !== next && typeof active.view.canLeave === "function") {
+    const leaving = active;
+    let stay = false;
+    try { stay = !await leaving.view.canLeave(); } catch (error) { console.error(error); }
+    if (active !== leaving) return;
+    if (stay) {
+      history.replaceState(null, "", "#/" + leaving.route.id);
+      return;
+    }
+  }
   if (!match || match[1] !== next.id) history.replaceState(null, "", "#/" + next.id);
   const params = hashQuery();
   for (const link of $("nav").querySelectorAll("a")) {
@@ -246,6 +258,7 @@ const source = (() => {
   let stream = null;
   let timer = null;
   let watchdog = 0;
+  let quiet = 0;
   let failures = 0;
   let retryStreamAt = 0;
   let stopped = true;
@@ -264,6 +277,7 @@ const source = (() => {
     stream = null;
     clearTimeout(timer);
     clearTimeout(watchdog);
+    clearTimeout(quiet);
     watchdog = 0;
   }
 
@@ -281,8 +295,9 @@ const source = (() => {
     stream = events;
     events.addEventListener("open", () => {
       clearTimeout(watchdog);
+      clearTimeout(quiet);
       watchdog = 0;
-      setConnection("ok", "Live");
+      if (connection.label !== "Live") setConnection("ok", "Live");
     });
     events.addEventListener("snapshot", (event) => {
       try { receive(JSON.parse(event.data)); } catch (error) { console.error(error); }
@@ -294,8 +309,12 @@ const source = (() => {
       // The server ends each stream after ten minutes; EventSource reconnects
       // by itself. Only a reconnect that keeps failing counts as lost. Each
       // failed retry fires error again, so the deadline runs from the first.
-      setConnection("waiting", "Reconnecting");
+      // The status line is a live region, so a routine reconnect that opens
+      // within a few seconds is not announced at all.
       if (watchdog) return;
+      quiet = setTimeout(() => {
+        if (stream === events && events.readyState !== EventSource.OPEN) setConnection("waiting", "Reconnecting");
+      }, 4000);
       watchdog = setTimeout(() => {
         watchdog = 0;
         if (stream === events && events.readyState !== EventSource.OPEN) fallback();
@@ -306,6 +325,7 @@ const source = (() => {
   function fallback() {
     stream?.close();
     stream = null;
+    clearTimeout(quiet);
     clearTimeout(watchdog);
     watchdog = 0;
     retryStreamAt = Date.now() + 60000;
@@ -664,12 +684,32 @@ async function startDemo() {
   scenario($("scenario").value);
 }
 
+// A refused GitHub sign-in returns here with a fixed reason code
+// (panel_access.go signInFailed); it is shown once and dropped from the address.
+const signInReasons = {
+  expired: "Your sign-in expired. Continue with GitHub to try again.",
+  cancelled: "Sign-in was cancelled or already used. Continue with GitHub to try again.",
+  github: "Could not verify the GitHub login. Try again.",
+  not_enrolled: "Your GitHub account is not enrolled in this Runquill panel.",
+  unavailable: "Could not start a panel session.",
+};
+
+function signInReason() {
+  const url = new URL(location.href);
+  const code = url.searchParams.get("signin");
+  if (code == null) return "";
+  url.searchParams.delete("signin");
+  history.replaceState(null, "", url);
+  return Object.hasOwn(signInReasons, code) ? signInReasons[code] : "";
+}
+
 async function startLive() {
+  const reason = signInReason();
   try {
     user = await request("./api/me");
   } catch (error) {
     if (error.status !== 401) signedOut("The panel could not check your session. Try again later.");
-    else signedOut("");
+    else signedOut(reason);
     return false;
   }
   $("who").replaceChildren(h("strong", {}, "@" + user.login), " ", roleLabel(user.role));

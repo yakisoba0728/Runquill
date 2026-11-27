@@ -171,6 +171,8 @@ type statusHost struct {
 	// Warm counts idle warm runners on the host; WarmTarget is its pool's warm setting.
 	Warm       int `json:"warm,omitempty"`
 	WarmTarget int `json:"warm_target,omitempty"`
+	// LastSeen is when the panel last reached an offline host; only the panel snapshot sets it.
+	LastSeen *time.Time `json:"last_seen,omitempty"`
 }
 
 type statusJob struct {
