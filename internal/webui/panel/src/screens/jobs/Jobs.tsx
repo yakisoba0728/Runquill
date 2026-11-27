@@ -15,6 +15,7 @@ import { stratum } from "../../i18n/stratum";
 import { live as liveStore, useLive } from "../../live";
 import { format, navigate, setParams, withParams, type Route } from "../../router";
 import type { HistoryJob, Job } from "../../types";
+import { refocus } from "../../dialogs";
 import { can } from "../../session";
 import { Diagnose } from "./Diagnose";
 import { historyReason, JobPane, outcomeStatus } from "./JobDetail";
@@ -116,6 +117,7 @@ export default function Jobs({ route }: { route: Route }) {
   const [round, setRound] = useState(0);
   const [diagnose, setDiagnose] = useState(false);
   const admin = can("admin");
+  const diagnoseButton = useRef<HTMLButtonElement>(null);
   const history = useHistory(route.params, tab === "history", round);
 
   const pools = useMemo(() => [...new Set([...(lists ? [...lists.waiting, ...lists.running, ...lists.cleaned] : []),
@@ -215,7 +217,7 @@ export default function Jobs({ route }: { route: Route }) {
   return (
     <Tabs value={tab} onValueChange={showTab}>
       <Page title={t("Jobs")} description={t("The live queue and the 7-day job history")} tabs={tabList}
-        actions={admin && <Button variant="secondary" onClick={() => setDiagnose(true)}>{t("Check repository")}</Button>}>
+        actions={admin && <Button ref={diagnoseButton} variant="secondary" onClick={() => setDiagnose(true)}>{t("Check repository")}</Button>}>
         <SplitView className="page-split" open={id !== null} onOpenChange={(next) => !next && close()} navigation={navigation} labels={labels.split}>
           <SplitView.List>
             <Tabs.Panels>
@@ -236,7 +238,10 @@ export default function Jobs({ route }: { route: Route }) {
           </SplitView.Pane>
         </SplitView>
       </Page>
-      {admin && <Diagnose open={diagnose} onOpenChange={setDiagnose} />}
+      {admin && <Diagnose open={diagnose} onOpenChange={(next) => {
+        setDiagnose(next);
+        if (!next) refocus(diagnoseButton.current); // opened from the palette, which is gone
+      }} />}
     </Tabs>
   );
 }

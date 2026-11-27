@@ -46,7 +46,7 @@ export function Diagnose({ open, onOpenChange }: { open: boolean; onOpenChange: 
               <Notice tone={result.ok ? "info" : "warning"} role="status">
                 <p>{t(result.ok ? "Repository check complete." : "Repository check needs attention.")}</p>
               </Notice>
-              <pre className="report" tabIndex={0} aria-label={t("Report")}>{result.report}</pre>
+              <pre className="report" tabIndex={0} role="region" aria-label={t("Report")}>{result.report}</pre>
             </>
           )}
         </Dialog.Body>

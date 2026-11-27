@@ -1,3 +1,5 @@
+import { createServer, request as forward } from "node:http";
+import type { AddressInfo } from "node:net";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { startLive, text, watchPage } from "./live";
 
@@ -137,6 +139,17 @@ test.describe("live panel", () => {
     await check.getByRole("button", { name: "Check repository" }).click();
     await expect(check.getByText("Repository check needs attention.")).toBeVisible();
     await expect(check.getByLabel("Report")).toContainText("Label: missing");
+    await page.keyboard.press("Escape");
+
+    // From the palette: closing the dialog returns focus to the header button, not to the gone palette.
+    await page.keyboard.press("ControlOrMeta+k");
+    await page.getByRole("combobox", { name: "Commands" }).fill("check repository");
+    await page.keyboard.press("Enter");
+    await expect(check).toBeVisible();
+    await expect(check.getByRole("textbox", { name: "GitHub repository" })).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(check).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Check repository" }).first()).toBeFocused();
   });
 
   test("viewer: no write controls and no Logs tab", async ({ page }) => {
@@ -163,6 +176,73 @@ test.describe("live panel", () => {
     await expect(page.getByText("2 lines")).toBeVisible();
   });
 
+  test("a follow stream: lines over time, pause, jump to latest, stop, and no stream after leaving the tab", async ({ page }) => {
+    // A same-origin front for the Go server (Chromium refuses a cross-port detour to loopback) that writes the runner
+    // log itself, a line at a time, as `docker logs --follow` does.
+    const closed: number[] = [];
+    let opened = 0;
+    const server = createServer((request, response) => {
+      if (!request.url!.startsWith("/api/runners/")) {
+        const upstream = forward({ host: "127.0.0.1", port: 18181, path: request.url, method: request.method, headers: request.headers }, (answer) => {
+          response.writeHead(answer.statusCode!, answer.headers);
+          answer.pipe(response);
+        });
+        request.pipe(upstream);
+        return;
+      }
+      const id = ++opened;
+      response.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
+      let n = 0;
+      const line = () => response.write(`2026-11-28T10:00:00.000000000Z line ${++n}\n`);
+      for (let i = 0; i < 60; i++) line();
+      const timer = setInterval(line, 50);
+      request.on("close", () => {
+        clearInterval(timer);
+        closed.push(id);
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as AddressInfo).port;
+    try {
+      await startLive(page);
+      await page.route("**/api/runners/runquill-demo-4826/logs?*", (route) => route.continue());
+      await page.goto(`http://127.0.0.1:${port}/#/runners/runquill-demo-4826/logs`);
+      const output = page.getByRole("region", { name: "Runner log output" });
+      await expect(page.getByRole("status").filter({ hasText: "Following new output." })).toBeVisible();
+      await expect(output).toContainText("line 70");
+
+      await page.getByRole("button", { name: "Pause" }).click();
+      await expect(page.getByText(/new lines waiting/)).toBeVisible();
+      const paused = await output.locator(".log-line").count();
+      await page.waitForTimeout(300);
+      expect(await output.locator(".log-line").count()).toBe(paused);
+      await page.getByRole("button", { name: "Resume" }).click();
+      await expect(page.getByText(/new lines waiting/)).toHaveCount(0);
+
+      // Scrolled up, new lines do not pull the view down; Jump to latest does.
+      await output.evaluate((element) => (element.scrollTop = 0));
+      await expect(page.getByRole("button", { name: "Jump to latest" })).toBeVisible();
+      await page.getByRole("button", { name: "Jump to latest" }).click();
+      await expect(page.getByRole("button", { name: "Jump to latest" })).toHaveCount(0);
+
+      await page.getByRole("button", { name: "Stop" }).click();
+      await expect(page.getByRole("status").filter({ hasText: "Stopped. The lines shown are kept." })).toBeVisible();
+      await expect.poll(() => closed).toEqual([1]);
+
+      await page.getByRole("button", { name: "Reconnect" }).click();
+      await expect(page.getByRole("status").filter({ hasText: "Following new output." })).toBeVisible();
+      await page.getByRole("tab", { name: "Details" }).click();
+      await expect.poll(() => closed).toEqual([1, 2]);
+      await page.getByRole("tab", { name: "Logs" }).click();
+      await expect.poll(() => opened).toBe(3);
+      await page.keyboard.press("Escape"); // closing the pane ends the stream too
+      await expect.poll(() => closed).toEqual([1, 2, 3]);
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
   test("REST failures: a notice, then 401 returns to sign-in", async ({ page }) => {
     await startLive(page);
     let status = 500;
@@ -172,6 +252,21 @@ test.describe("live panel", () => {
     status = 401;
     await page.getByRole("button", { name: "Try again" }).click();
     await expect(page.getByText("Your session ended. Sign in again to view the fleet.")).toBeVisible();
+  });
+
+  test("screens render without a snapshot and with one lacking fleet data", async ({ page }) => {
+    await startLive(page, "admin", {});
+    for (const screen of ["hosts", "jobs", "runners"]) {
+      await page.goto("./#/" + screen);
+      await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+      await page.waitForTimeout(300);
+      expect(await page.evaluate(() => 1 + 1)).toBe(2); // still responsive
+    }
+    await page.route("**/api/events", (route) => text(route, 503, "Unavailable."));
+    await page.route("**/snapshot", (route) => text(route, 503, "Unavailable."));
+    await page.goto("./#/hosts");
+    await expect(page.getByRole("status").filter({ hasText: "Connection lost" })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("heading", { level: 1, name: "Hosts" })).toBeVisible();
   });
 
   test("history: a loading state, then older pages", async ({ page }) => {

@@ -25,6 +25,7 @@ import type { ElasticReport, Host, ResourceReport } from "../../types";
 const labels = stratum();
 const enc = encodeURIComponent;
 const tabs = ["hosts", "pools", "resources", "elastic"] as const;
+const noHosts: Host[] = []; // one array, so memos keyed on the hosts hold while there are none
 type Tab = (typeof tabs)[number];
 
 // image_status is set only for local and ssh:// hosts while RUNQUILL_IMAGE_PULL is missing or always.
@@ -352,7 +353,7 @@ function HostPane({ name, host, cordon }: { name: string; host?: Host; cordon: R
 
 export default function Hosts({ route }: { route: Route }) {
   const fleet = useLive((s) => s.snapshot?.fleet);
-  const hosts = fleet?.hosts ?? [];
+  const hosts = fleet?.hosts ?? noHosts;
   const param = route.params.get("tab");
   const tab: Tab = tabs.includes(param as Tab) ? (param as Tab) : "hosts";
   const name = route.id ?? null;

@@ -12,12 +12,23 @@ interface Question {
   returnFocus?: HTMLElement | null;
 }
 
-type Asked = Question & { answer: (yes: boolean) => void; opener: Element | null };
+type Asked = Question & { answer: (yes: boolean) => void };
 let ask: ((question: Asked) => void) | null = null;
+
+/**
+ * After a dialog closes: when focus went nowhere because the element that opened it is gone or in a closed dialog still
+ * sliding out (the command palette), put it on fallback instead.
+ */
+export function refocus(fallback: HTMLElement | null | undefined) {
+  requestAnimationFrame(() => {
+    const active = document.activeElement;
+    if (!active || active === document.body || active.closest("dialog:not([open])")) fallback?.focus();
+  });
+}
 
 /** Resolves true when confirmed, false when cancelled or dismissed. */
 export function confirm(question: Question): Promise<boolean> {
-  return new Promise((answer) => (ask ? ask({ ...question, answer, opener: document.activeElement }) : answer(false)));
+  return new Promise((answer) => (ask ? ask({ ...question, answer }) : answer(false)));
 }
 
 export function ConfirmHost() {
@@ -40,11 +51,7 @@ export function ConfirmHost() {
         if (open) return;
         question.answer(false); // no effect after a confirm: a promise settles once
         setQuestion(null);
-        // The dialog returns focus to its opener. One that has gone since, or is in a closed dialog still sliding out
-        // (the palette), leaves focus nowhere.
-        const { opener, returnFocus } = question;
-        const gone = !opener?.isConnected || opener === document.body || !!opener.closest("dialog:not([open])");
-        if (returnFocus && gone) requestAnimationFrame(() => returnFocus.focus());
+        refocus(question.returnFocus);
       }}
     />
   );

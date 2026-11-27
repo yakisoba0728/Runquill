@@ -1,6 +1,6 @@
 // Browser tests (design §7.2) against the real Go server: `runquill panel --demo` serves the committed panelv2/ build
 // with the real CSP. Live-mode tests intercept /, /api/* and /snapshot (e2e/live.ts). Run `npm run build` first.
-// CI runs Chromium; `npx playwright test --project firefox --project webkit` by hand.
+// `npm run e2e` runs Chromium (not in CI yet, design §7.5); `npx playwright test` runs Firefox and WebKit too.
 import { defineConfig, devices } from "@playwright/test";
 
 const port = 18181;
