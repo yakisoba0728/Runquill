@@ -36,6 +36,7 @@ export default function SettingsScreen() {
   const [open, setOpen] = useState<string[]>([]);
   const [guard, setGuard] = useState(0);
   const leave = useRef<(() => void) | null>(null);
+  const focusing = useRef(false);
 
   const count = saved ? fleet.count + listChanges(saved.workers, workers) + listChanges(saved.pools, pools) : 0;
 
@@ -127,9 +128,20 @@ export default function SettingsScreen() {
       {settings && saved && (
         <form className="settings-form" aria-label={t("Operational settings")} onSubmit={(event) => event.preventDefault()}
           onInvalidCapture={(event) => {
-            // A closed pool cannot show or focus its invalid field: open it.
-            const key = (event.target as HTMLElement).closest<HTMLElement>("[data-pool]")?.dataset.pool;
-            if (key && !open.includes(key)) setOpen((keys) => [...keys, key]);
+            // A closed pool cannot show or focus its invalid field: open it, then focus the first such field once it shows.
+            const target = event.target as HTMLElement;
+            const key = target.closest<HTMLElement>("[data-pool]")?.dataset.pool;
+            if (!key || open.includes(key)) return;
+            setOpen((keys) => (keys.includes(key) ? keys : [...keys, key]));
+            if (focusing.current || target !== event.currentTarget.querySelector("input:invalid, textarea:invalid")) return;
+            focusing.current = true;
+            const focus = (tries: number) => requestAnimationFrame(() => {
+              if (target.checkVisibility() || !tries) {
+                focusing.current = false;
+                target.focus();
+              } else focus(tries - 1);
+            });
+            focus(30);
           }}>
           <FormSection title={t("Fleet")}>
             <Field label={t("Fleet slot limit")} required>

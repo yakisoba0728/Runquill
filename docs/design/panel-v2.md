@@ -25,35 +25,35 @@
 
 | 현재 기능 | 위치 | v2 위치 |
 | --- | --- | --- |
-| 화면 목록과 역할·샘플 표시 여부(`routes`) | `pw/app.js:61-74` | [§2.2](#22-화면과-역할별-표시) 표. 라우트 표는 `src/routes.ts` 하나에 둡니다. |
-| 볼 수 없는 화면·모르는 화면은 첫 화면으로 | `pw/app.js:176-187` | 같음. 라우터의 기본 동작. |
-| "본문으로 건너뛰기" 링크 | `pw/index.html:14`, `pw/app.js:104` | `AppShell`의 `<main>` 앞에 둡니다(Stratum에 없으면 로컬 한 줄). |
-| 좁은 화면 메뉴 버튼, Esc로 닫고 버튼으로 포커스 복귀 | `pw/app.js:132-146` | `AppShell` 폰 서랍(Escape·배경·스와이프로 닫힘, 포커스 복귀)이 대신합니다. |
-| 화면 전환 시 제목(`data-view-heading`)에 포커스, `document.title = "화면 · Runquill"` | `pw/app.js:216-222` | 라우터가 `PageHeader` 제목에 포커스를 주고 제목을 바꿉니다. |
-| 사이드바 개수: 대기 작업, 실행 중 러너, 끊긴 호스트(빨강) | `pw/app.js:415-430` | `Nav.Item`의 `badge`에 `Badge count`. 호스트는 `tone="danger"`. |
-| 연결 상태(Live·Polling·Reconnecting·Connection lost·Paused while hidden·Sample data), "N초 전 갱신" | `pw/index.html:44-47`, `pw/app.js:247-253,391-396` | `Nav.Footer`의 연결 표시(로컬 `LiveStatus`), 폰은 `AppShell barActions`. |
-| 상단 알림: 연결 끊김과 재시도 카운트다운(라이브 영역 아님), `fleet.docker_error`, `poll_failed` | `pw/app.js:398-413` | 본문 위 알림 띠(로컬 `Notice`). 같은 접근성 규칙(카운트다운은 낭독하지 않음). |
-| SSE `GET /api/events`, 실패 시 `GET /snapshot` 폴링(3초→최대 30초), 60초 뒤 스트림 재시도, 4초 넘게 끊기면 "Reconnecting", 10초면 폴링 전환, 숨은 탭은 연결 끊음 | `pw/app.js:255-389`, `docs/panel.md#live-updates` | `src/live.ts`로 동작을 그대로 옮김([§5.2](#52-실시간-스냅샷)). |
-| 명령 팔레트: ⌘K/Ctrl+K, 입력 칸 밖의 `/`, 화면 이동, 화면별 명령, 언어·테마, 새로 고침, 로그아웃, 입력했을 때만 러너·대기 작업·호스트 이동, 영어·한국어 둘 다 일치, 50개 제한, Page Up/Down | `pw/app.js:435-635` | Stratum `CommandPalette`. 차이는 [§8](#8-stratum에-없는-것) G7. |
-| 언어 전환 링크(`?lang=ko` 또는 `?lang=en`, `runquill-language`에 저장, 새로 고침) | `pw/i18n.js:1108-1118`, `pw/app.js:98-102` | 사용자 메뉴와 팔레트. 같은 쿼리와 저장 키. |
-| 테마 System·Light·Dark, `runquill-theme`에 저장, 첫 페인트 전에 적용(`runquill-login-theme`도 읽음) | `pw/theme.js`, `pw/app.js:87-96` | 같은 `theme.js`와 키. 사용자 메뉴 `Menu.RadioGroup`, 로그인 화면은 `SegmentedControl`. |
-| 사용자 표시(`@login` + 역할), 로그아웃(`POST /api/logout` 후 새로 고침) | `pw/index.html:57-58`, `pw/app.js:656-665` | `Nav.Footer` 사용자 `Menu`. |
-| 확인 대화상자(위험 동작은 빨강) | `pw/ui.js:427` | `ConfirmDialog`(`tone="danger"`). |
-| 알림 토스트(`#alerts` assertive, `#toasts` polite) | `pw/ui.js:469`, `pw/index.html:103-106` | `toast()` + `Toaster`. 실패는 `tone: "danger"`. |
-| "Source on GitHub" 링크 | `pw/app.js:127-128` | `Nav.Footer`. |
-| 화면 모듈을 불러오지 못하면 "이 화면을 불러올 수 없습니다. 페이지를 새로 고치세요." | `pw/app.js:206-214` | 화면마다 오류 경계. 해시가 붙은 청크는 매니저를 업그레이드하면 이름이 바뀌어, 업그레이드 전부터 열려 있던 탭에서 더 자주 일어납니다. 문구에 "매니저가 업데이트되었을 수 있습니다"와 [새로 고침]을 둡니다([§4](#4-화면별-와이어프레임) 상태 표). |
-| 로그인 화면: 제목, 안내, GitHub로 계속(`./auth/github`), 패널 주소, 언어·테마 | `pw/index.html:15-38` | [로그인 화면](#41-로그인). |
-| `?signin=CODE` 실패 이유 5개(`expired`, `cancelled`, `github`, `not_enrolled`, `unavailable`), 한 번 보여 주고 주소에서 지움 | `pw/app.js:689-704`, `app/panel_access.go:324-358` | 같음([§3.1](#31-로그인)). |
-| `GET /api/me`로 세션 확인. 401이면 로그인 화면, 다른 실패는 "세션을 확인할 수 없습니다" | `pw/app.js:706-719` | 같음. |
-| 어느 요청이든 401이면 세션 종료 안내와 함께 로그인 화면 | `pw/api.js:8-11,38-42`, `pw/app.js:651` | 같음(`api.ts`의 `onUnauthorized`). |
-| 샘플 패널: 시나리오 선택(First job, Webhook missed, Worker offline), 설명, 설치 링크(`README#install-a-public-release`), 시나리오가 가리키는 화면 열기 | `pw/index.html:62-72`, `pw/app.js:667-685`, `pw/demo.js` | 본문 위 샘플 띠(로컬 `Notice` + `Select`). 시나리오 초점은 새 주소로(`#/jobs/4831` 등). |
-| 샘플 패널에서는 쓰기 버튼을 숨김(`ctx.can`이 항상 false) | `pw/app.js:155-169` | 같음(`can()`이 샘플에서 false). |
+| 화면 목록과 역할·샘플 표시 여부(`routes`) | `pw/app.js:61-74` | ✅ 1단계. [§2.2](#22-화면과-역할별-표시) 표. 라우트 표는 `src/routes.ts` 하나에 둡니다. |
+| 볼 수 없는 화면·모르는 화면은 첫 화면으로 | `pw/app.js:176-187` | ✅ 1단계. 같음. 라우터의 기본 동작. |
+| "본문으로 건너뛰기" 링크 | `pw/index.html:14`, `pw/app.js:104` | ✅ 1단계. `AppShell`의 `<main>` 앞에 둡니다(Stratum에 없으면 로컬 한 줄). |
+| 좁은 화면 메뉴 버튼, Esc로 닫고 버튼으로 포커스 복귀 | `pw/app.js:132-146` | ✅ 1단계. `AppShell` 폰 서랍(Escape·배경·스와이프로 닫힘, 포커스 복귀)이 대신합니다. |
+| 화면 전환 시 제목(`data-view-heading`)에 포커스, `document.title = "화면 · Runquill"` | `pw/app.js:216-222` | ✅ 1단계. 라우터가 `PageHeader` 제목에 포커스를 주고 제목을 바꿉니다. |
+| 사이드바 개수: 대기 작업, 실행 중 러너, 끊긴 호스트(빨강) | `pw/app.js:415-430` | ✅ 1단계. `Nav.Item`의 `badge`에 `Badge count`. 호스트는 `tone="danger"`. |
+| 연결 상태(Live·Polling·Reconnecting·Connection lost·Paused while hidden·Sample data), "N초 전 갱신" | `pw/index.html:44-47`, `pw/app.js:247-253,391-396` | ✅ 1단계. `Nav.Footer`의 연결 표시(로컬 `LiveStatus`), 폰은 `AppShell barActions`. |
+| 상단 알림: 연결 끊김과 재시도 카운트다운(라이브 영역 아님), `fleet.docker_error`, `poll_failed` | `pw/app.js:398-413` | ✅ 1단계. 본문 위 알림 띠(로컬 `Notice`). 같은 접근성 규칙(카운트다운은 낭독하지 않음). |
+| SSE `GET /api/events`, 실패 시 `GET /snapshot` 폴링(3초→최대 30초), 60초 뒤 스트림 재시도, 4초 넘게 끊기면 "Reconnecting", 10초면 폴링 전환, 숨은 탭은 연결 끊음 | `pw/app.js:255-389`, `docs/panel.md#live-updates` | ✅ 1단계. `src/live.ts`로 동작을 그대로 옮김([§5.2](#52-실시간-스냅샷)). |
+| 명령 팔레트: ⌘K/Ctrl+K, 입력 칸 밖의 `/`, 화면 이동, 화면별 명령, 언어·테마, 새로 고침, 로그아웃, 입력했을 때만 러너·대기 작업·호스트 이동, 영어·한국어 둘 다 일치, 50개 제한, Page Up/Down | `pw/app.js:435-635` | ✅ 1단계(G7 차이는 [§8](#8-stratum에-없는-것)). Stratum `CommandPalette`. 차이는 [§8](#8-stratum에-없는-것) G7. |
+| 언어 전환 링크(`?lang=ko` 또는 `?lang=en`, `runquill-language`에 저장, 새로 고침) | `pw/i18n.js:1108-1118`, `pw/app.js:98-102` | ✅ 1단계. 사용자 메뉴와 팔레트. 같은 쿼리와 저장 키. |
+| 테마 System·Light·Dark, `runquill-theme`에 저장, 첫 페인트 전에 적용(`runquill-login-theme`도 읽음) | `pw/theme.js`, `pw/app.js:87-96` | ✅ 1단계. 같은 `theme.js`와 키. 사용자 메뉴 `Menu.RadioGroup`, 로그인 화면은 `SegmentedControl`. |
+| 사용자 표시(`@login` + 역할), 로그아웃(`POST /api/logout` 후 새로 고침) | `pw/index.html:57-58`, `pw/app.js:656-665` | ✅ 1단계. `Nav.Footer` 사용자 `Menu`. |
+| 확인 대화상자(위험 동작은 빨강) | `pw/ui.js:427` | ✅ 1단계. `ConfirmDialog`(`tone="danger"`). |
+| 알림 토스트(`#alerts` assertive, `#toasts` polite) | `pw/ui.js:469`, `pw/index.html:103-106` | ✅ 1단계. `toast()` + `Toaster`. 실패는 `tone: "danger"`. |
+| "Source on GitHub" 링크 | `pw/app.js:127-128` | ✅ 1단계. `Nav.Footer`. |
+| 화면 모듈을 불러오지 못하면 "이 화면을 불러올 수 없습니다. 페이지를 새로 고치세요." | `pw/app.js:206-214` | ✅ 1단계. 화면마다 오류 경계. 해시가 붙은 청크는 매니저를 업그레이드하면 이름이 바뀌어, 업그레이드 전부터 열려 있던 탭에서 더 자주 일어납니다. 문구에 "매니저가 업데이트되었을 수 있습니다"와 [새로 고침]을 둡니다([§4](#4-화면별-와이어프레임) 상태 표). |
+| 로그인 화면: 제목, 안내, GitHub로 계속(`./auth/github`), 패널 주소, 언어·테마 | `pw/index.html:15-38` | ✅ 1단계. [로그인 화면](#41-로그인). |
+| `?signin=CODE` 실패 이유 5개(`expired`, `cancelled`, `github`, `not_enrolled`, `unavailable`), 한 번 보여 주고 주소에서 지움 | `pw/app.js:689-704`, `app/panel_access.go:324-358` | ✅ 1·4단계(이유 5개의 e2e는 [§7.6](#76-4단계-관리-화면-확인-결과)). 같음([§3.1](#31-로그인)). |
+| `GET /api/me`로 세션 확인. 401이면 로그인 화면, 다른 실패는 "세션을 확인할 수 없습니다" | `pw/app.js:706-719` | ✅ 1단계. 같음. |
+| 어느 요청이든 401이면 세션 종료 안내와 함께 로그인 화면 | `pw/api.js:8-11,38-42`, `pw/app.js:651` | ✅ 1단계. 같음(`api.ts`의 `onUnauthorized`). |
+| 샘플 패널: 시나리오 선택(First job, Webhook missed, Worker offline), 설명, 설치 링크(`README#install-a-public-release`), 시나리오가 가리키는 화면 열기 | `pw/index.html:62-72`, `pw/app.js:667-685`, `pw/demo.js` | ✅ 1단계. 본문 위 샘플 띠(로컬 `Notice` + `Select`). 시나리오 초점은 새 주소로(`#/jobs/4831` 등). |
+| 샘플 패널에서는 쓰기 버튼을 숨김(`ctx.can`이 항상 false) | `pw/app.js:155-169` | ✅ 1단계. 같음(`can()`이 샘플에서 false). |
 
 ### 1.2 화면별
 
 | 현재 화면(주소) · 서버 권한 · 샘플 | 기능과 API | v2 위치 |
 | --- | --- | --- |
-| **Overview** `#/overview` · 스냅샷(`fleet:read`) · 샘플 있음 | 용량(실행 중, 대기 = 준비+재시도, 가장 긴 대기, 슬롯 사용 = 사용/한도, 여유·예약·미할당), 호스트 상태(전체·준비·오프라인·사용 불가·유지 보수, K8s면 "Runtime targets"), GitHub 연결(저장소 범위, 공개 저장소 허용, App 연결 증거, 마지막 웹훅, 마지막 폴링/실패), 첫 작업 체크리스트 3단계 + 설정 안내 링크(`README#verify-your-first-job`) + 첫 작업 GitHub 링크, 대기 작업 상위 8개와 "나머지는 대기열에서" (`pw/views/overview.js`) | **개요**. 같은 정보에 "주의 필요" 목록을 더합니다([§4.3](#43-개요)). |
+| **Overview** `#/overview` · 스냅샷(`fleet:read`) · 샘플 있음 | 용량(실행 중, 대기 = 준비+재시도, 가장 긴 대기, 슬롯 사용 = 사용/한도, 여유·예약·미할당), 호스트 상태(전체·준비·오프라인·사용 불가·유지 보수, K8s면 "Runtime targets"), GitHub 연결(저장소 범위, 공개 저장소 허용, App 연결 증거, 마지막 웹훅, 마지막 폴링/실패), 첫 작업 체크리스트 3단계 + 설정 안내 링크(`README#verify-your-first-job`) + 첫 작업 GitHub 링크, 대기 작업 상위 8개와 "나머지는 대기열에서" (`pw/views/overview.js`) | ✅ 1단계. **개요**. 같은 정보에 "주의 필요" 목록을 더합니다([§4.3](#43-개요)). |
 | **Queue** `#/queue`, `#/queue?job=ID` · 스냅샷 + `GET /api/jobs/{id}`(`fleet:read`) · 샘플 있음 | 대기·배정·정리됨 3개 목록, 저장소/작업 ID 검색, 풀 필터, 표(순서, 저장소, 작업, 풀+러너 OS, 상태+재시도 시각, 이유, 대기 시간, 호스트), 상세(상태, 발견 경로, 풀, 호스트, 러너, 라벨, OS, 이미지, 재시도 시각, 이유와 재시도 이유, 단계별 시간 막대, CPU·메모리, 관찰된 사건 타임라인, GitHub 링크), 상세가 선택한 작업을 따라 목록을 옮겨 다님, 사라지면 토스트 (`pw/views/queue.js:1-180`, `pw/views/jobinsight.js`) | ✅ 2단계. **작업** 탭 "대기", "실행 중", "정리됨" + 작업 상세 칸([§4.4](#44-작업)). |
 | 〃 재시도·취소 · `jobs:write`(operator) | `POST /api/jobs/{id}/retry`(재시도 예정 작업만), `POST /api/jobs/{id}/cancel`, 둘 다 확인 후, 끝나면 새로 고침 (`pw/fleet.js:25-55`) | ✅ 3단계. 작업 상세 칸 아래(`PaneFooter`)의 "지금 재시도"·"작업 취소"와 칸이 열려 있을 때의 팔레트 명령. ⏳ 대기 탭 행의 `Menu`는 5단계로 넘깁니다([§7.5](#75-3단계-operator-동작-확인-결과), [§7.6](#76-4단계-관리-화면-확인-결과)). |
 | 〃 "Missing a job?" 저장소 점검 · `admin` | `POST /api/diagnose {repository}`, 보고서 `<pre>`. admin이 아니면 `runquill diagnose OWNER/REPO` 안내만 (`pw/views/queue.js:190-206`). 샘플에서는 숨김 | ✅ 2·3단계. 안내 문구(`runquill diagnose OWNER/REPO`)는 대기 탭이 비었을 때 모든 역할에 보입니다. admin에게는 **작업** 머리글 동작과 빈 대기 탭의 "저장소 점검" 버튼, 팔레트 명령이 같은 `Dialog`(`POST`, 10초)를 엽니다. 샘플에서는 숨김. |
@@ -1007,7 +1007,7 @@ React·ReactDOM과 Stratum JS의 압축 크기는 구현하면서 빌드 결과�
 | --- | --- | --- |
 | 첫 화면(`index.html` + 진입 청크 + 정적으로 부르는 공유 청크 + CSS) | 133.8 KB | ≤ 150 KB |
 | CSS | 28.7 KB | ≤ 35 KB |
-| 설정 화면 청크 | 7.0 KB | ≤ 30 KB |
+| 설정 화면 청크 | 7.1 KB | ≤ 30 KB |
 | 팀 · API 토큰 · 감사 기록 화면 청크 | 2.0 KB · 1.8 KB · 1.6 KB | 각 ≤ 30 KB |
 | 백업 화면 청크 | 3.1 KB | ≤ 30 KB |
 | 워크플로 이전 화면 청크(`DiffView` 포함) | 5.5 KB | ≤ 30 KB |
@@ -1290,7 +1290,7 @@ lockfile에는 Linux용 `@rolldown/binding-linux-*`와 `lightningcss-linux-*`가
     - 저장소를 제한하지 않으면 `repositories: null`입니다.
     - `host_limits`에는 값이 있는 워커만 넣습니다.
     - 러너 OS 이름(형식, 64개)을 검사하고 풀 이름 중복을 거부합니다.
-  - 저장 실패(위 검사와 서버 문장, `revision` 충돌 포함)는 `SaveBar`의 오류 톤에 문장으로 나오고, 고친 값은 그대로 남습니다. 네이티브 검사(필수, 풀 이름 패턴, 숫자 범위)는 요청 전에 막고 첫 칸에 포커스를 줍니다. 접힌 풀 안의 잘못된 칸은 그 풀을 엽니다.
+  - 저장 실패(위 검사와 서버 문장, `revision` 충돌 포함)는 `SaveBar`의 오류 톤에 문장으로 나오고, 고친 값은 그대로 남습니다. 네이티브 검사(필수, 풀 이름 패턴, 숫자 범위)는 요청 전에 막고 첫 칸에 포커스를 줍니다. 첫 잘못된 칸이 접힌 풀 안에 있으면 그 풀을 열고, 칸이 보이게 된 뒤 포커스를 줍니다.
   - `agent://` 워커는 읽기 전용이고 제거할 수 없습니다. 워커·풀 제거는 이름이 있을 때 위험 확인을 거치고, 포커스는 다음 항목이나 추가 버튼으로 갑니다.
   - "저장된 설정 불러오기"(머리글과 팔레트)는 변경이 있으면 위험 확인을 거칩니다. `backend`가 `docker`가 아니면 v1처럼 워커와 풀 섹션을 숨깁니다(값은 그대로 저장).
 - **떠나기 가드**(`router.ts`의 `useLeaveGuard`). 설정 화면에 저장하지 않은 변경이 있으면, 다른 화면으로 가는 이동이 막힙니다. 링크, 팔레트, 뒤로 가기 모두 해당합니다. 주소는 `replaceState`로 되돌리고, `SaveBar`가 흔들리며 "변경 N건을 저장하지 않아 이동하지 않았습니다"와 "버리고 이동"을 보입니다. "버리고 이동"은 값을 되돌리고 막혔던 주소로 갑니다. 같은 화면 안의 쿼리 변경은 막지 않습니다.
@@ -1308,13 +1308,15 @@ lockfile에는 Linux용 `@rolldown/binding-linux-*`와 `lightningcss-linux-*`가
 **확인한 것.**
 
 - `npm run typecheck`, `npm test`(81개), `npm run build`(두 번 빌드해 `diff -r` 같음), `npm run size`, `go vet ./...`, `go test ./...`. `TestPanelV2SamplePanelIsReadOnly`와 Go 번역 테스트도 통과했습니다.
-- **Playwright e2e**(`npx playwright test`, 29개 × Chromium·Firefox·WebKit = 87개 통과). 새 파일 `e2e/admin.e2e.ts`(16개)는 모두 `startLive(page, role, snapshot)`로 라이브 모드를 띄웁니다.
+- **Playwright e2e**(`npx playwright test`, 33개 × Chromium·Firefox·WebKit = 98개 통과, WebKit에서 1개 건너뜀). 새 파일 `e2e/admin.e2e.ts`(20개)는 모두 `startLive(page, role, snapshot)`로 라이브 모드를 띄웁니다.
   - 로그인 실패 이유 5개(한 번 보이고 주소에서 지움, 다시 불러오면 없음)와 모르는 코드.
   - 저장 안 한 변경 가드: 탐색 링크·팔레트·뒤로 가기가 모두 막히고 값이 남습니다. 머문 채 다시 고치면 경고가 사라지고, "버리고 이동"이 막혔던 화면을 엽니다.
   - 설정 저장 왕복: 편집기에 없는 필드 보존과 `privileged` 부재를 확인합니다. 서버 400 문장이 저장 바에 나오고 값이 남습니다. ⌘S 저장 뒤 가드가 풀립니다. 네이티브 검사 실패는 요청을 보내지 않습니다.
+  - 키보드: 접힌 풀 안의 잘못된 칸으로 저장하면 풀이 열리고 그 칸에 포커스가 갑니다. 워커 제거 확인은 Esc로 닫으면 제거 버튼으로, 확인하면 다음 워커의 편집 가능한 칸으로 포커스가 갑니다. 폰 폭에서 diff 영역에 포커스가 가고 →로 가로 스크롤합니다(WebKit은 macOS Safari처럼 포커스된 넘침 상자를 화살표로 스크롤하지 않아 이 확인만 건너뜀).
   - 토큰 한 번 표시(viewer 범위 제한, 포커스, 숨기기 뒤 페이지에 값 없음, 화면을 떠났다 오면 없음).
   - 팀 역할 변경(확인 → `PUT {role, disabled}` → 토스트).
   - 감사 필터의 주소와 이전 페이지.
+  - 백업 검증을 시작하고 개요로 갔다가 돌아오면 진행 중 문구가 보이고, 끝나면 결과와 새 상태가 보입니다.
   - 백업 다운로드: 세 엔진 모두 실제 CSP 아래에서 `download` 이벤트와 파일 이름 `runquill-queue-backup.sqlite3`을 확인했습니다.
   - 이전 미리보기(검증 포커스, 요청 본문, diff 줄 번호, 권한이 빠지면 열기 비활성, 입력 변경 시 미리보기 제거).
   - 샘플 패널의 백업·이전 fixture, 쓰기 버튼 없음, `/api/` 요청 0건, 샘플에 없는 관리 화면은 개요로 이동.
@@ -1334,7 +1336,9 @@ lockfile에는 Linux용 `@rolldown/binding-linux-*`와 `lightningcss-linux-*`가
 - **`useFormDirty.commit(next)`는 기준값만 바꿉니다.** 불러오기와 저장 뒤에는 `commit`과 `setValues`를 같이 부릅니다. 한 응답에서 만든 draft 하나를 기준과 현재 값에 함께 써서, 불러온 직후 변경 수가 0입니다(단위 테스트).
 - **팔레트 명령 목록은 안정된 값이어야 합니다**(§7.5). 감사 기록의 "새로 고침"처럼 `reload` 함수에 기대는 명령은 ref로 감쌌습니다.
 - **단계 표시.** §4.11의 `Steps` 머리띠 대신 "1. 권한"…"4. PR 열기" 블록 제목을 씁니다(v1과 같은 문장). 상태는 블록 안 `Badge`와 상태 줄이 보입니다.
-- **새 문장 10개.** 저장 바 문구 8개("{n} unsaved changes", "Discard and leave" 등), "Read-only: set in the deployment.", "Viewers can create read-only tokens."입니다. 나머지는 v1 문장입니다.
+- **접힌 `Accordion` 안의 잘못된 칸.** 닫힌 패널은 `visibility: hidden`이라, Stratum `Field`가 제출 때 그 칸에 포커스를 주지 못합니다. 콘솔 오류는 없었지만 포커스가 어디에도 가지 않았습니다. 설정 화면이 `invalid` 이벤트에서 풀을 열고, 칸이 보이게 되면(`checkVisibility`) 포커스를 줍니다. 첫 잘못된 칸일 때만 그렇게 합니다.
+- **이전의 자동 재미리보기.** v1처럼 손으로 미리 볼 때마다 "한 번만 자동으로 다시 미리 보기" 표시를 초기화합니다.
+- **새 문장 10개.** 저장 바 문구 8개("Unsaved changes: {n}", "Discard and leave" 등. 영어에서 수의 일치를 피하려고 숫자를 콜론 뒤에 둠), "Read-only: set in the deployment.", "Viewers can create read-only tokens."입니다. 나머지는 v1 문장입니다.
 - **서버 변경 없음.** Go 코드는 바꾸지 않았습니다.
 
 **확인하지 않은 것.**
@@ -1343,6 +1347,7 @@ lockfile에는 Linux용 `@rolldown/binding-linux-*`와 `lightningcss-linux-*`가
 - 30분짜리 백업 검증과 큰 큐 백업의 진행률(Content-Length가 있을 때의 퍼센트)은 작은 응답으로만 확인했습니다.
 - `stale`·`branch_exists` 분기는 v1 코드를 옮겼고 e2e로 돌리지 않았습니다.
 - 눈으로 본 확인은 Chromium만 했습니다. 스크린 리더로 듣지는 않았습니다.
+- 확인 뒤 포커스 복귀는 워커 제거만 e2e로 봤습니다. 풀 제거, 토큰 폐기, 역할 변경, 사용 중지는 같은 `confirm({ returnFocus })` 경로입니다.
 
 **5단계에 넘기는 것.**
 

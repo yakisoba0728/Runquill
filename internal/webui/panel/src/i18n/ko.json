@@ -1056,14 +1056,14 @@
   "Report": "보고서",
   "Retry job #{id} now": "작업 #{id} 지금 재시도",
   "Cancel job #{id}": "작업 #{id} 취소",
-  "{n} unsaved changes": "저장하지 않은 변경 {n}건",
-  "{n} unsaved changes kept you here. Save them, or discard them and leave.": "변경 {n}건을 저장하지 않아 이동하지 않았습니다. 저장하거나 버리고 이동하세요.",
   "Saving…": "저장하는 중…",
-  "Not saved: {error} Your {n} changes are kept.": "저장하지 못했습니다: {error} 변경 {n}건은 그대로 있습니다.",
   "Save": "저장",
   "Revert": "되돌리기",
   "Discard and leave": "버리고 이동",
   "Unsaved changes": "저장하지 않은 변경",
   "Read-only: set in the deployment.": "읽기 전용: 배포에서 설정합니다.",
-  "Viewers can create read-only tokens.": "뷰어는 읽기 전용 토큰만 만들 수 있습니다."
+  "Viewers can create read-only tokens.": "뷰어는 읽기 전용 토큰만 만들 수 있습니다.",
+  "Unsaved changes: {n}": "저장하지 않은 변경 {n}건",
+  "Unsaved changes ({n}) kept you here. Save them, or discard them and leave.": "변경 {n}건을 저장하지 않아 이동하지 않았습니다. 저장하거나 버리고 이동하세요.",
+  "Not saved: {error} Unsaved changes ({n}) are kept.": "저장하지 못했습니다: {error} 변경 {n}건은 그대로 있습니다."
 }

@@ -66,11 +66,11 @@ test.describe("settings", () => {
     await page.goto("./#/settings");
     const limit = page.getByRole("spinbutton", { name: "Fleet slot limit" });
     await limit.fill("6");
-    await expect(saveBar(page)).toContainText("1 unsaved changes");
+    await expect(saveBar(page)).toContainText("Unsaved changes: 1");
 
     // A nav link: the move is undone and the bar says why.
     await page.getByRole("link", { name: "Jobs" }).click();
-    await expect(saveBar(page)).toContainText("1 unsaved changes kept you here.");
+    await expect(saveBar(page)).toContainText("Unsaved changes (1) kept you here.");
     await expect(page).toHaveURL(/#\/settings$/);
     await expect(page.getByRole("heading", { level: 1, name: "Settings" })).toBeVisible();
 
@@ -85,7 +85,7 @@ test.describe("settings", () => {
 
     // Staying and editing again clears the warning; leaving again offers discard.
     await limit.fill("7");
-    await expect(saveBar(page)).toContainText("1 unsaved changes");
+    await expect(saveBar(page)).toContainText("Unsaved changes: 1");
     await expect(saveBar(page)).not.toContainText("kept you here");
     await page.getByRole("link", { name: "Hosts" }).click();
     await saveBar(page).getByRole("button", { name: "Discard and leave" }).click();
@@ -108,7 +108,7 @@ test.describe("settings", () => {
     await page.goto("./#/settings");
     await page.getByRole("spinbutton", { name: "Fleet slot limit" }).fill("6");
     await page.getByRole("spinbutton", { name: "Warm runners per host" }).fill("2");
-    await expect(saveBar(page)).toContainText("2 unsaved changes");
+    await expect(saveBar(page)).toContainText("Unsaved changes: 2");
     await saveBar(page).getByRole("button", { name: "Save" }).click();
     await expect(saveBar(page)).toContainText("Not saved: worker pool build: warm runners cannot be combined with a shared build cache");
     await expect(page.getByRole("spinbutton", { name: "Warm runners per host" })).toHaveValue("2");
@@ -141,6 +141,40 @@ test.describe("settings", () => {
     await saveBar(page).getByRole("button", { name: "Save" }).click();
     await expect(page.getByRole("textbox", { name: "Pool name" }).last()).toBeFocused();
     expect(live.requests.filter((request) => request.method() === "PUT")).toHaveLength(0);
+  });
+});
+
+test.describe("settings keyboard", () => {
+  test("an invalid field in a closed pool opens it and takes focus", async ({ page }) => {
+    const live = await startLive(page, "admin");
+    await page.route("**/api/settings", (route) => route.fulfill({ json: settings() }));
+    await page.goto("./#/settings");
+    const name = page.getByRole("textbox", { name: "Pool name" });
+    await name.fill("");
+    await page.getByRole("button", { name: "New pool" }).click(); // the pool's header follows its (now empty) name
+    await expect(name).toBeHidden();
+    await saveBar(page).getByRole("button", { name: "Save" }).click();
+    await expect(name).toBeVisible();
+    await expect(name).toBeFocused();
+    expect(live.requests.filter((request) => request.method() === "PUT")).toHaveLength(0);
+  });
+
+  test("removing a worker: cancel returns focus, confirm moves it to the next worker", async ({ page }) => {
+    await startLive(page, "admin");
+    await page.route("**/api/settings", (route) => route.fulfill({ json: settings() }));
+    await page.goto("./#/settings");
+    const remove = page.getByRole("button", { name: "Remove worker local" });
+    await remove.focus();
+    await page.keyboard.press("Enter");
+    await expect(confirmDialog(page)).toContainText("Remove the worker local from these settings?");
+    await page.keyboard.press("Escape");
+    await expect(remove).toBeFocused();
+    await page.keyboard.press("Enter");
+    await confirmDialog(page).getByRole("button", { name: "Remove" }).click();
+    await expect(page.getByRole("textbox", { name: "Worker address" }).first()).toHaveValue("agent://edge-1");
+    // The next worker is an outbound agent: its address is read-only, so its slot limit takes focus.
+    await expect(page.getByRole("spinbutton", { name: "Worker slot limit" }).first()).toBeFocused();
+    await expect(saveBar(page)).toContainText("Unsaved changes: 1");
   });
 });
 
@@ -238,6 +272,40 @@ test.describe("audit, backups and migration", () => {
     await page.getByRole("button", { name: "Download queue backup" }).click();
     expect((await download).suggestedFilename()).toBe("runquill-queue-backup.sqlite3");
     await expect(page.getByRole("status").filter({ hasText: "Queue backup downloaded." })).toBeVisible();
+  });
+
+  test("backups: a verification keeps running after leaving and shows its result on return", async ({ page }) => {
+    await startLive(page, "admin");
+    const status = { scheduled: true, interval_seconds: 86400, keep: 7, directory: "/b", sealing: false, remote: { configured: false }, last: {} } as Record<string, unknown>;
+    let release = () => {};
+    const done = new Promise<void>((resolve) => (release = resolve));
+    await page.route("**/api/backups/status", (route) => route.fulfill({ json: status }));
+    await page.route("**/api/backups/verify", async (route) => {
+      await done;
+      status.verification = { name: "runquill-queue-1.sqlite3", checked_at: new Date().toISOString(), ok: true };
+      return route.fulfill({ json: status.verification });
+    });
+    await page.goto("./#/backups");
+    await page.getByRole("button", { name: "Verify latest backup" }).click();
+    await page.getByRole("link", { name: "Overview" }).click();
+    await expect(page.getByRole("heading", { level: 1, name: "Overview" })).toBeVisible();
+    await page.getByRole("link", { name: "Backups" }).click();
+    await expect(page.getByRole("status").filter({ hasText: "Verifying the latest local backup…" })).toBeVisible();
+    release();
+    await expect(page.getByRole("status").filter({ hasText: "The latest backup was verified." })).toBeVisible();
+    await expect(page.getByText("runquill-queue-1.sqlite3")).toBeVisible();
+  });
+
+  test("migration: the diff scrolls sideways from the keyboard on a phone", async ({ page, browserName }) => {
+    // WebKit (as macOS Safari) does not scroll a focused overflow box with the arrow keys; it still takes focus.
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("./#/migrate");
+    const diff = page.getByRole("region", { name: "Changes in .github/workflows/ci.yml" });
+    await diff.focus();
+    await expect(diff).toBeFocused();
+    test.skip(browserName === "webkit", "WebKit does not scroll a focused overflow box with the arrow keys");
+    for (let i = 0; i < 6; i++) await page.keyboard.press("ArrowRight");
+    await expect.poll(() => diff.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
   });
 
   test("migration: a preview shows each file's diff", async ({ page }) => {

@@ -1,0 +1,1 @@
+import{ht as e,mt as t}from"./chunk-Cu-fhH-I.js";var n=t();function r({variant:t=`text`,className:r,...i}){return(0,n.jsx)(`span`,{"aria-hidden":!0,className:e(`skeleton`,t!==`text`&&`skeleton-${t}`,r),...i})}export{r as t};

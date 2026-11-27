@@ -143,6 +143,8 @@ export default function Migrate() {
   const [settingsPools, setSettingsPools] = useState<string[]>([]);
   const alive = useRef(true);
   useEffect(() => () => void (alive.current = false), []);
+  // One automatic re-preview per manual preview when the files changed under it (stale).
+  const retried = useRef(false);
 
   // Pools: the snapshot's hosts and, in a live panel, every configured pool (one may have no host yet).
   const hostPools = useLive((s) => (s.snapshot?.fleet?.hosts ?? []).map((host) => host.pool || "default").join("\n"));
@@ -165,7 +167,10 @@ export default function Migrate() {
     setBusy(true);
     setPreview(null);
     setOpened("");
-    if (!automatic) setOpenLine({});
+    if (!automatic) {
+      retried.current = false;
+      setOpenLine({});
+    }
     setFormLine({ text: t(sample ? "Loading the sample preview…" : "Reading workflow files from GitHub…") });
     try {
       const result = sample ? await request<Preview>("./api/migrate/preview")
@@ -226,7 +231,6 @@ export default function Migrate() {
   const ready = admin && !sample && !!sum && sum.changedJobs > 0;
   const missing = status.state === "ready" && status.missing.length > 0;
   const branch = preview ? branchPrefix + String(preview.result.hash || "").slice(0, 12) : "";
-  const retried = useRef(false);
 
   const open = async (button: HTMLElement) => {
     if (!preview?.request || !sum || busy) return;

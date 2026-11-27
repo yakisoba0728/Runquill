@@ -23,11 +23,11 @@ export const stratum = () => ({
   split: { close: t("Close"), back: t("Back to the list"), prev: t("Previous item"), next: t("Next item"), resize: t("Detail pane width") },
   search: { clearLabel: t("Clear search") },
   saveBar: {
-    dirty: (n: ReactNode) => fill("{n} unsaved changes", { n }),
-    guard: (n: ReactNode) => fill("{n} unsaved changes kept you here. Save them, or discard them and leave.", { n }),
+    dirty: (n: ReactNode) => fill("Unsaved changes: {n}", { n }),
+    guard: (n: ReactNode) => fill("Unsaved changes ({n}) kept you here. Save them, or discard them and leave.", { n }),
     saving: t("Saving…"),
     saved: t("Settings saved."),
-    error: (n: ReactNode, error: unknown) => fill("Not saved: {error} Your {n} changes are kept.", {
+    error: (n: ReactNode, error: unknown) => fill("Not saved: {error} Unsaved changes ({n}) are kept.", {
       n, error: error instanceof Error && error.message ? error.message : t("Request failed."),
     }),
     save: t("Save"),
