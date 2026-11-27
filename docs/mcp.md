@@ -15,6 +15,7 @@ Runquill exposes a read-only [Model Context Protocol](https://modelcontextprotoc
 | `usage_summary` | `window` (`24h` or `7d`), `group` (`day`, `repository`, `pool` or `host`) | Finished jobs, failures, runner time and queue wait. With `group`, also `series`: the same statistics per group, busiest first and at most 500, read like `GET /api/usage` over the whole UTC days `from` and `to` that contain the window. |
 | `elastic_decisions` | `limit` (1–200, default 20) | Recent [elastic limit](elastic-limits.md) decisions. |
 | `job_rightsizing` | `group` (`pool` or `job`), `days` (1–7, default 7) | CPU and memory peaks of recently finished jobs against their limits, memory kills and a verdict per resource, read like `GET /api/usage/rightsizing`. |
+| `pool_rightsizing` | `days` (1–7, default 7) | Per-pool CPU peaks in cores, memory peaks in MiB, out-of-memory kills and a verdict per resource for recently finished jobs. Uses the same report as `GET /api/usage/rightsizing?group=pool`. |
 
 Results come back as JSON text and as structured content. Repository, job and runner names come from GitHub users, so the server instructions tell the agent to treat them as data.
 
