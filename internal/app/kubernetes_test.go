@@ -27,11 +27,12 @@ import (
 type failingRunnerSecrets struct {
 	typed.SecretInterface
 	cancel context.CancelFunc
+	err    error
 }
 
 func (s failingRunnerSecrets) Create(context.Context, *core.Secret, meta.CreateOptions) (*core.Secret, error) {
 	s.cancel()
-	return nil, apierrors.NewBadRequest("fixture-credential")
+	return nil, s.err
 }
 
 type rollbackRunnerPods struct {
@@ -65,13 +66,24 @@ func TestKubernetesRollsBackPodWhenCredentialCreationIsCanceled(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			pods := &rollbackRunnerPods{deleteErr: deleteErr}
-			k := &kubeRunners{pods: pods, secrets: failingRunnerSecrets{cancel: cancel}}
+			k := &kubeRunners{pods: pods, secrets: failingRunnerSecrets{cancel: cancel, err: apierrors.NewBadRequest("fixture-credential")}}
 			err := k.startOn(ctx, kubeHost, "runquill-1-test", "fixture-credential")
 			if !pods.deleted || err == nil || !strings.Contains(err.Error(), "BadRequest") ||
 				strings.Contains(err.Error(), "fixture-credential") || (deleteErr != nil && !errors.Is(err, deleteErr)) {
 				t.Fatalf("cleanup attempted=%t, error=%v", pods.deleted, err)
 			}
 		})
+	}
+}
+
+func TestKubernetesLostCredentialReplyKeepsPod(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	pods := &rollbackRunnerPods{}
+	k := &kubeRunners{pods: pods, secrets: failingRunnerSecrets{cancel: cancel, err: context.Canceled}}
+	err := k.startOn(ctx, kubeHost, "runquill-1-test", "fixture-credential")
+	if pods.deleted || err == nil {
+		t.Fatalf("ambiguous credential creation: deleted=%t, error=%v", pods.deleted, err)
 	}
 }
 

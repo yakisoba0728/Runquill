@@ -39,14 +39,8 @@ func doctor(ctx context.Context, out io.Writer, repo string, asJSON bool) error 
 		checks = append(checks, doctorCheck{Name: name, OK: true, Level: level})
 	}
 	info := func(name string) { notice("info", name) }
+	warn := func(name string) { notice("warn", name) }
 	report := func(name string, err error) {
-		if errors.Is(err, errInvalidRegistryMirror) {
-			return // The dedicated mirror check emits the warning.
-		}
-		if _, invalid := errors.AsType[invalidWarmPoolError](err); invalid {
-			notice("warn", name+": "+err.Error())
-			return
-		}
 		check := doctorCheck{Name: name, OK: err == nil}
 		if err != nil {
 			check.Error = err.Error()
@@ -65,7 +59,7 @@ func doctor(ctx context.Context, out io.Writer, repo string, asJSON bool) error 
 	mirror, mirrorErr := registryMirror()
 	switch {
 	case mirrorErr != nil:
-		notice("warn", mirrorErr.Error())
+		warn(mirrorErr.Error())
 	case mirror == "":
 		info("registry mirror (RUNQUILL_REGISTRY_MIRROR): unset")
 	default:
@@ -88,7 +82,7 @@ func doctor(ctx context.Context, out io.Writer, repo string, asJSON bool) error 
 			fleet.check(ctx, report)
 		}
 	} else if env("RUNQUILL_BACKEND", "docker") == "docker" {
-		checkDockerFleet(ctx, cfg.runnerImage, mirror, report, info)
+		checkDockerFleet(ctx, cfg.runnerImage, mirror, report, info, warn)
 	} else {
 		runners, err := configureRunnerRuntime(cfg.runnerImage)
 		report("runner backend", err)
@@ -187,7 +181,7 @@ func checkPanelListener(ctx context.Context, addr string, cfg panelOAuthConfig) 
 	return nil
 }
 
-func checkDockerFleet(ctx context.Context, image, mirror string, report func(string, error), info func(string)) {
+func checkDockerFleet(ctx context.Context, image, mirror string, report func(string, error), info, warn func(string)) {
 	fleet, dockerErr := loadDockerFleet(image, env("RUNQUILL_DOCKER_HOSTS", "local"), mirror)
 	if dockerErr != nil {
 		report("Docker hosts", dockerErr)
@@ -196,7 +190,11 @@ func checkDockerFleet(ctx context.Context, image, mirror string, report func(str
 	_, limitErr := fleet.limits(os.Getenv("RUNQUILL_DOCKER_HOST_LIMITS"))
 	report("Docker host runner limits", limitErr)
 	pools, poolErr := fleet.configurePools(os.Getenv("RUNQUILL_WORKER_POOLS"))
-	report("Docker worker pools", poolErr)
+	if _, invalid := errors.AsType[invalidWarmPoolError](poolErr); invalid {
+		warn("Docker worker pools: " + poolErr.Error())
+	} else {
+		report("Docker worker pools", poolErr)
+	}
 	if poolErr == nil {
 		reportDoctorPools(pools, info)
 	}

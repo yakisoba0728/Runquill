@@ -291,6 +291,8 @@ func polledPages[T any](ctx context.Context, p *poller, path, key string) ([]T, 
 		if err := json.Unmarshal(page.items, &batch); err != nil {
 			return nil, fmt.Errorf("decode GitHub %s list: %w", key, err)
 		}
+		page.usedAt = time.Now()
+		p.cache[path] = page
 		items = append(items, batch...)
 		path = page.next
 	}
@@ -339,7 +341,5 @@ func (p *poller) page(ctx context.Context, path, key string) (pollPage, error) {
 			break
 		}
 	}
-	page.usedAt = time.Now()
-	p.cache[path] = page
 	return page, nil
 }

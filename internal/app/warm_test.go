@@ -30,6 +30,7 @@ func warmTestFleet(t *testing.T, local, remote string) (*dockerFleet, func() []s
 	t.Setenv("WARM_EXEC_FAIL", "")
 	t.Setenv("WARM_FAIL_COMMAND", "")
 	t.Setenv("WARM_REMOVE_FAIL", "")
+	t.Setenv("WARM_START_APPLIED_FAIL", "")
 	for path, content := range map[string]string{ps: local, ps + ".remote": remote} {
 		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 			t.Fatal(err)
@@ -53,6 +54,17 @@ case "$1" in
     esac ;;
   exec) if [ -n "$WARM_EXEC_FAIL" ]; then exit 1; fi; cat > "$WARM_LOG.jit" ;;
   cp) cat > /dev/null ;;
+  start)
+    if [ -n "$WARM_START_APPLIED_FAIL" ]; then
+      touch "$WARM_LOG.running"
+      echo 'lost start response' >&2
+      exit 1
+    fi ;;
+  rm)
+    if [ -f "$WARM_LOG.running" ]; then
+      if [ "$2" != -f ]; then echo 'runner is running' >&2; exit 1; fi
+      rm "$WARM_LOG.running"
+    fi ;;
   rename)
     if [ -n "$WARM_RENAME_APPLIED_FAIL" ]; then
       printf '%s\n' "$3" > "$WARM_LOG.renamed"
@@ -289,10 +301,22 @@ func TestDockerFailedStartRemovesCreatedRunner(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), "failed "+step) {
 				t.Fatalf("start error: %v", err)
 			}
-			if got := slices.Contains(read(), "rm -f -v runner"); got != (step != "create") || got != strings.Contains(err.Error(), "failed rm") {
+			if got := slices.Contains(read(), "rm -v runner"); got != (step != "create") || got != strings.Contains(err.Error(), "failed rm") {
 				t.Fatalf("cleanup after %s: error %v, calls %q", step, err, read())
 			}
 		})
+	}
+}
+
+func TestDockerLostStartReplyKeepsRunningContainer(t *testing.T) {
+	fleet, _ := warmTestFleet(t, "", "")
+	t.Setenv("WARM_START_APPLIED_FAIL", "1")
+	err := fleet.startOn(t.Context(), "local", "runner", "test-jit")
+	if err == nil || !strings.Contains(err.Error(), "lost start response") {
+		t.Fatalf("start error: %v", err)
+	}
+	if _, err := os.Stat(os.Getenv("WARM_LOG") + ".running"); err != nil {
+		t.Fatalf("rollback removed a running container: %v", err)
 	}
 }
 
