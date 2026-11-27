@@ -122,7 +122,7 @@ function resourceColumns(hosts: Map<string, Host>, measured: boolean): Column<Re
     ) },
     { key: "capacity", header: t("Capacity"), align: "end", cell: (entry) => entry.cpus
       ? <>{cpus(entry.cpus)}<span className="block-sub">{bytes(entry.memory_bytes)}</span></> : notAvailable() },
-    { key: "slots", header: t("Slots used"), align: "end", cell: (entry) => {
+    { key: "slots", header: t("Slots used"), align: "end", width: "minmax(120px, 1fr)", cell: (entry) => {
       const host = hosts.get(entry.host);
       return host ? <Share used={host.occupied_slots + host.reserved_slots} total={host.slot_limit} text={number} label={t("Slots used")} /> : "—";
     } },
@@ -213,10 +213,10 @@ function Elastic() {
           <h3>{t("Recent decisions")}</h3>
           <DataTable className="rows-2" aria-label={t("Recent elastic decisions")} rows={data.decisions ?? []} getRowId={(d) => d.at + d.host + d.runner + d.resource}
             empty={<EmptyState title={t("No decisions yet.")} />} columns={[
-              { key: "at", header: t("Time"), align: "end", width: 110, cell: (d) => timeOfDay(d.at) },
+              { key: "at", header: t("Time"), align: "end", width: 130, cell: (d) => timeOfDay(d.at) },
               { key: "runner", header: t("Runner"), width: "minmax(180px, 1.5fr)", cell: (d) => <><span className="font-mono">{d.runner}</span><span className="block-sub">{d.host}</span></> },
               { key: "resource", header: t("Resource"), width: 100, cell: (d) => t(d.resource === "memory" ? "Memory" : "CPU") },
-              { key: "change", header: t("Change"), align: "end", cell: (d) => t("{from} → {to}", { from: amount(d.resource, d.from), to: amount(d.resource, d.to) }) },
+              { key: "change", header: t("Change"), align: "end", width: "minmax(170px, 1fr)", cell: (d) => t("{from} → {to}", { from: amount(d.resource, d.from), to: amount(d.resource, d.to) }) },
               { key: "reason", header: t("Reason"), width: "minmax(240px, 3fr)", cell: (d) => (
                 <>{d.reason ? serverText(d.reason) : "—"}{d.forced && <span className="block-sub">{t("Reclaimed at once to keep host guarantees.")}</span>}</>
               ) },

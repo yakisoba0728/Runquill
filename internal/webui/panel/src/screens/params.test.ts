@@ -19,6 +19,8 @@ describe("jobs address", () => {
     expect(pickTab(null, 3, lists)).toBe("cleaned");
     expect(pickTab(null, 9, lists)).toBe("history");
     expect(pickTab(null, 9, null)).toBe("waiting");
+    // A chosen tab wins over following the open job, so Waiting stays reachable while job 2 (running) is open.
+    expect(pickTab("waiting", 2, lists)).toBe("waiting");
   });
 
   it("builds the history query with since from now", () => {

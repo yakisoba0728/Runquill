@@ -31,7 +31,7 @@ const columns: Column<RunnerRow>[] = [
   { key: "name", header: t("Runner"), sticky: true, width: 220, cell: (runner) => <span className="font-mono">{runner.name}</span> },
   { key: "host", header: t("Host"), cell: (runner) => runner.host || "—" },
   { key: "pool", header: t("Pool"), cell: (runner) => poolName(runner.pool || runner.job?.pool) },
-  { key: "state", header: t("Runtime state"), width: 170, cell: (runner) => <RunnerState runner={runner} /> },
+  { key: "state", header: t("Runtime state"), width: 200, cell: (runner) => <RunnerState runner={runner} /> },
   // A start time, not a running duration, so rows stay unchanged between snapshots.
   { key: "provisioned", header: t("Provisioned"), align: "end", cell: (runner) => date(runner.job?.timing?.provisioned_at) },
   { key: "image", header: t("Runner image"), width: "minmax(200px, 2fr)", cell: (runner) => (

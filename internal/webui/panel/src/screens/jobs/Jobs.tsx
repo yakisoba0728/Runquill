@@ -106,7 +106,8 @@ function useHistory(params: URLSearchParams, active: boolean, round: number) {
 
 export default function Jobs({ route }: { route: Route }) {
   const snapshot = useLive((s) => s.snapshot);
-  const lists = useMemo(() => (snapshot ? jobLists(snapshot) : null), [snapshot]);
+  // Like v1, the lists wait for a snapshot with fleet data.
+  const lists = useMemo(() => (snapshot?.fleet ? jobLists(snapshot) : null), [snapshot]);
   const id = jobId(route.id);
   const tab = pickTab(route.params.get("tab"), id, lists);
   const query = route.params.get("q") ?? "";
@@ -118,7 +119,6 @@ export default function Jobs({ route }: { route: Route }) {
     ...(snapshot?.fleet?.hosts ?? [])].map((item) => item.pool || "default"))].sort(), [lists, snapshot]);
   const rows = useMemo(() => (lists && tab !== "history" ? filterJobs(lists[tab], query, pool) : []), [lists, tab, query, pool]);
   const ids = tab === "history" ? history.rows.map((job) => job.id) : rows.map((job) => job.id);
-  const live = id === null || !lists ? undefined : [...lists.waiting, ...lists.running, ...lists.cleaned].find((job) => job.id === id);
 
   // Opening from a live tab drops ?tab so the pane's tab follows the job; history keeps it.
   const open = (next: number, replace = false) =>
@@ -128,20 +128,24 @@ export default function Jobs({ route }: { route: Route }) {
   const filtered = !!(query || pool);
   const clearFilters = () => setParams({ q: null, pool: null });
 
+  // With a job open, a missing tab follows the job, so a chosen tab is always written.
+  const showTab = (value: string) => setParams({ tab: value === "waiting" && id === null ? null : value });
   const commands = useMemo<ScreenCommand[]>(() => [
-    { id: "waiting", label: "Show waiting jobs", run: () => setParams({ tab: null }) },
+    { id: "waiting", label: "Show waiting jobs", run: () => showTab("waiting") },
     { id: "running", label: "Show running jobs", run: () => setParams({ tab: "running" }) },
     { id: "cleaned", label: "Show cleaned-up jobs", run: () => setParams({ tab: "cleaned" }) },
     { id: "history", label: "Show job history", run: () => setParams({ tab: "history" }) },
     ...(filtered || route.params.get("repo") || route.params.get("outcome") || route.params.get("range")
       ? [{ id: "clear", label: "Clear job filters", run: () => setParams({ q: null, pool: null, repo: null, outcome: null, range: null }) }] : []),
     ...(tab === "history" && history.next && !history.loading ? [{ id: "more", label: "Load older jobs", run: history.loadMore }] : []),
-  ], [filtered, route, tab, history.next, history.loading]);
+  ], [filtered, route, tab, id, history.next, history.loading]);
   useScreenCommands(commands);
 
   // Keep the last pane content through the SplitView's closing slide.
   const shown = useRef(id);
   if (id !== null) shown.current = id;
+  const live = shown.current === null || !lists ? undefined
+    : [...lists.waiting, ...lists.running, ...lists.cleaned].find((job) => job.id === shown.current);
 
   const counts = lists && { waiting: lists.waiting.length, running: lists.running.length, cleaned: lists.cleaned.length };
   const tabList = (
@@ -204,7 +208,7 @@ export default function Jobs({ route }: { route: Route }) {
   );
 
   return (
-    <Tabs value={tab} onValueChange={(value) => setParams({ tab: value === "waiting" ? null : value })}>
+    <Tabs value={tab} onValueChange={showTab}>
       <Page title={t("Jobs")} description={t("The live queue and the 7-day job history")} tabs={tabList}>
         <SplitView className="page-split" open={id !== null} onOpenChange={(next) => !next && close()} navigation={navigation} labels={labels.split}>
           <SplitView.List>

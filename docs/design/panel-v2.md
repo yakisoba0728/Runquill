@@ -997,7 +997,7 @@ React·ReactDOM과 Stratum JS의 압축 크기는 구현하면서 빌드 결과�
 | 0 | 이 문서의 열린 질문 결정 | 결정 기록 |
 | 1 기초 | `internal/webui/panel/` 골격, 빌드 결정성 확인(§6.5), embed·CSP·크기 확인, 셸·로그인·`live.ts`·라우터(예전 주소 포함)·i18n JSON 변환·팔레트·토스트·확인, 개요. 결과는 `internal/webui/panelv2/`에 두고 서버는 `RUNQUILL_PANEL_V2=1`일 때 그 디렉터리를 서빙 | 샘플 모드에서 개요, 라이브 모드에서 로그인·연결 상태, CI `panel` 작업 통과 |
 | 2 읽기 화면 | 작업(4탭, 상세), 러너(정보), 호스트(4탭, 상세), 사용량(2탭) | 해당 화면의 §1 행이 모두 체크 |
-| 3 operator 동작 | 재시도·취소, 배정 중지·재개, 로그 탭, 워커 등록 | 〃 |
+| 3 operator 동작 | 재시도·취소, 배정 중지·재개, 로그 탭, 워커 등록, 저장소 점검(admin, 2단계에서 미룸) | 〃 |
 | 4 관리 화면 | 설정(`SaveBar`, 가드), 팀, API 토큰, 감사, 백업, 이전 | 〃 |
 | 5 전환 | §1 전체 점검, 문서(영어·한국어) 갱신, `openapi.yaml`, Pages·CI 검사 수정, v2 결과를 `panelweb/`으로 옮기고 기본값으로 | 릴리스 노트에 화면 변경과 예전 주소 동작 |
 | 6 정리 | 다음 마이너 릴리스에서 v1 소스와 `RUNQUILL_PANEL_V2` 제거 | |
@@ -1120,7 +1120,7 @@ lockfile에는 Linux용 `@rolldown/binding-linux-*`와 `lightningcss-linux-*`가
 
 2026-11-28. 작업(4탭, 상세), 러너(목록, 상세 정보), 호스트(4탭, 상세), 사용량(2탭)을 만들었습니다. 쓰기 동작은 없고, 상세 칸 아래 동작 자리는 3단계가 채웁니다.
 
-**확인한 것.** `npm run typecheck`, `npm test`(51개), `npm run build`, `npm run size`, `go vet ./...`, `go test ./...`. 브라우저는 `RUNQUILL_PANEL_V2=1 go run . panel --demo`(실제 CSP)를 Chromium(Playwright)으로 열었습니다.
+**확인한 것.** `npm run typecheck`, `npm test`(54개), `npm run build`, `npm run size`, `go vet ./...`, `go test ./...`. 브라우저는 `RUNQUILL_PANEL_V2=1 go run . panel --demo`(실제 CSP)를 Chromium(Playwright)으로 열었습니다.
 
 - 새 화면과 상세 칸, 아래 주소를 모두 열었습니다. `securitypolicyviolation`과 콘솔 오류·경고가 0건이었습니다.
   - `#/jobs?tab=…`, `#/jobs/ID`(대기·실행 중·정리됨·기록에만 있음·없는 작업), 기록 필터
@@ -1134,6 +1134,9 @@ lockfile에는 Linux용 `@rolldown/binding-linux-*`와 `lightningcss-linux-*`가
   - 표에서 ↑/↓와 Enter로 상세를 엽니다. 포커스가 칸으로 가고, J/K로 이전·다음 항목, Esc로 닫으면 포커스가 행으로 돌아옵니다.
   - 열고 닫기만 기록에 남아 뒤로·앞으로가 칸을 다시 열고 닫습니다. 필터와 탭은 `replaceState`입니다.
 - 샘플 시나리오 전환(`#/jobs/4831`, `#/jobs/4835`)과 화면별 팔레트 명령을 확인했습니다.
+- 클릭과 입력으로도 확인했습니다: 칸이 열린 채 탭 바꾸기, 작업 검색·풀·기록 필터, 디스크 사용량 측정, 워커 오프라인 시나리오의 호스트(`last_seen`)와 "임대가 관찰되지 않음" 러너. 샘플 모드에서는 `/api/` 요청이 하나도 나가지 않았습니다.
+
+**확인하지 않은 것.** 라이브 모드의 REST는 브라우저에서 돌려 보지 않았습니다. 오류 알림, 403, 불러오는 중 표시, "이전 작업 더 보기" 페이지, 리소스·탄력 한도 폴링 주기가 여기에 해당합니다. `useRequest`의 불러오기·다시 불러오기·주소 변경·오류·401만 단위 테스트(`request.test.ts`)로 확인했습니다. §7.2의 `page.route` e2e가 생기면 같이 다룹니다.
 
 **설계와 달라진 점.**
 

@@ -1,1 +1,0 @@
-import{ct as e,lt as t}from"./panel-DDXIJXuE.js";var n=e();function r({variant:e=`text`,className:r,...i}){return(0,n.jsx)(`span`,{"aria-hidden":!0,className:t(`skeleton`,e!==`text`&&`skeleton-${e}`,r),...i})}export{r as t};

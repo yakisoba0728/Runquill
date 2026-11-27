@@ -133,6 +133,9 @@ h2[tabindex]:focus, .page-title[tabindex="-1"]:focus { outline: none; }
 .data-table.rows-2 { --data-table-row: 58px; }
 .data-table.rows-3 { --data-table-row: 76px; }
 .data-table .block-sub { overflow: hidden; text-overflow: ellipsis; }
+/* A meter in a cell takes the cell's width on its own line, under any text. */
+.data-table-text:has(.meter) { flex: 1; }
+.data-table .meter { display: block; margin-top: 4px; }
 .summary-line { margin: 0; color: var(--color-text-hint); font-size: var(--text-sm); }
 .pane-sections { display: grid; gap: 20px; }
 .pane-sections h3 { margin: 0 0 8px; font-size: var(--text-sm); font-weight: 600; }
