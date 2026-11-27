@@ -54,8 +54,8 @@ func isWarmRunner(name string) bool {
 }
 
 type warmRunner struct {
-	name, state, key string
-	created          time.Time
+	name, id, state, key string
+	created              time.Time
 }
 
 // parseWarmName reads runquill-warm-<key>-<unix seconds>-<nonce>; the manager's clock set the time.
@@ -97,19 +97,24 @@ func (d docker) usableWarm(w warmRunner, key string, now time.Time) bool {
 
 // warmRunners lists d's warm runners, oldest first.
 func (d docker) warmRunners(ctx context.Context) ([]warmRunner, error) {
-	containers, err := d.containers(ctx)
+	output, err := d.listContainers(ctx, "--no-trunc", "--format", "{{.Names}}\t{{.ID}}\t{{.State}}")
 	if err != nil {
 		return nil, err
 	}
 	var runners []warmRunner
-	for name, state := range containers {
-		if w, ok := parseWarmName(name); ok {
-			w.state = state
-			runners = append(runners, w)
-		} else if isWarmRunner(name) {
-			// Not one this manager named; remove it like any expired warm runner.
-			runners = append(runners, warmRunner{name: name, state: state})
+	for line := range strings.SplitSeq(strings.TrimSpace(output), "\n") {
+		name, rest, _ := strings.Cut(line, "\t")
+		if !isWarmRunner(name) {
+			continue
 		}
+		id, state, ok := strings.Cut(rest, "\t")
+		if !ok || !validHex32(id) || state == "" {
+			return nil, errors.New("invalid Docker warm container list")
+		}
+		// An unrecognized name gets no key or age and is removed like an expired warm runner.
+		w, _ := parseWarmName(name)
+		w.name, w.id, w.state = name, id, state
+		runners = append(runners, w)
 	}
 	slices.SortFunc(runners, func(a, b warmRunner) int {
 		return cmp.Or(a.created.Compare(b.created), strings.Compare(a.name, b.name))
@@ -136,22 +141,32 @@ func (f *dockerFleet) handoff(ctx context.Context, d docker, name, jit string, o
 		}
 		if otherImage {
 			if err := d.remove(ctx, w.name); err != nil {
-				slog.Warn("retire warm runner", "runner", w.name, "runner_host", d.label(), "error", err)
+				return false, fmt.Errorf("retire warm runner %s: %w", w.name, err)
 			}
 			return false, nil
 		}
 		// The rename is the claim: it fails if the runner was claimed or removed meanwhile.
 		if _, err := d.command(ctx, nil, "rename", w.name, name); err != nil {
+			// A disconnect can lose the reply after the engine has renamed this container.
+			cause := fmt.Errorf("claim warm runner %s: %w", w.name, err)
+			current, checkErr := d.listContainers(context.WithoutCancel(ctx), "--filter", "id="+w.id, "--format", "{{.Names}}")
+			if checkErr != nil {
+				return true, errors.Join(cause, fmt.Errorf("check warm runner claim: %w", checkErr))
+			}
+			if strings.TrimSpace(current) == name {
+				return true, d.removeFailedRunner(ctx, w.id, cause)
+			}
+			if ctx.Err() != nil {
+				return false, cause
+			}
+			slog.Warn("could not claim warm runner", "runner_host", d.label(), "error", cause)
 			continue
 		}
 		// mv makes the file appear whole; the JIT config travels on stdin, never in argv or the environment.
-		_, err := d.command(ctx, []byte(jit), "exec", "-i", name, "sh", "-c", `umask 077 && cat >"$1.tmp" && mv "$1.tmp" "$1"`, "sh", "/"+plan.jitPath)
+		_, err := d.command(ctx, []byte(jit), "exec", "-i", w.id, "sh", "-c", `umask 077 && cat >"$1.tmp" && mv "$1.tmp" "$1"`, "sh", "/"+plan.jitPath)
 		if err != nil {
 			// Never leave a claimed runner without its config; reconcile releases the lease.
-			if removeErr := d.remove(context.WithoutCancel(ctx), name); removeErr != nil {
-				err = errors.Join(err, removeErr)
-			}
-			return true, fmt.Errorf("hand job to warm runner %s: %w", w.name, err)
+			return true, d.removeFailedRunner(ctx, w.id, fmt.Errorf("hand job to warm runner %s: %w", w.name, err))
 		}
 		f.warm.reset(d.label())
 		slog.Info("warm runner took a job", "runner", name, "warm_runner", w.name, "runner_host", d.label())
@@ -269,11 +284,9 @@ func (d docker) createWarm(ctx context.Context, plan runnerCreate, key string, n
 		return err
 	}()
 	if err != nil {
-		if removeErr := d.remove(context.WithoutCancel(ctx), name); removeErr != nil {
-			err = errors.Join(err, removeErr)
-		}
+		return d.removeFailedRunner(ctx, name, err)
 	}
-	return err
+	return nil
 }
 
 // warmBackoff spaces out warm runner starts on a host whose runners keep failing.

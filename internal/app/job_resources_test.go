@@ -95,12 +95,22 @@ func mustJSON(t *testing.T, value any) string {
 }
 
 func TestParseExitedOOM(t *testing.T) {
-	killed, diagnostics := parseExitedOOM("/runquill-1 true\nrunquill-2 false\n\ngarbage\n/runquill-3 maybe\n")
+	killed, diagnostics := parseExitedOOM("/runquill-1 true\nrunquill-2 false\n\ngarbage\n/runquill-3 maybe\n/ true\n")
 	if len(killed) != 2 || !killed["runquill-1"] || killed["runquill-2"] {
 		t.Fatalf("killed %v", killed)
 	}
 	if len(diagnostics) != 1 || diagnostics["runquill-1"].Code != "runner_memory_limit" {
 		t.Fatalf("diagnostics %v", diagnostics)
+	}
+}
+
+func TestJobResourceInspectLogsMissingStatus(t *testing.T) {
+	fleet, _ := testDockerFleet(t)
+	t.Setenv("FLEET_TEST_INSPECT_OUTPUT", "/runner-1 true\n/runner-2 maybe\n")
+	logs := captureLogs(t)
+	killed, _ := fleet.hosts[0].exitedOOM(t.Context(), map[string]string{"runner-1": "exited", "runner-2": "dead"})
+	if len(killed) != 1 || !killed["runner-1"] || !strings.Contains(logs.String(), "missing memory kill status for exited runners") {
+		t.Fatalf("memory kill status %v, logs %s", killed, logs)
 	}
 }
 
