@@ -184,9 +184,9 @@ function Resources({ hosts }: { hosts: Host[] }) {
 const modes: Record<string, string> = { off: "Off", observe: "Observe only", apply: "Apply" };
 
 function Elastic() {
-  // The report's own interval, at least 5s; a minute after an error.
+  // The report's own interval, at least 5s; 15s without one (off); a minute after an error (v1 elasticSection).
   const report = useRequest<ElasticReport>("./api/elastic", {
-    poll: (data, error) => (error || !data?.interval_seconds ? 60000 : Math.max(5000, data.interval_seconds * 1000)),
+    poll: (data, error) => (error ? 60000 : data?.interval_seconds ? Math.max(5000, data.interval_seconds * 1000) : 15000),
   });
   const data = report.data;
   const mode = data && modes[data.mode] ? data.mode : "off";

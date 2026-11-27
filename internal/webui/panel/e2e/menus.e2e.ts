@@ -46,7 +46,11 @@ test("waiting rows: Tab reaches only the current row's menu, which cancels witho
   await expect(toast(page, "Job cancelled.")).toBeVisible();
   await expect(waiting(page).getByText("#4828")).toHaveCount(0);
   await expect(page).toHaveURL(/#\/jobs$/);
-  // The row left with its menu: focus stays in the table, on its current row.
+  // The row left with its menu: focus stays in the table, on its current row, and Tab still reaches only its menu.
+  await expect(rows.nth(1)).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("button", { name: "Actions for job 4827" })).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
   await expect(rows.nth(1)).toBeFocused();
   expect(live.requests.filter((request) => request.method() === "POST").map((request) => new URL(request.url()).pathname))
     .toEqual(["/api/jobs/4828/cancel"]);
@@ -71,7 +75,26 @@ test("waiting rows with a pane open: Escape closes only the menu, and a click in
   await expect(trigger).toBeFocused();
 });
 
-test("viewers and the running tab have no row menus", async ({ page }) => {
+test("only operators get row menus, and only on the waiting tab and the hosts table", async ({ page }) => {
+  await startLive(page, "operator");
+  await page.goto("./#/jobs?tab=running");
+  await expect(page.getByRole("grid", { name: "Running" }).getByRole("row").nth(1)).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Actions/ })).toHaveCount(0);
+  await page.goto("./#/jobs?tab=cleaned");
+  await expect(page.getByRole("grid", { name: "Cleaned up" }).getByRole("row").nth(1)).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Actions/ })).toHaveCount(0);
+});
+
+test("the sample panel has no row menus", async ({ page }) => {
+  await page.goto("./#/jobs");
+  await expect(waiting(page).getByRole("row")).toHaveCount(3);
+  await expect(page.getByRole("button", { name: /^Actions/ })).toHaveCount(0);
+  await page.goto("./#/hosts");
+  await expect(page.getByRole("grid", { name: "Hosts" }).getByRole("row").nth(1)).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Actions/ })).toHaveCount(0);
+});
+
+test("viewers have no row menus", async ({ page }) => {
   await startLive(page, "viewer");
   await page.goto("./#/jobs");
   await expect(waiting(page).getByRole("row")).toHaveCount(3);
