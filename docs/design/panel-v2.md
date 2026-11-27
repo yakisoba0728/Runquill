@@ -928,7 +928,7 @@ go run . panel --demo               # (저장소 루트) 빌드 결과를 Go 서
 | `.github/scripts/*`, `Dockerfile` | 패널 파일 경로를 참조하지 않음(`grep`으로 확인). 변경 없음 |
 | `internal/app/*_test.go` | §7.2 |
 
-`go vet ./...`와 `go test ./...`는 Go 파일이 없는 디렉터리를 건너뛰지만, `node_modules` 안에 `.go` 파일이 든 npm 패키지가 있으면 패키지로 잡힐 수 있습니다. CI의 Go 작업은 `npm ci`를 하지 않아 영향이 없고, 로컬에서 문제가 되면 `internal/webui/panel/`에 빈 `go.mod`를 두어 별도 모듈로 빼면 `./...`에서 빠집니다. `gofmt -l .`은 모듈 경계와 상관없이 모든 `.go` 파일을 보므로 로컬에서만 같은 주의가 필요합니다. 1단계 확인: 지금 의존성의 `node_modules`에는 `.go` 파일이 없고, 설치된 채로 `go test ./...`가 통과합니다. 빈 `go.mod`는 두지 않았습니다. 의존성을 바꿀 때 `find internal/webui/panel/node_modules -name '*.go'`로 다시 봅니다.
+`internal/webui/panel/go.mod`를 모듈 경계로 두어 루트의 `go vet ./...`와 `go test ./...`가 `node_modules/`를 탐색하지 않게 합니다. `gofmt`는 모듈 경계를 따르지 않으므로 CI에서는 Git이 추적하는 Go 파일만 검사합니다.
 
 ### 6.8 번들 크기 예산
 

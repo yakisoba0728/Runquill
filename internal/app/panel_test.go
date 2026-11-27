@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -27,6 +28,7 @@ func TestPanelServerBoundsRequestBodyRead(t *testing.T) {
 }
 
 func TestPanelRoutesAndFirstJobEvidence(t *testing.T) {
+	t.Setenv("RUNQUILL_PANEL_V2", "")
 	ctx := t.Context()
 	q, err := openQueue(filepath.Join(t.TempDir(), "queue.sqlite3"))
 	if err != nil {
@@ -101,6 +103,7 @@ func TestPanelRoutesAndFirstJobEvidence(t *testing.T) {
 		{demo, "GET", "http://127.0.0.1:8081/demo.js", "", 200},
 		{demo, "GET", "http://127.0.0.1:8081/demo/jobs.js", "", 200},
 		{demo, "GET", "http://127.0.0.1:8081/views/overview.js", "", 200},
+		{demo, "GET", "http://127.0.0.1:8081/assets/panel-missing.js", "", 404},
 		{demo, "GET", "http://127.0.0.1:8081/snapshot", "", 404},
 		{webhook(q, &github{owner: "owner"}, []byte("key"), p), "GET", "http://localhost:8080/snapshot", "", 404},
 	} {
@@ -112,13 +115,20 @@ func TestPanelRoutesAndFirstJobEvidence(t *testing.T) {
 	}
 }
 
-// Server messages reach the browser as plain text and are translated by using
-// the English sentence as a key in panelweb/i18n.js. A message or audit action
-// without a key would silently show untranslated text.
-// panelTranslations reads panelweb/i18n.js: every key of the words table
-// (failing on a key written twice, since the later one silently wins) and the
-// templates listed in serverPatterns.
-func panelTranslations(t *testing.T) (keys, patterns map[string]bool) {
+type panelCatalogue struct {
+	name           string
+	keys, patterns map[string]bool
+}
+
+// Server messages reach both panels as plain text and use the English
+// sentence or a matching template as the translation key.
+func panelTranslations(t *testing.T) []panelCatalogue {
+	t.Helper()
+	keys, patterns := panelV1Translations(t)
+	return []panelCatalogue{{"v1", keys, patterns}, panelV2Translations(t)}
+}
+
+func panelV1Translations(t *testing.T) (keys, patterns map[string]bool) {
 	t.Helper()
 	source, err := fs.ReadFile(webui.Panel(), "i18n.js")
 	if err != nil {
@@ -152,13 +162,59 @@ func panelTranslations(t *testing.T) (keys, patterns map[string]bool) {
 	return keys, patterns
 }
 
+func panelV2Translations(t *testing.T) panelCatalogue {
+	t.Helper()
+	source := os.DirFS("../webui/panel/src/i18n")
+	words, err := source.Open("ko.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer words.Close()
+	catalogue := panelCatalogue{"v2", make(map[string]bool), make(map[string]bool)}
+	decoder := json.NewDecoder(words)
+	if tok, err := decoder.Token(); tok != json.Delim('{') || err != nil {
+		t.Fatalf("ko.json: expected an object, got %v (%v)", tok, err)
+	}
+	for decoder.More() {
+		tok, err := decoder.Token()
+		key, ok := tok.(string)
+		if err != nil || !ok {
+			t.Fatalf("ko.json: invalid key %v (%v)", tok, err)
+		}
+		var value string
+		if err := decoder.Decode(&value); err != nil {
+			t.Fatalf("ko.json: %q: %v", key, err)
+		}
+		if _, exists := catalogue.keys[key]; exists {
+			t.Errorf("ko.json defines %q more than once", key)
+		}
+		catalogue.keys[key] = value != ""
+	}
+	if tok, err := decoder.Token(); tok != json.Delim('}') || err != nil {
+		t.Fatalf("ko.json: expected end of object, got %v (%v)", tok, err)
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		t.Fatalf("ko.json: unexpected trailing data (%v)", err)
+	}
+	data, err := fs.ReadFile(source, "server-patterns.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var patterns []string
+	if err := json.Unmarshal(data, &patterns); err != nil {
+		t.Fatalf("server-patterns.json: %v", err)
+	}
+	for _, pattern := range patterns {
+		catalogue.patterns[pattern] = true
+	}
+	return catalogue
+}
+
 // The sample panel must never change anything or open a live connection:
 // fixtures answer GETs only, and screens reach the network only through the
 // api.js client (which refuses everything else in the sample panel), never
 // with their own fetch, EventSource or beacon.
 func TestPanelSamplePanelIsReadOnly(t *testing.T) {
-	fixture := regexp.MustCompile(`"([A-Z]+) /api/[^"]*"\s*:`)
-	network := regexp.MustCompile(`\b(fetch|EventSource|XMLHttpRequest|sendBeacon|WebSocket)\b`)
 	assets := webui.Panel()
 	for _, pattern := range []string{"demo/*.js", "views/*.js", "demo.js", "fleet.js", "ui.js", "i18n.js"} {
 		names, err := fs.Glob(assets, pattern)
@@ -166,40 +222,64 @@ func TestPanelSamplePanelIsReadOnly(t *testing.T) {
 			t.Fatalf("%s: %v", pattern, err)
 		}
 		for _, name := range names {
-			source, err := fs.ReadFile(assets, name)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, match := range fixture.FindAllStringSubmatch(string(source), -1) {
-				if match[1] != "GET" {
-					t.Errorf("%s: sample fixtures answer GET only, not %s", name, match[0])
-				}
-			}
-			for _, line := range strings.Split(string(source), "\n") {
-				code, _, _ := strings.Cut(line, "//")
-				if network.MatchString(code) {
-					t.Errorf("%s: use the ctx.api client instead of %q", name, strings.TrimSpace(line))
-				}
-			}
+			checkPanelSampleSource(t, assets, name)
+		}
+	}
+}
+
+func TestPanelV2SamplePanelIsReadOnly(t *testing.T) {
+	source := os.DirFS("../webui/panel/src")
+	if err := fs.WalkDir(source, ".", func(name string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		ext := filepath.Ext(name)
+		if !entry.IsDir() && (ext == ".ts" || ext == ".tsx") &&
+			!strings.HasSuffix(name, ".test"+ext) && name != "api.ts" && name != "live.ts" {
+			checkPanelSampleSource(t, source, name)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+var panelSampleFixture = regexp.MustCompile(`["'\x60]([A-Z]+) /api/[^"'\x60]*["'\x60]\s*:`)
+var panelSampleNetwork = regexp.MustCompile(`\b(fetch|EventSource|XMLHttpRequest|sendBeacon|WebSocket)\b`)
+
+func checkPanelSampleSource(t *testing.T, files fs.FS, name string) {
+	t.Helper()
+	source, err := fs.ReadFile(files, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, match := range panelSampleFixture.FindAllStringSubmatch(string(source), -1) {
+		if match[1] != "GET" {
+			t.Errorf("%s: sample fixtures answer GET only, not %s", name, match[0])
+		}
+	}
+	for _, line := range strings.Split(string(source), "\n") {
+		code, _, _ := strings.Cut(line, "//")
+		if panelSampleNetwork.MatchString(code) {
+			t.Errorf("%s: use the panel API client instead of %q", name, strings.TrimSpace(line))
 		}
 	}
 }
 
 func TestPanelTranslationsHaveNoDuplicateKeys(t *testing.T) {
-	keys, patterns := panelTranslations(t)
-	if len(keys) < 500 || len(patterns) < 10 {
-		t.Fatalf("read too few keys (%d) or server patterns (%d)", len(keys), len(patterns))
-	}
-	for pattern := range patterns {
-		if !keys[pattern] {
-			t.Errorf("serverPatterns lists %q without a translation", pattern)
+	for _, catalogue := range panelTranslations(t) {
+		if len(catalogue.keys) < 500 || len(catalogue.patterns) < 10 {
+			t.Errorf("%s: read too few keys (%d) or server patterns (%d)", catalogue.name, len(catalogue.keys), len(catalogue.patterns))
+		}
+		for pattern := range catalogue.patterns {
+			if !catalogue.keys[pattern] {
+				t.Errorf("%s: server patterns list %q without a translation", catalogue.name, pattern)
+			}
 		}
 	}
 }
 
 func TestPanelServerMessagesHaveTranslations(t *testing.T) {
-	keys, patterns := panelTranslations(t)
-
 	// Each file is scanned where the panel can see its messages: whole files
 	// for handlers, the route layer only where the rest of the file is
 	// configuration or command-line output.
@@ -404,11 +484,6 @@ func TestPanelServerMessagesHaveTranslations(t *testing.T) {
 	if len(messages) < 80 || len(formats) < 10 || len(actions) < 15 {
 		t.Fatalf("scanned too few messages (%d), formats (%d) or audit actions (%d)", len(messages), len(formats), len(actions))
 	}
-	for _, value := range append(messages, actions...) {
-		if !keys[value] {
-			t.Errorf("panelweb/i18n.js has no translation for %q", value)
-		}
-	}
 	// A message with values filled in must match a serverPatterns template:
 	// each Go verb stands where the template has a {placeholder}.
 	verb := regexp.MustCompile(`%[-+# 0-9.]*[a-zA-Z]`)
@@ -416,13 +491,20 @@ func TestPanelServerMessagesHaveTranslations(t *testing.T) {
 	normalize := func(value string, wildcard *regexp.Regexp) string {
 		return wildcard.ReplaceAllString(value, "\x00")
 	}
-	templates := make(map[string]bool)
-	for pattern := range patterns {
-		templates[normalize(pattern, placeholder)] = true
-	}
-	for _, format := range formats {
-		if !templates[normalize(format, verb)] {
-			t.Errorf("panelweb/i18n.js serverPatterns has no template for %q", format)
+	for _, catalogue := range panelTranslations(t) {
+		for _, value := range append(messages, actions...) {
+			if !catalogue.keys[value] {
+				t.Errorf("%s: no translation for %q", catalogue.name, value)
+			}
+		}
+		templates := make(map[string]bool)
+		for pattern := range catalogue.patterns {
+			templates[normalize(pattern, placeholder)] = true
+		}
+		for _, format := range formats {
+			if !templates[normalize(format, verb)] {
+				t.Errorf("%s: no server pattern for %q", catalogue.name, format)
+			}
 		}
 	}
 }

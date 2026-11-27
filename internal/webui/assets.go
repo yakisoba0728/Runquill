@@ -18,6 +18,18 @@ func Panel() fs.FS {
 	return files
 }
 
+//go:embed panelv2
+var panelV2 embed.FS
+
+// PanelV2 returns the built panel preview.
+func PanelV2() fs.FS {
+	files, err := fs.Sub(panelV2, "panelv2")
+	if err != nil {
+		panic(err)
+	}
+	return files
+}
+
 //go:embed wizard/wizard.css
 var WizardCSS string
 

@@ -15,6 +15,7 @@ servers:
         description: The RUNQUILL_PANEL_URL origin (HTTPS, or HTTP on loopback).
 tags:
   - name: assets
+    description: Panel v1 is the default. The development preview enabled by RUNQUILL_PANEL_V2=1 uses /assets/{file} and shares / and /theme.js with v1.
   - name: auth
   - name: fleet
   - name: jobs
@@ -1347,6 +1348,27 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/Asset'
+  /assets/{file}:
+    get:
+      operationId: getPanelV2Asset
+      tags: [assets]
+      summary: A bundled stylesheet or script for the panel v2 development preview.
+      x-runquill-permission: public
+      security: []
+      parameters:
+        - name: file
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^(?:panel|chunk|demo)-[A-Za-z0-9_-]+\.(?:js|css)$'
+      responses:
+        '200':
+          $ref: '#/components/responses/Asset'
+        '400':
+          description: Use a panel file name.
+        '404':
+          description: The asset is missing, the preview is off, or a demo chunk was requested from the live panel.
   /app.js:
     get:
       operationId: getPanelAppJS

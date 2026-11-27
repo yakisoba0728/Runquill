@@ -75,6 +75,8 @@ RUNQUILL_MANAGER_IMAGE=runquill-manager:local docker compose -f compose.yaml -f 
 
 For release installs, omit the image override and use `--no-build` with the same Compose files. For multi-host Compose installs, include `-f compose.ssh.yaml`. If the manager runs directly, also set `RUNQUILL_PANEL_ADDR=127.0.0.1:8081`. Use an SSH tunnel for remote loopback access. For a shared panel, set `RUNQUILL_PANEL_URL` to an HTTPS origin and forward it to port 8081 through an HTTPS reverse proxy that preserves the public Host header. Route the public webhook separately to port 8080. The [Cloudflare Tunnel guide](cloudflare-tunnel.md) shows how to share a hostname using a path rule.
 
+**Panel v2 development preview.** Set `RUNQUILL_PANEL_V2=1` in the manager environment and restart the manager. With the Compose panel overlay, set it in `.env` and rerun Compose. To try it with sample data from a source checkout, run `RUNQUILL_PANEL_V2=1 go run . panel --demo`. The preview implements Overview. Other v2 screens are still under development. Panel v1 is the default.
+
 | Role | Panel access |
 | --- | --- |
 | Viewer | View the overview, queue, job history, runners, hosts and pools, and usage. Create `fleet:read` API tokens. |

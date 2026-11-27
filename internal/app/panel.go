@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -20,6 +21,7 @@ import (
 // panelAssetName limits served files to flat, lower-case module and style
 // names, so nothing outside the panel's own files can be requested.
 var panelAssetName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*\.(?:js|css)$`)
+var panelV2AssetName = regexp.MustCompile(`^(?:panel|chunk|demo)-[A-Za-z0-9_-]+\.(?:js|css)$`)
 
 type panelSnapshot struct {
 	Fleet         *statusReport    `json:"fleet"`
@@ -204,7 +206,11 @@ func panelHTTPServer(panel *panelState, access *panelAccess) *http.Server {
 }
 
 func panelHandler(panel *panelState, access *panelAccess) http.Handler {
+	v2 := os.Getenv("RUNQUILL_PANEL_V2") == "1"
 	assets := webui.Panel()
+	if v2 {
+		assets = webui.PanelV2()
+	}
 	files := http.FileServerFS(assets)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
@@ -239,17 +245,34 @@ func panelHandler(panel *panelState, access *panelAccess) http.Handler {
 			http.ServeFileFS(w, r, assets, dir+name)
 		}
 	}
-	mux.HandleFunc("GET /panel.css", serve(""))
 	mux.HandleFunc("GET /theme.js", serve(""))
-	mux.HandleFunc("GET /app.js", serve(""))
-	mux.HandleFunc("GET /api.js", serve(""))
-	mux.HandleFunc("GET /ui.js", serve(""))
-	mux.HandleFunc("GET /fleet.js", serve(""))
-	mux.HandleFunc("GET /i18n.js", serve(""))
-	mux.HandleFunc("GET /views/{file}", serve("views/"))
-	mux.HandleFunc("GET /demo/{file}", serve("demo/"))
-	if panel == nil {
-		mux.HandleFunc("GET /demo.js", serve(""))
+	if v2 {
+		mux.HandleFunc("GET /assets/{file}", func(w http.ResponseWriter, r *http.Request) {
+			name := r.PathValue("file")
+			if !panelV2AssetName.MatchString(name) {
+				http.Error(w, "Use a panel file name.", http.StatusBadRequest)
+				return
+			}
+			file := "assets/" + name
+			// ServeFileFS drops Cache-Control when it handles a missing file.
+			if _, err := fs.Stat(assets, file); err != nil || panel != nil && strings.HasPrefix(name, "demo-") {
+				http.NotFound(w, r)
+				return
+			}
+			http.ServeFileFS(w, r, assets, file)
+		})
+	} else {
+		mux.HandleFunc("GET /panel.css", serve(""))
+		mux.HandleFunc("GET /app.js", serve(""))
+		mux.HandleFunc("GET /api.js", serve(""))
+		mux.HandleFunc("GET /ui.js", serve(""))
+		mux.HandleFunc("GET /fleet.js", serve(""))
+		mux.HandleFunc("GET /i18n.js", serve(""))
+		mux.HandleFunc("GET /views/{file}", serve("views/"))
+		mux.HandleFunc("GET /demo/{file}", serve("demo/"))
+		if panel == nil {
+			mux.HandleFunc("GET /demo.js", serve(""))
+		}
 	}
 	if panel != nil && access != nil {
 		access.register(mux, panel)

@@ -49,7 +49,7 @@ jobs:
           cache-dependency-path: go.sum
       - name: Check Go formatting
         if: matrix.os == 'ubuntu-24.04'
-        run: test -z "$(gofmt -l .)"
+        run: test -z "$(git ls-files -z -- '*.go' | xargs -0 gofmt -l)"
       - if: matrix.os == 'ubuntu-24.04'
         run: go vet ./...
       - name: Cross-compile the client for Windows and macOS
@@ -66,6 +66,33 @@ jobs:
         if: matrix.os == 'ubuntu-24.04'
         timeout-minutes: 10
         run: sh .github/scripts/test-install-host.sh ubuntu:24.04
+
+  panel:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: internal/webui/panel
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: internal/webui/panel/.node-version
+          cache: npm
+          cache-dependency-path: internal/webui/panel/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: Check that the committed panel matches its source
+        run: |
+          if ! git diff --exit-code -- ../panelv2 || [ -n "$(git status --porcelain -- ../panelv2)" ]; then
+            echo '::error::Run npm run build from internal/webui/panel and commit the changes in internal/webui/panelv2.'
+            exit 1
+          fi
+      - run: npm run size
 
   docker-upgrade:
     if: ${{ !inputs.checks-only && github.repository == 'yakisoba0728/Runquill' }}

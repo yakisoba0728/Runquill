@@ -75,6 +75,8 @@ RUNQUILL_MANAGER_IMAGE=runquill-manager:local docker compose -f compose.yaml -f 
 
 릴리스로 설치한 경우 이미지 이름을 재정의하지 않고 같은 Compose 파일에 `--no-build`를 사용합니다. 멀티 서버 설정에서는 `-f compose.ssh.yaml`도 전달합니다. 바이너리를 직접 실행하는 경우 `RUNQUILL_PANEL_ADDR=127.0.0.1:8081`을 설정합니다. 원격 루프백 접속에는 SSH 터널을 이용하세요. 팀이 공유할 때는 `RUNQUILL_PANEL_URL`에 HTTPS 주소를 지정하고, HTTPS 역프록시에서 원래 Host 헤더를 유지해 패널의 8081 포트로 전달합니다. 공개 웹훅은 별도로 8080 포트로 전달합니다. 같은 호스트 이름에서 경로 규칙으로 분리하는 방법은 [Cloudflare Tunnel 가이드](cloudflare-tunnel.ko.md)를 참고하세요.
 
+**패널 v2 개발 프리뷰.** 매니저 환경에 `RUNQUILL_PANEL_V2=1`을 설정하고 매니저를 재시작합니다. Compose 패널 오버레이를 사용한다면 `.env`에 이 값을 추가하고 Compose를 다시 실행합니다. 소스 체크아웃에서 샘플 데이터로 확인하려면 `RUNQUILL_PANEL_V2=1 go run . panel --demo`를 실행하세요. 프리뷰에서는 개요 화면을 사용할 수 있으며 나머지 v2 화면은 개발 중입니다. 기본값은 패널 v1입니다.
+
 | 역할 | 패널 권한 |
 | --- | --- |
 | Viewer | 개요, 대기열, 작업 기록, 러너, 호스트와 풀, 사용량을 봅니다. `fleet:read` API 토큰을 만들 수 있습니다. |

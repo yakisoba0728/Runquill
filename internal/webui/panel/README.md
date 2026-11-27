@@ -16,7 +16,7 @@ npm run build        # writes ../panelv2/, commit the result
 npm run size         # gzip budget, design §6.8
 ```
 
-The build is byte-identical across runs and across macOS arm64, Linux arm64 and Linux amd64 with the same lockfile and Node version. `go build` never needs Node, because the output is committed. Embedding and serving it behind `RUNQUILL_PANEL_V2=1` is the next (Go) step. `.gitattributes` marks the directory as generated.
+The build is byte-identical across runs and across macOS arm64, Linux arm64 and Linux amd64 with the same lockfile and Node version. `go build` never needs Node, because the output is committed. From the repository root, run `RUNQUILL_PANEL_V2=1 go run . panel --demo` to try the embedded preview. `.gitattributes` marks the directory as generated.
 
 ## Output
 
