@@ -388,7 +388,7 @@ export function confirmAction(message, confirmLabel = "Confirm") {
       dialogResolve = null;
       if (dialog.open) dialog.close();
       if (opener?.isConnected) opener.focus({ preventScroll: true });
-      if (document.activeElement === document.body) {
+      if (opener === document.body || document.activeElement !== opener) {
         const row = rowKey && [...(table?.querySelectorAll("tbody tr") || [])].find((node) => node.dataset.key === rowKey);
         const replacement = label && [...((row || detail)?.querySelectorAll("[aria-label]") || [])]
           .find((node) => node.getAttribute("aria-label") === label);
