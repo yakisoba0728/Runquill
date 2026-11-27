@@ -34,7 +34,7 @@ func memoizeSealKey(t *testing.T) {
 	t.Cleanup(func() { sealKey = real })
 }
 
-func sealBytes(t *testing.T, payload []byte) []byte {
+func sealBytes(t testing.TB, payload []byte) []byte {
 	t.Helper()
 	var sealed bytes.Buffer
 	if err := Encrypt(&sealed, bytes.NewReader(payload), []byte(testPassphrase)); err != nil {
@@ -43,7 +43,7 @@ func sealBytes(t *testing.T, payload []byte) []byte {
 	return sealed.Bytes()
 }
 
-func TestSealRoundTripAndFraming(t *testing.T) {
+func TestBackupSealRoundTripAndFraming(t *testing.T) {
 	memoizeSealKey(t)
 	for _, size := range []int{0, 1, sealChunkSize, 2*sealChunkSize + 5} {
 		payload := make([]byte, size)
@@ -70,7 +70,7 @@ func TestSealRoundTripAndFraming(t *testing.T) {
 	}
 }
 
-func TestSealUsesTheDocumentedKDF(t *testing.T) {
+func TestBackupSealUsesTheDocumentedKDF(t *testing.T) {
 	sealed := sealBytes(t, []byte("payload"))
 	if got := binary.BigEndian.Uint32(sealed[10:14]); got != sealIterations || sealIterations < 600_000 {
 		t.Fatalf("iterations %d", got)
@@ -80,7 +80,7 @@ func TestSealUsesTheDocumentedKDF(t *testing.T) {
 	}
 }
 
-func TestUnsealRejectsTamperingInEveryRegion(t *testing.T) {
+func TestBackupUnsealRejectsTamperingInEveryRegion(t *testing.T) {
 	memoizeSealKey(t)
 	payload := make([]byte, 2*sealChunkSize+100)
 	rand.Read(payload)
@@ -114,7 +114,7 @@ func TestUnsealRejectsTamperingInEveryRegion(t *testing.T) {
 	}
 }
 
-func TestUnsealBoundsHeaderParameters(t *testing.T) {
+func TestBackupUnsealBoundsHeaderParameters(t *testing.T) {
 	memoizeSealKey(t)
 	sealed := sealBytes(t, []byte("x"))
 	for name, change := range map[string]func([]byte){
@@ -131,4 +131,30 @@ func TestUnsealBoundsHeaderParameters(t *testing.T) {
 			t.Fatalf("%s: header was not rejected before key derivation: %v", name, err)
 		}
 	}
+}
+
+func TestBackupUnsealAuthenticatesValidHeaderChanges(t *testing.T) {
+	memoizeSealKey(t)
+	sealed := sealBytes(t, []byte("short payload"))
+	// Both sizes put the short payload in one chunk and use the same key.
+	binary.BigEndian.PutUint32(sealed[len(Magic)+7+sealSaltSize:], sealMinChunk)
+	if err := Decrypt(io.Discard, bytes.NewReader(sealed), []byte(testPassphrase)); !errors.Is(err, ErrAuthentication) {
+		t.Fatalf("changed chunk size: %v", err)
+	}
+}
+
+func FuzzBackupDecrypt(f *testing.F) {
+	// Keep header parsing and GCM in the fuzz loop without re-running PBKDF2.
+	real := sealKey
+	sealKey = func([]byte, []byte, int) ([]byte, error) { return make([]byte, 32), nil }
+	f.Cleanup(func() { sealKey = real })
+	sealed := sealBytes(f, []byte("payload"))
+	f.Add([]byte{}, testPassphrase)
+	f.Add(sealBytes(f, nil), testPassphrase)
+	f.Add(sealed, testPassphrase)
+	f.Add(sealed[:len(sealed)-1], testPassphrase)
+	f.Add(sealed, "")
+	f.Fuzz(func(t *testing.T, data []byte, passphrase string) {
+		_ = Decrypt(io.Discard, bytes.NewReader(data), []byte(passphrase))
+	})
 }
