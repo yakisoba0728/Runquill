@@ -154,12 +154,20 @@ func (d docker) exitedOOM(ctx context.Context, containers map[string]string) (ma
 	slices.Sort(names)
 	output, err := d.command(ctx, nil, append([]string{"inspect", "--type", "container", "--format", "{{.Name}} {{.State.OOMKilled}}"}, names...)...)
 	if err != nil {
-		if ctx.Err() == nil {
-			slog.Debug("inspect exited runners", "host", d.label(), "error", err)
-		}
+		slog.Debug("inspect exited runners", "host", d.label(), "error", err)
 		return nil, nil
 	}
-	return parseExitedOOM(output)
+	killed, diagnostics := parseExitedOOM(output)
+	missing := 0
+	for _, name := range names {
+		if _, ok := killed[name]; !ok {
+			missing++
+		}
+	}
+	if missing != 0 {
+		slog.Debug("missing memory kill status for exited runners", "host", d.label(), "runners", missing)
+	}
+	return killed, diagnostics
 }
 
 func parseExitedOOM(output string) (map[string]bool, map[string]jobDiagnostic) {
@@ -167,11 +175,11 @@ func parseExitedOOM(output string) (map[string]bool, map[string]jobDiagnostic) {
 	diagnostics := make(map[string]jobDiagnostic)
 	for line := range strings.SplitSeq(strings.TrimSpace(output), "\n") {
 		name, value, ok := strings.Cut(strings.TrimSpace(line), " ")
+		name = strings.TrimPrefix(name, "/")
 		oom, err := strconv.ParseBool(value)
-		if !ok || err != nil {
+		if !ok || name == "" || err != nil {
 			continue
 		}
-		name = strings.TrimPrefix(name, "/")
 		killed[name] = oom
 		if oom {
 			diagnostics[name] = jobDiagnostic{"runner_memory_limit", "The container engine reported an out-of-memory kill. Check the worker pool memory limit."}
@@ -343,6 +351,9 @@ func registerRightsizingRoute(mux *http.ServeMux, a *panelAccess, pools func() w
 		defer cancel()
 		response, err := readRightsizing(ctx, a.db, group, days, pools(), time.Now())
 		if err != nil {
+			if r.Context().Err() == nil {
+				slog.Warn("read job resource rightsizing", "error", err)
+			}
 			http.Error(w, "Could not read job resources.", http.StatusServiceUnavailable)
 			return
 		}

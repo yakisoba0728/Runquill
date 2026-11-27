@@ -1,10 +1,13 @@
 package app
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 const (
@@ -51,6 +54,7 @@ case "$1" in
     fi
     ;;
   cp) cat >"$FLEET_TEST_LOG.tar" ;;
+  inspect) printf '%s' "${FLEET_TEST_INSPECT_OUTPUT:-}" ;;
 esac
 `), 0700); err != nil {
 		t.Fatal(err)
@@ -228,5 +232,13 @@ func TestEngineCommandErrorDetail(t *testing.T) {
 	_, err := engineCommand(t.Context(), filepath.Join(dir, "missing"), nil, "ps")
 	if err == nil || strings.HasSuffix(err.Error(), ": ") || !strings.Contains(err.Error(), "missing ps: ") {
 		t.Errorf("missing engine: %v", err)
+	}
+}
+
+func TestDockerCommandTimeout(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	if _, err := engineCommandTimeout(ctx, 100*time.Millisecond, "sh", nil, "-c", "exec sleep 30"); !errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
+		t.Fatalf("command should reach its own timeout first: command error %v, parent error %v", err, ctx.Err())
 	}
 }

@@ -145,10 +145,10 @@ func engineCommandTimeout(ctx context.Context, timeout time.Duration, binary str
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	result, err := cmd.Output()
-	if ctx.Err() != nil {
-		return "", ctx.Err()
-	}
 	if err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
 		if detail := strings.TrimSpace(stderr.String()); detail != "" {
 			return "", fmt.Errorf("%s %s: %w: %s", binary, args[0], err, detail)
 		}
@@ -157,12 +157,16 @@ func engineCommandTimeout(ctx context.Context, timeout time.Duration, binary str
 	return string(result), nil
 }
 
-func (d docker) containers(ctx context.Context) (map[string]string, error) {
+func (d docker) listContainers(ctx context.Context, options ...string) (string, error) {
 	args := []string{"ps", "-a", "--filter", "label=" + runnerLabel}
 	if d.worker != "" {
 		args = append(args, "--filter", "label="+workerLabel+"="+d.worker)
 	}
-	output, err := d.command(ctx, nil, append(args, "--format", "{{.Names}}\t{{.State}}")...)
+	return d.command(ctx, nil, append(args, options...)...)
+}
+
+func (d docker) containers(ctx context.Context) (map[string]string, error) {
+	output, err := d.listContainers(ctx, "--format", "{{.Names}}\t{{.State}}")
 	if err != nil {
 		return nil, err
 	}
@@ -253,7 +257,7 @@ func (d docker) createPlan(engine *containerEngine, name, cacheVolume, toolVolum
 	return plan
 }
 
-func (d docker) start(ctx context.Context, name, jit string) error {
+func (d docker) start(ctx context.Context, name, jit string) (err error) {
 	engine, err := d.containerEngine()
 	if err != nil {
 		return err
@@ -283,6 +287,11 @@ func (d docker) start(ctx context.Context, name, jit string) error {
 	if _, err := d.command(ctx, nil, plan.create...); err != nil {
 		return err
 	}
+	defer func() {
+		if err != nil {
+			err = d.removeFailedRunner(ctx, name, err)
+		}
+	}()
 	// Copy the JIT credential without exposing it in the engine's command or environment metadata.
 	var archive bytes.Buffer
 	tw := tar.NewWriter(&archive)
@@ -310,4 +319,11 @@ func (d docker) start(ctx context.Context, name, jit string) error {
 func (d docker) remove(ctx context.Context, name string) error {
 	_, err := d.command(ctx, nil, "rm", "-f", "-v", name)
 	return err
+}
+
+func (d docker) removeFailedRunner(ctx context.Context, name string, cause error) error {
+	if err := d.remove(context.WithoutCancel(ctx), name); err != nil {
+		return errors.Join(cause, fmt.Errorf("remove failed runner %s: %w", name, err))
+	}
+	return cause
 }
