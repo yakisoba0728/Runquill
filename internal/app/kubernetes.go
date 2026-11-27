@@ -216,8 +216,13 @@ func (k *kubeRunners) startOn(ctx context.Context, host, name, jit string) error
 	}
 	if _, err := k.secrets.Create(ctx, credential, meta.CreateOptions{}); err != nil {
 		// Kubernetes may include invalid values in error details. Do not surface Secret data.
-		_ = k.deletePod(ctx, pod)
-		return fmt.Errorf("create runner credential Secret: %s", apierrors.ReasonForError(err))
+		secretErr := fmt.Errorf("create runner credential Secret: %s", apierrors.ReasonForError(err))
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if err := k.deletePod(cleanup, pod); err != nil {
+			return errors.Join(secretErr, fmt.Errorf("clean up runner Pod: %w", err))
+		}
+		return secretErr
 	}
 	return nil
 }
@@ -237,6 +242,8 @@ func (k *kubeRunners) runnerPod(name string) *core.Pod {
 		root := int64(0)
 		runnerSecurity = &core.SecurityContext{RunAsUser: &root, Privileged: &yes}
 	}
+	initSecurity := *plain
+	initSecurity.ReadOnlyRootFilesystem = &yes
 	runnerEnv := []core.EnvVar{{Name: "RUNQUILL_RUNNER_MODE", Value: k.options.mode}, {Name: "RUNQUILL_JIT_FILE", Value: "/runquill/config"}}
 	if k.options.mode == "dind" && k.options.mirror != "" {
 		runnerEnv = append(runnerEnv, core.EnvVar{Name: "RUNQUILL_REGISTRY_MIRROR", Value: k.options.mirror})
@@ -254,7 +261,7 @@ func (k *kubeRunners) runnerPod(name string) *core.Pod {
 			ImagePullSecrets: pullSecrets,
 			SecurityContext:  &core.PodSecurityContext{FSGroup: &uid},
 			InitContainers: []core.Container{{
-				Name: "prepare-jit", Image: k.options.image, SecurityContext: plain,
+				Name: "prepare-jit", Image: k.options.image, SecurityContext: &initSecurity, Resources: k.options.resources,
 				Command:      []string{"/bin/sh", "-ec", "umask 077; cp /runquill-secret/config /runquill/config"},
 				VolumeMounts: []core.VolumeMount{writable, {Name: "credential", MountPath: "/runquill-secret", ReadOnly: true}},
 			}},

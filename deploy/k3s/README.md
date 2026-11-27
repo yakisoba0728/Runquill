@@ -50,8 +50,8 @@ A runner Pod can stay Terminating, for example on a NotReady node. Runquill does
 | `RUNQUILL_K8S_IMAGE_PULL_SECRET` | unset | Optional registry Secret in `runquill-runners` for a custom or private runner image, including catalogue images. |
 | `RUNQUILL_RUNNER_IMAGES` | unset | Optional JSON map of runner OS names to images that jobs select with `os__NAME__`. Release builds already include the published variants. |
 | `RUNQUILL_K8S_NODE_SELECTOR` | unset | Optional JSON map of node label names and values. |
-| `RUNQUILL_K8S_JOB_CPU` | unset | Optional CPU request and limit, for example `2`. |
-| `RUNQUILL_K8S_JOB_MEMORY` | unset | Optional memory request and limit, for example `4Gi`. |
+| `RUNQUILL_K8S_JOB_CPU` | unset | Optional CPU request and limit for both the runner and its init container, for example `2`. |
+| `RUNQUILL_K8S_JOB_MEMORY` | unset | Optional memory request and limit for both the runner and its init container, for example `4Gi`. |
 | `RUNQUILL_K8S_RUNNER_MODE` | `plain` | `plain` executes steps directly under UID 1001. `dind` adds the privileged Docker daemon for Docker builds and container-based jobs, actions, and services. |
 | `RUNQUILL_REGISTRY_MIRROR` | unset | Optional Docker Hub pull-through mirror for the `dind` daemon, such as `http://10.0.0.5:5000`. Use an address the Pod network reaches. See the [Docker Hub mirror](../../docs/runner-images.md#docker-hub-mirror) limits. |
 
