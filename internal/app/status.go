@@ -117,7 +117,7 @@ func readStatusJobs(ctx context.Context, db *sql.DB) ([]job, error) {
 	}
 	rows, err := db.QueryContext(ctx, `
         SELECT job_id, repository, route, phase, coalesce(runner_name, ''), retry_at, `+reason+`, `+host+`, `+timing+`, `+launchTiming+`
-        FROM jobs WHERE phase = ? OR runner_name IS NOT NULL ORDER BY sequence`, queued)
+        FROM jobs WHERE phase = 0 OR runner_name IS NOT NULL ORDER BY sequence`)
 	if err != nil {
 		return nil, err
 	}

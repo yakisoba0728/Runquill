@@ -1,9 +1,81 @@
 package app
 
 import (
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestQueueMigrationQueryPlans(t *testing.T) {
+	ctx := t.Context()
+	path := filepath.Join(t.TempDir(), "queue.sqlite3")
+	db, err := openQueueDB(path, "rwc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.ExecContext(ctx, schema+`
+        INSERT INTO jobs (job_id, repository, repository_id, installation_id, route, phase, changed_at, runner_name)
+        VALUES (42, 'owner/repo', 1, 1, 'build', 2, 100, 'active-runner');`)
+	closeErr := db.Close()
+	if err != nil || closeErr != nil {
+		t.Fatalf("create pre-migration queue: exec=%v close=%v", err, closeErr)
+	}
+	q, err := openQueue(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(q.close)
+	if err := q.migrate(); err != nil {
+		t.Fatalf("repeat migration: %v", err)
+	}
+	if j := readJob(t, q, 42); j.runnerName != "active-runner" || j.phase != completed {
+		t.Fatalf("migration changed persisted lease: %+v", j)
+	}
+	if err := migrateUsage(ctx, q.DB); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, check := range []struct {
+		name, query, plan string
+		args              []any
+	}{
+		{"expiry", "SELECT retry_reason FROM jobs " + expiredJobsCondition,
+			"SEARCH jobs USING INDEX jobs_phase_changed", []any{queued, 100}},
+		{"prune", pruneJobsQuery + ` AND (phase <> ? OR EXISTS (SELECT 1 FROM usage_rolled WHERE usage_rolled.job_id = jobs.job_id))`,
+			"SEARCH jobs USING INDEX jobs_unleased_changed", []any{100, completed}},
+		{"status", "SELECT route FROM jobs WHERE phase = 0 OR runner_name IS NOT NULL ORDER BY sequence",
+			"SCAN jobs USING INDEX jobs_status", nil},
+		{"usage", "SELECT " + usageJobColumns + " FROM jobs WHERE phase = ? AND changed_at > ? AND changed_at <= ? LIMIT ?",
+			"SEARCH jobs USING INDEX jobs_phase_changed", []any{completed, 90, 110, usageRawLimit}},
+		{"rightsizing", `SELECT j.sequence, j.repository, samples FROM jobs j JOIN job_resources USING (job_id)
+            WHERE j.phase = ? AND j.changed_at > ? LIMIT ?`,
+			"SEARCH j USING INDEX jobs_phase_changed", []any{completed, 90, usageRawLimit}},
+	} {
+		t.Run(check.name, func(t *testing.T) {
+			rows, err := q.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+check.query, check.args...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer rows.Close()
+			var plan []string
+			for rows.Next() {
+				var id, parent, unused int
+				var detail string
+				if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+					t.Fatal(err)
+				}
+				plan = append(plan, detail)
+			}
+			if err := rows.Err(); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(strings.Join(plan, "\n"), check.plan) {
+				t.Fatalf("plan %q does not contain %q", plan, check.plan)
+			}
+		})
+	}
+}
 
 func TestQueueRecordMovesQueuedJobToNewInstallation(t *testing.T) {
 	q := testQueue(t)

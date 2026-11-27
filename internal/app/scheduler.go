@@ -120,6 +120,10 @@ func (s *scheduler) spawn(slots chan struct{}, wg *sync.WaitGroup, f func()) {
 	}()
 }
 
+// Most jobs have no lease, so prefer a time range over the runner_name index.
+const expiredJobsCondition = "WHERE likely(runner_name IS NULL) AND phase = ? AND changed_at <= ?"
+const pruneJobsQuery = "DELETE FROM jobs WHERE likely(runner_name IS NULL) AND changed_at < ?"
+
 func (s *scheduler) tickFleet(ctx context.Context, now time.Time, state *operationState) error {
 	snapshots, err := s.runtime.snapshot(reapingStuckRunners(ctx))
 	if err != nil {
@@ -140,8 +144,7 @@ func (s *scheduler) tickFleet(ctx context.Context, now time.Time, state *operati
 		return err
 	}
 
-	expired, err := s.queue.jobs(ctx, "WHERE runner_name IS NULL AND phase = ? AND changed_at <= ?",
-		queued, now.Add(-queueExpiry).Unix())
+	expired, err := s.queue.jobs(ctx, expiredJobsCondition, queued, now.Add(-queueExpiry).Unix())
 	if err != nil {
 		return err
 	}
@@ -156,7 +159,7 @@ func (s *scheduler) tickFleet(ctx context.Context, now time.Time, state *operati
 	}
 	// A rollup may fail or leave jobs for the next batch. Prune completed jobs
 	// only when the ledger confirms they have been counted.
-	prune := "DELETE FROM jobs WHERE runner_name IS NULL AND changed_at < ?"
+	prune := pruneJobsQuery
 	if err := rollupUsage(ctx, s.queue, s.pools, now); err != nil {
 		if ctx.Err() == nil {
 			slog.Warn("roll up usage statistics", "error", err)
