@@ -178,7 +178,7 @@ func readPanelCompleted(ctx context.Context, q *queue, now time.Time, pools work
 
 func panelHTTPServer(panel *panelState, access *panelAccess) *http.Server {
 	return &http.Server{
-		Handler: panelHandler(panel, access), ReadHeaderTimeout: 5 * time.Second,
+		Handler: panelHandler(panel, access), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 8 * time.Second,
 		WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10,
 	}
 }

@@ -19,6 +19,13 @@ import (
 	"github.com/yakisoba0728/Runquill/internal/webui"
 )
 
+func TestPanelServerBoundsRequestBodyRead(t *testing.T) {
+	server := panelHTTPServer(nil, nil)
+	if server.ReadTimeout <= server.ReadHeaderTimeout || server.ReadTimeout >= server.WriteTimeout {
+		t.Fatalf("request read timeout %v must allow body reads after headers and leave time to respond", server.ReadTimeout)
+	}
+}
+
 func TestPanelRoutesAndFirstJobEvidence(t *testing.T) {
 	ctx := t.Context()
 	q, err := openQueue(filepath.Join(t.TempDir(), "queue.sqlite3"))
