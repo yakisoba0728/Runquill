@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { attention } from "./attention";
+import { attention, jobsPerKind } from "./attention";
 import { summary } from "./fleet";
 import type { Snapshot } from "./types";
 
@@ -35,6 +35,21 @@ describe("attention", () => {
       ["retry:1", "#/jobs/1"],
       ["memory:4", "#/jobs/4"],
     ]);
+  });
+
+  it("groups more than a few jobs of one kind into one item linking to the filtered queue", () => {
+    const jobs = Array.from({ length: 1500 }, (_, i) => ({ id: i + 1, repository: "o/r", status: i % 3 ? "WAITING" : "RETRY" }));
+    jobs.push({ id: 9001, repository: "o/r", status: "OFFLINE" });
+    const hosts = [{ name: "edge", status: "OFFLINE", slot_limit: 1, occupied_slots: 0, reserved_slots: 0 }];
+    const items = attention({ last_poll: "x", fleet: { slot_limit: 1, hosts, jobs } });
+    expect(items.map((item) => [item.key, item.href, item.values])).toEqual([
+      ["host:edge", "#/hosts/edge", { host: "edge" }],
+      ["offline:9001", "#/jobs/9001", { id: 9001 }],
+      ["retry", "#/jobs?state=RETRY", { n: "500" }],
+    ]);
+    // Up to jobsPerKind jobs of a kind stay one item each.
+    const few = attention({ last_poll: "x", fleet: { slot_limit: 1, jobs: jobs.filter((job) => job.status === "RETRY").slice(0, jobsPerKind) } });
+    expect(few.map((item) => item.key)).toEqual(["retry:1", "retry:4", "retry:7"]);
   });
 
   it("asks for App evidence until a webhook or poll arrives, and is empty without a snapshot", () => {

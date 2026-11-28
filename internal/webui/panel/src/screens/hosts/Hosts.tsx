@@ -10,7 +10,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { post, useBusy } from "../../actions";
 import type { ApiError } from "../../api";
 import { useScreenCommands, type ScreenCommand } from "../../commands";
-import { Ago, KeyValue, Meter, Notice, Page, StatusBadge } from "../../components";
+import { Ago, Clip, KeyValue, Meter, Notice, Page, StatusBadge } from "../../components";
 import { CopyField } from "../../components/CopyField";
 import { RowMenu, rowMenuTabs } from "../../components/RowMenu";
 import { availableSlots, poolName, pools, runnerRows, workerState, type PoolRow } from "../../fleet";
@@ -46,7 +46,7 @@ function HostState({ host }: { host: Host }) {
 
 const hostColumns = (menu?: (host: Host) => ReactNode): Column<Host>[] => [
   { key: "name", header: t("Host"), sticky: true, width: 200, cell: (host) => (
-    <>{host.name}{host.error && <span className="block-sub">{serverText(host.error)}</span>}</>
+    <>{host.name}{host.error && <Clip className="block-sub" text={serverText(host.error)} />}</>
   ) },
   { key: "pool", header: t("Pool"), cell: (host) => poolName(host.pool) },
   { key: "state", header: t("State"), width: "minmax(180px, 1.5fr)", cell: (host) => <HostState host={host} /> },

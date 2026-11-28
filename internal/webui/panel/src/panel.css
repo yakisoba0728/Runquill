@@ -133,6 +133,8 @@ h2[tabindex]:focus, .page-title[tabindex="-1"]:focus { outline: none; }
 .data-table.rows-2 { --data-table-row: 58px; }
 .data-table.rows-3 { --data-table-row: 76px; }
 .data-table .block-sub { overflow: hidden; text-overflow: ellipsis; }
+/* A long reason takes two lines of a two-line row before it is cut. */
+.data-table .clamp-2 { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; white-space: normal; overflow-wrap: anywhere; }
 /* A meter in a cell takes the cell's width on its own line, under any text. */
 .data-table-text:has(.meter) { flex: 1; }
 .data-table .meter { display: block; margin-top: 4px; }

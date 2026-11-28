@@ -43,10 +43,10 @@ export function jobLists(snapshot: Snapshot | null) {
 
 export type LiveTab = keyof ReturnType<typeof jobLists>;
 
-/** The search (repository or job number, a leading # ignored) and pool filters of the live tabs. */
-export function filterJobs(jobs: Job[], query: string, pool: string) {
+/** The search (repository or job number, a leading # ignored), pool and state filters of the live tabs. */
+export function filterJobs(jobs: Job[], query: string, pool: string, state = "") {
   const q = query.trim().toLowerCase().replace(/^#/, "");
-  return jobs.filter((job) => (!pool || (job.pool || "default") === pool) &&
+  return jobs.filter((job) => (!pool || (job.pool || "default") === pool) && (!state || jobStatus(job) === state) &&
     (!q || job.repository.toLowerCase().includes(q) || String(job.id).includes(q)));
 }
 

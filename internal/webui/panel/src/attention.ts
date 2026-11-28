@@ -1,7 +1,8 @@
 // The overview's "Needs attention" list (design §3.2), from snapshot fields only, in priority order. The nav badge
-// counts the same list.
+// counts the same list, so each kind of job problem counts once when it is grouped.
+import { number } from "./format";
 import { serverText } from "./i18n";
-import type { Snapshot } from "./types";
+import type { Job, Snapshot } from "./types";
 
 export interface AttentionItem {
   key: string;
@@ -19,6 +20,13 @@ export interface AttentionItem {
 }
 
 const enc = encodeURIComponent;
+
+/** Up to this many jobs of one kind are listed one by one; more become one item, so a busy queue cannot bury a host. */
+export const jobsPerKind = 3;
+
+function perJob(jobs: Job[], item: (job: Job) => AttentionItem, group: AttentionItem): AttentionItem[] {
+  return jobs.length > jobsPerKind ? [{ ...group, values: { n: number(jobs.length) } }] : jobs.map(item);
+}
 
 export function attention(snapshot: Snapshot | null): AttentionItem[] {
   if (!snapshot) return [];
@@ -48,30 +56,19 @@ export function attention(snapshot: Snapshot | null): AttentionItem[] {
     }
   }
   const jobs = fleet?.jobs ?? [];
-  for (const job of jobs) {
-    if (job.status === "OFFLINE") {
-      items.push({
-        key: "offline:" + job.id, tone: "danger", href: "#/jobs/" + job.id,
-        title: "Job #{id} is assigned to a disconnected host", values: { id: job.id }, detail: job.repository,
-      });
-    }
-  }
-  for (const job of jobs) {
-    if (job.status === "RETRY") {
-      items.push({
-        key: "retry:" + job.id, tone: "warning", href: "#/jobs/" + job.id,
-        title: "Job #{id} is waiting to retry", values: { id: job.id }, detail: serverText(job.retry_reason) || job.repository,
-      });
-    }
-  }
-  for (const job of jobs) {
-    if (job.diagnostic?.code === "runner_memory_limit") {
-      items.push({
-        key: "memory:" + job.id, tone: "danger", href: "#/jobs/" + job.id,
-        title: "Job #{id} was stopped at its memory limit", values: { id: job.id }, detail: job.repository,
-      });
-    }
-  }
+  items.push(...perJob(jobs.filter((job) => job.status === "OFFLINE"), (job) => ({
+    key: "offline:" + job.id, tone: "danger", href: "#/jobs/" + job.id,
+    title: "Job #{id} is assigned to a disconnected host", values: { id: job.id }, detail: job.repository,
+  }), { key: "offline", tone: "danger", href: "#/jobs?tab=running&state=OFFLINE", title: "{n} jobs are assigned to a disconnected host" }));
+  items.push(...perJob(jobs.filter((job) => job.status === "RETRY"), (job) => ({
+    key: "retry:" + job.id, tone: "warning", href: "#/jobs/" + job.id,
+    title: "Job #{id} is waiting to retry", values: { id: job.id }, detail: serverText(job.retry_reason) || job.repository,
+  }), { key: "retry", tone: "warning", href: "#/jobs?state=RETRY", title: "{n} jobs are waiting to retry" }));
+  // A diagnostic, not a state: these jobs are no longer pending, so they are on the running tab.
+  items.push(...perJob(jobs.filter((job) => job.diagnostic?.code === "runner_memory_limit"), (job) => ({
+    key: "memory:" + job.id, tone: "danger", href: "#/jobs/" + job.id,
+    title: "Job #{id} was stopped at its memory limit", values: { id: job.id }, detail: job.repository,
+  }), { key: "memory", tone: "danger", href: "#/jobs?tab=running", title: "{n} jobs were stopped at their memory limit" }));
   if (!snapshot.last_webhook && !snapshot.last_poll) {
     items.push({ key: "evidence", tone: "warning", title: "Waiting for evidence that the GitHub App is connected", section: "first-job" });
   }

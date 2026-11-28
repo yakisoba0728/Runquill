@@ -16,12 +16,15 @@ describe("fleet", () => {
     expect(jobStatus(lists.cleaned[0])).toBe("CLEANED");
   });
 
-  it("filters by repository or job number and pool", () => {
+  it("filters by repository or job number, pool and state", () => {
     const jobs = [job(4827, "WAITING", { repository: "garden-lab/forecast" }), job(4828, "RETRY", { repository: "garden-lab/pattern-kit", pool: "build" })];
     expect(filterJobs(jobs, " #4828", "").map((j) => j.id)).toEqual([4828]);
     expect(filterJobs(jobs, "FORE", "").map((j) => j.id)).toEqual([4827]);
     expect(filterJobs(jobs, "", "default").map((j) => j.id)).toEqual([4827]);
     expect(filterJobs(jobs, "", "build").map((j) => j.id)).toEqual([4828]);
+    expect(filterJobs(jobs, "", "", "RETRY").map((j) => j.id)).toEqual([4828]);
+    expect(filterJobs(jobs, "4827", "", "RETRY")).toEqual([]);
+    expect(filterJobs([{ id: 5, repository: "o/r" }], "", "", "CLEANED").map((j) => j.id)).toEqual([5]); // recent jobs have no status
   });
 
   it("lists stages, splitting the queue when JIT times were recorded", () => {
