@@ -6,6 +6,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -387,7 +388,7 @@ func TestOrganizationRunnerGroupPublicRepositories(t *testing.T) {
 			}
 		})
 		gh.owner, gh.organization, gh.runnerGroupID, gh.repositoryScope, gh.allowPublic = "team", true, 12, scopeSelected, test.allow
-		repositories, err := gh.runnerGroupRepositories(t.Context(), installationToken{Token: "org"})
+		repositories, _, err := gh.runnerGroupRepositories(t.Context(), installationToken{Token: "org"})
 		if test.err == "" {
 			if err != nil || repositories[9] != "team/private" || strings.Contains(test.members, public) && repositories[10] != "team/open" {
 				t.Errorf("allow=%v group public=%v: %v, %v", test.allow, test.groupPublic, repositories, err)
@@ -477,6 +478,92 @@ func TestSchedulerLetsOnlyDefaultBranchRunsWriteSharedCache(t *testing.T) {
 		}
 		if f.runCalls.Load() != test.runCalls || !slices.Equal(runtime.scratch, []bool{test.scratch}) {
 			t.Errorf("%s: run lookups %d, scratch %v; want %d, %v (%+v)", test.name, f.runCalls.Load(), runtime.scratch, test.runCalls, test.scratch, got)
+		}
+	}
+}
+
+// TestRunnerGroupGuardsEveryPublicMember covers a group whose runners any member's job can take:
+// before registering a runner for one member, Runquill guards every other public member.
+func TestRunnerGroupGuardsEveryPublicMember(t *testing.T) {
+	const (
+		private = `{"id":9,"full_name":"team/private","private":true,"visibility":"private","owner":{"login":"team"}}`
+		open    = `{"id":10,"full_name":"team/open","private":false,"visibility":"public","owner":{"login":"team"}}`
+		other   = `{"id":11,"full_name":"team/other","private":false,"visibility":"public","owner":{"login":"team"}}`
+		fork    = `{"id":31,"head_repository":{"id":99,"full_name":"outsider/open"}}`
+		waiting = `{"status":"queued","labels":["runquill-17-1-build"]}`
+	)
+	privateJob := job{repository: "team/private", repositoryID: 9, installationID: 7}
+	openJob := job{repository: "team/open", repositoryID: 10, installationID: 7}
+	for _, test := range []struct {
+		name, members, policy, queued, err string
+		allow                              bool
+		j                                  job
+		approvals                          int32
+	}{
+		{"mixed group, outside contributors need no approval", private + "," + open, "first_time_contributors", "",
+			"runner group 12 shares its runners with public repository team/open: public repository team/open must require approval for all external contributors (all_external_contributors)",
+			true, privateJob, 1},
+		{"mixed group, fork run waits for a Runquill label", private + "," + open, forkApprovalPolicy, fork,
+			"a fork workflow run (#31 from outsider/open) is waiting for a Runquill runner in team/open", true, privateJob, 1},
+		{"mixed group, safe public member", private + "," + open, forkApprovalPolicy, "", "", true, privateJob, 1},
+		{"public group, another public member unsafe", open + "," + other, "first_time_contributors", "",
+			"shares its runners with public repository team/open", true, job{repository: "team/other", repositoryID: 11, installationID: 7}, 1},
+		{"single public repository, guarded by the scheduler", open, "first_time_contributors", "", "", true, openJob, 0},
+		{"private group", private, "first_time_contributors", "", "", true, privateJob, 0},
+		{"public repositories not allowed", private, "first_time_contributors", "", "", false, privateJob, 0},
+	} {
+		var approvals atomic.Int32
+		gh := testGitHub(t, func(w http.ResponseWriter, r *http.Request) {
+			switch r.Method + " " + r.URL.Path {
+			case "GET /orgs/team/installation":
+				fmt.Fprint(w, `{"id":7,"account":{"login":"team","type":"Organization"},"repository_selection":"all"}`)
+			case "POST /app/installations/7/access_tokens":
+				var body struct {
+					Permissions   map[string]string
+					RepositoryIDs []int64 `json:"repository_ids"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Error(err)
+				}
+				switch {
+				case slices.Equal(body.RepositoryIDs, []int64{10}) && body.Permissions["administration"] == "read":
+					fmt.Fprint(w, `{"token":"open-admin"}`)
+				case len(body.RepositoryIDs) == 0 && body.Permissions[organizationRunnerPermission] == "write":
+					fmt.Fprint(w, `{"token":"org"}`)
+				default:
+					t.Errorf("%s: unexpected token scope %+v", test.name, body)
+					w.WriteHeader(http.StatusBadRequest)
+				}
+			case "GET /orgs/team/actions/runner-groups/12":
+				fmt.Fprintf(w, `{"id":12,"visibility":"selected","allows_public_repositories":%t,"inherited":false}`, test.allow)
+			case "GET /orgs/team/actions/runner-groups/12/repositories":
+				fmt.Fprintf(w, `{"repositories":[%s]}`, test.members)
+			case "GET /repos/team/open/actions/permissions/fork-pr-contributor-approval":
+				approvals.Add(1)
+				fmt.Fprintf(w, `{"approval_policy":%q}`, test.policy)
+			case "GET /repos/team/open/actions/runs":
+				if r.Header.Get("Authorization") != "Bearer open-admin" {
+					t.Errorf("%s: member runs read with the wrong token", test.name)
+				}
+				runs := ""
+				if r.URL.Query().Get("status") == "queued" {
+					runs = test.queued
+				}
+				fmt.Fprintf(w, `{"workflow_runs":[%s]}`, runs)
+			case "GET /repos/team/open/actions/runs/31/jobs":
+				fmt.Fprintf(w, `{"jobs":[%s]}`, waiting)
+			default:
+				t.Errorf("%s: unexpected API request %s %s", test.name, r.Method, r.URL)
+				w.WriteHeader(http.StatusNotFound)
+			}
+		})
+		gh.owner, gh.organization, gh.runnerGroupID, gh.allowPublic = "team", true, 12, test.allow
+		token, err := gh.organizationJobToken(t.Context(), test.j, true)
+		if test.err == "" && (err != nil || token != "org") || test.err != "" && (err == nil || !strings.Contains(err.Error(), test.err)) {
+			t.Errorf("%s: token %q, error %v; want error %q", test.name, token, err, test.err)
+		}
+		if approvals.Load() != test.approvals {
+			t.Errorf("%s: %d approval policy reads, want %d", test.name, approvals.Load(), test.approvals)
 		}
 	}
 }

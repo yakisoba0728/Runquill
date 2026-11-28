@@ -101,7 +101,7 @@ func diagnoseRepository(ctx context.Context, out io.Writer, api *github, db *sql
 		if permissionErr != nil {
 			return permissionErr
 		}
-		repositories, err := api.inspectRunnerGroup(ctx, jwt, inst.ID)
+		repositories, public, err := api.inspectRunnerGroup(ctx, jwt, inst.ID)
 		if err != nil {
 			return err
 		}
@@ -109,6 +109,9 @@ func diagnoseRepository(ctx context.Context, out io.Writer, api *github, db *sql
 			return err
 		}
 		fmt.Fprintf(out, "GitHub runner group %d covers %s\n", api.runnerGroupID, name)
+		if err := api.guardRunnerGroup(ctx, inst.ID, repositories, public, repo.ID); err != nil {
+			fmt.Fprintf(out, "Jobs wait: %s\n", strings.Join(strings.Fields(err.Error()), " "))
+		}
 	}
 	poll, err := latestRepositoryPoll(ctx, db, inst.ID, repo.ID)
 	if err != nil {
