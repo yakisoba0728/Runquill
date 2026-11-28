@@ -146,6 +146,8 @@ docker compose pull manager
 docker compose up -d --no-build
 ```
 
+`setup`과 설정 마법사는 배포에 사용한 Compose 파일(패널이면 `compose.panel.yaml` 등)을 `.env`의 `COMPOSE_FILE`에 기록하므로 위 명령만으로 오버레이가 유지됩니다. `.env`를 직접 작성했다면 `-f`로 파일을 지정하거나 `COMPOSE_FILE`을 직접 추가합니다. Compose는 대기열 볼륨 이름을 설치 디렉터리 이름에서 정하므로 디렉터리 이름을 바꾸지 마세요. [자세히](operations.ko.md#업그레이드)
+
 ### 기존 GitHub App 또는 웹훅 사용
 
 앱을 수동으로 만들 때는 **Only on this account**를 선택하고 **Actions → Read-only**와 **Administration → Read and write** 권한을 부여합니다. 발급한 PEM 키를 보관하고 앱을 개인 계정에 설치합니다. [환경 변수 예제](../.env.example)를 `.env`로 복사해 `RUNQUILL_OWNER`와 `RUNQUILL_APP_ID`를 입력하고, `RUNQUILL_KEY_FILE`에 PEM 파일 경로를 지정한 뒤 두 파일의 권한을 `0600`으로 설정합니다. **Only select repositories**로 설치했다면 `RUNQUILL_REPOSITORY_SCOPE=selected`를 설정합니다. 폴링으로 연결할 때는 앱의 웹훅을 끄고 `RUNQUILL_WEBHOOK_SECRET`을 비워둡니다. [GitHub App 설치](https://docs.github.com/en/apps/using-github-apps/installing-your-own-github-app) · [저장소 러너 JIT API](https://docs.github.com/en/rest/actions/self-hosted-runners#create-configuration-for-a-just-in-time-runner-for-a-repository)

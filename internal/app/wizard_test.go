@@ -205,7 +205,9 @@ func TestWizardStartsPublishedManagerWithoutWaitingForTheRunnerPull(t *testing.T
 	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$RUNQUILL_WIZARD_TEST_LOG\"\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	environment := setupEnvironment("owner", 1, "ghcr.io/owner/runquill", "v0.3.2")
+	// An overlay the operator already recorded stays, and the SSH host adds its overlay.
+	environment := setupEnvironment("owner", 1, "ghcr.io/owner/runquill", "v0.3.2") +
+		"COMPOSE_FILE=compose.yaml:compose.mirror.yaml\nRUNQUILL_DOCKER_HOSTS=local,ssh://runner@198.51.100.8\n"
 	if err := os.WriteFile(filepath.Join(dir, setupEnvFile), []byte(environment), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -214,10 +216,14 @@ func TestWizardStartsPublishedManagerWithoutWaitingForTheRunnerPull(t *testing.T
 		t.Fatal(err)
 	}
 	commands, err := os.ReadFile(os.Getenv("RUNQUILL_WIZARD_TEST_LOG"))
-	const want = "compose -f compose.yaml -f compose.panel.yaml up -d --no-build --pull missing\n" +
-		"compose -f compose.yaml -f compose.panel.yaml exec -T manager runquill doctor\n"
+	const files = "-f compose.yaml -f compose.mirror.yaml -f compose.panel.yaml -f compose.ssh.yaml"
+	const want = "compose " + files + " up -d --no-build --pull missing\n" + "compose " + files + " exec -T manager runquill doctor\n"
 	if err != nil || string(commands) != want {
 		t.Fatalf("release deployment commands: %s (%v)", commands, err)
+	}
+	saved, err := os.ReadFile(filepath.Join(dir, setupEnvFile))
+	if err != nil || !strings.HasSuffix(string(saved), "COMPOSE_FILE=compose.yaml:compose.mirror.yaml:compose.panel.yaml:compose.ssh.yaml\nRUNQUILL_DOCKER_HOSTS=local,ssh://runner@198.51.100.8\n") {
+		t.Fatalf("wizard did not record its Compose files in .env: %v", err)
 	}
 }
 

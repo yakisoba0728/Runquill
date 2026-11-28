@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -167,6 +168,9 @@ func setup(ctx context.Context, out io.Writer, dir string, client *http.Client, 
 		return nil
 	}
 	if opts.kubernetes {
+		if err := saveSetupEnv(dir, "RUNQUILL_BACKEND", "kubernetes"); err != nil {
+			return err
+		}
 		fmt.Fprintln(out, "Apply runquill-k3s.yaml to the intended Kubernetes context.")
 		fmt.Fprintln(out, "  kubectl apply -f runquill-k3s.yaml")
 		fmt.Fprintln(out, "  kubectl -n runquill-system create secret generic runquill-config --from-env-file=.env")
@@ -184,11 +188,15 @@ func setup(ctx context.Context, out io.Writer, dir string, client *http.Client, 
 		return nil
 	}
 
-	fmt.Fprintln(out, "Run these commands from the Runquill project directory:")
-	compose := "docker compose"
-	if opts.panel {
-		compose += " -f compose.yaml -f compose.panel.yaml"
+	values, err = readSetupEnv(dir)
+	if err != nil {
+		return err
 	}
+	if _, err := recordComposeFiles(dir, setupComposeFiles(values, opts.panel)); err != nil {
+		return err
+	}
+	fmt.Fprintln(out, "Run these commands from the Runquill project directory (Compose reads its files from COMPOSE_FILE in .env):")
+	compose := "docker compose"
 	if runner := values["RUNQUILL_RUNNER_IMAGE"]; setupImage.MatchString(runner) && setupImage.MatchString(values["RUNQUILL_MANAGER_IMAGE"]) {
 		fmt.Fprintf(out, "  docker pull %s\n  %s pull manager\n  %s up -d --no-build\n", runner, compose, compose)
 	} else {
@@ -326,6 +334,94 @@ func setupValues(data []byte) (map[string]string, error) {
 		return nil, errors.New("generated .env has missing or invalid GitHub App settings")
 	}
 	return values, nil
+}
+
+func readSetupEnv(dir string) (map[string]string, error) {
+	data, err := os.ReadFile(filepath.Join(dir, setupEnvFile))
+	if err != nil {
+		return nil, err
+	}
+	return setupValues(data)
+}
+
+// setupComposeFiles lists the Compose files a Docker deployment needs for these settings, in order.
+func setupComposeFiles(values map[string]string, panel bool) []string {
+	files := []string{"compose.yaml"}
+	if panel {
+		files = append(files, "compose.panel.yaml")
+	}
+	for host := range strings.SplitSeq(values["RUNQUILL_DOCKER_HOSTS"], ",") {
+		host = strings.TrimSpace(host)
+		switch {
+		case strings.HasPrefix(host, "ssh://") && !slices.Contains(files, "compose.ssh.yaml"):
+			files = append(files, "compose.ssh.yaml")
+		case strings.HasPrefix(host, "agent://") && values["RUNQUILL_WORKER_AUTH_FILE"] != "" && !slices.Contains(files, "compose.worker.yaml"):
+			files = append(files, "compose.worker.yaml")
+		}
+	}
+	return files
+}
+
+// recordComposeFiles saves the Compose files in COMPOSE_FILE in .env, so a plain docker compose from the install
+// directory keeps the overlays. Files already listed there stay, in their order, and the full list is returned.
+func recordComposeFiles(dir string, files []string) ([]string, error) {
+	values, err := readSetupEnv(dir)
+	if err != nil {
+		return nil, err
+	}
+	var recorded []string
+	for file := range strings.SplitSeq(values["COMPOSE_FILE"], ":") {
+		if file = strings.TrimSpace(file); file != "" && !slices.Contains(recorded, file) {
+			recorded = append(recorded, file)
+		}
+	}
+	for _, file := range files {
+		if !slices.Contains(recorded, file) {
+			recorded = append(recorded, file)
+		}
+	}
+	return recorded, saveSetupEnv(dir, "COMPOSE_FILE", strings.Join(recorded, ":"))
+}
+
+// saveSetupEnv sets key in the generated .env, which must stay private and unchanged meanwhile.
+func saveSetupEnv(dir, key, value string) error {
+	path := filepath.Join(dir, setupEnvFile)
+	original, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if _, err := setupValues(original); err != nil {
+		return err
+	}
+	lines := strings.Split(strings.TrimSuffix(string(original), "\n"), "\n")
+	set := false
+	for i, line := range lines {
+		if name, _, ok := strings.Cut(line, "="); ok && strings.TrimSpace(name) == key {
+			lines[i], set = key+"="+value, true
+		}
+	}
+	if !set {
+		lines = append(lines, key+"="+value)
+	}
+	updated := []byte(strings.Join(lines, "\n") + "\n")
+	if bytes.Equal(updated, original) {
+		return nil
+	}
+	err = prepareSetupFile(path, updated, func(tmp string) error {
+		info, err := os.Lstat(path)
+		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
+			return errors.New(".env changed during setup; rerun setup")
+		}
+		current, err := os.ReadFile(path)
+		if err != nil || !bytes.Equal(original, current) {
+			return errors.New(".env changed during setup; rerun setup")
+		}
+		return os.Rename(tmp, path)
+	})
+	if err != nil {
+		return fmt.Errorf("save %s in .env: %w", key, err)
+	}
+	return nil
 }
 
 func saveSetupFile(path string, data []byte) error {

@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	core "k8s.io/api/core/v1"
@@ -41,20 +40,19 @@ func (web *setupWizard) apply(ctx context.Context, checkOnly bool) error {
 	}
 	web.progress.reset(values)
 	if web.options.kubernetes {
+		// Also tells install.sh --upgrade which backend this is; the manifest sets the same value.
+		if err := saveSetupEnv(web.dir, "RUNQUILL_BACKEND", "kubernetes"); err != nil {
+			return err
+		}
 		return web.applyK3s(ctx, values["RUNQUILL_APP_ID"])
 	}
-	compose := []string{"compose", "-f", "compose.yaml", "-f", "compose.panel.yaml"}
-	for host := range strings.SplitSeq(values["RUNQUILL_DOCKER_HOSTS"], ",") {
-		switch {
-		case strings.HasPrefix(strings.TrimSpace(host), "ssh://"):
-			if !slices.Contains(compose, "compose.ssh.yaml") {
-				compose = append(compose, "-f", "compose.ssh.yaml")
-			}
-		case strings.HasPrefix(strings.TrimSpace(host), "agent://") && values["RUNQUILL_WORKER_AUTH_FILE"] != "":
-			if !slices.Contains(compose, "compose.worker.yaml") {
-				compose = append(compose, "-f", "compose.worker.yaml")
-			}
-		}
+	files, err := recordComposeFiles(web.dir, setupComposeFiles(values, true))
+	if err != nil {
+		return err
+	}
+	compose := []string{"compose"}
+	for _, file := range files {
+		compose = append(compose, "-f", file)
 	}
 	docker := func(args ...string) error {
 		if err := web.deployCommand(ctx, nil, "docker", args...); err != nil {

@@ -2,7 +2,7 @@
 
 [Runquill README](../README.ko.md) · [English](operations.md)
 
-이 가이드의 명령은 설치 디렉터리에서 실행합니다. 기존 배포에 사용한 Compose 파일을 같은 순서로 지정하세요. 예제에서 `docker compose`만 보이는 경우에도 패널을 쓴다면 `-f compose.yaml -f compose.panel.yaml`을 붙이고, SSH 워커 또는 자체 오버레이가 있다면 해당 파일도 이어서 지정합니다.
+이 가이드의 명령은 설치 디렉터리에서 실행합니다. 기존 배포에 사용한 Compose 파일을 같은 순서로 지정하세요. `setup`과 설정 마법사는 이 파일 목록을 `.env`의 `COMPOSE_FILE`에 기록하므로(예: `COMPOSE_FILE=compose.yaml:compose.panel.yaml`) `docker compose`만 실행해도 같은 파일을 사용합니다. `compose.settings.yaml` 같은 자체 오버레이는 이 목록 끝에 추가합니다. 이전 버전으로 설치했거나 `.env`를 직접 작성해 `COMPOSE_FILE`이 없다면, `docker compose`만 보이는 예제에도 패널을 쓸 때는 `-f compose.yaml -f compose.panel.yaml`을 붙이고 SSH 워커 또는 자체 오버레이 파일도 이어서 지정합니다. `COMPOSE_FILE` 줄을 직접 추가해도 됩니다.
 
 ## 재부팅 후 확인
 
@@ -153,6 +153,7 @@ GitHub에서 작업이 대기 중이라면 `docker compose exec manager runquill
 - 8080 포트의 `GET /healthz`는 대기열 DB가 응답하면 HTTP 200을 반환합니다. `GET /readyz`는 여기에 더해 최근 2분 안에 스케줄링이 성공했고 GitHub App 인증 실패가 없어야 준비 상태로 봅니다. 그렇지 않으면 HTTP 503과 함께 `scheduler`가 `starting`, `failing`, `stalled` 중 하나인 JSON을 반환하며, `database`와 `github_auth`에 나머지 점검 결과가 표시됩니다. 오류 상세는 매니저 로그에만 남습니다.
 - 러너는 저장소 범위의 일회용 JIT 러너입니다. 기본 풀에서는 작업마다 새 컨테이너와 내부 Docker 데몬이 생기므로 `docker build`, `services:`, `container:`를 사용할 수 있습니다. 작업이 끝나면 컨테이너와 내부 이미지, 볼륨, 작업 디렉터리가 삭제됩니다. `cache`를 켠 풀의 이름 있는 캐시 볼륨은 작업이 끝나도 남고, 로컬과 SSH 호스트에서는 정리 보존 기간을 따릅니다.
 - 운영 환경마다 매니저 하나를 실행합니다. 원래 Python 버전에서 올라오는 경우를 포함해 업그레이드할 때는 Compose의 `queue` 볼륨을 유지합니다. 매니저를 재시작해도 대기열과 현재 러너 기록을 이어받습니다.
+- Compose는 이 볼륨을 `프로젝트이름_queue`로 만듭니다. 프로젝트 이름은 기본적으로 설치 디렉터리 이름을 소문자로 바꾸고 영문자, 숫자, `-`, `_` 외의 문자를 뺀 값이므로 `$HOME/runquill`에서는 `runquill_queue`가 됩니다. 디렉터리 이름을 바꾸거나 다른 이름의 디렉터리로 옮기거나 다른 `-p`를 지정하면 매니저가 빈 새 볼륨으로 시작해 러너 기록, 저장된 패널 설정, 대기 작업을 잃습니다. 현재 볼륨 이름은 `docker volume ls --filter name=_queue`로 확인합니다. 다른 디렉터리에서 실행하려면 매니저를 멈춘 뒤 `.env`의 `COMPOSE_PROJECT_NAME`에 기존 프로젝트 이름(예: `COMPOSE_PROJECT_NAME=runquill`)을 지정하고 그곳에서 시작합니다.
 - 매니저를 시작할 때와 매번 검색을 마치고 `RUNQUILL_POLL_INTERVAL`(기본 `30s`)이 지난 뒤 GitHub API에서 대기 작업을 찾습니다. 폴링은 접근 가능한 저장소의 대기 중·실행 중 워크플로를 최근 활동 순으로 확인하며, 요청됨·대기·보류 상태는 저장소 목록이 유지되는 동안 성공한 네 번의 조회 안에 순환 확인합니다. 웹훅과 폴링으로 같은 GitHub 작업을 받으면 큐 기록 하나를 공유합니다. 이 값을 `0`으로 설정하면 웹훅만 사용합니다.
 - 작업별 타이밍에는 첫 발견 경로, 러너 등록 성공, GitHub가 제공한 작업 시작 시각이 기록됩니다. 발견 지연은 GitHub에서 작업이 생성된 시각부터 Runquill이 발견한 시각까지이며, GitHub가 작업 생성 시각을 제공한 경우에만 계산합니다. 대기 시간은 발견부터 첫 등록까지, 아직 대기 중이면 지금까지 기다린 시간입니다. 값이 없으면 `status --json`에서 생략합니다. 작업 기록, `GET /api/jobs/{id}`, `runquill jobs show`에는 GitHub가 보고한 완료 시각과, GitHub 기준 시작부터 완료까지의 실행 시간도 나옵니다. [작업 단계 히스토그램](metrics.ko.md#작업-단계-히스토그램)은 같은 단계를 모아 보여 줍니다.
 
@@ -167,18 +168,18 @@ sh install.sh --upgrade --dir "$HOME/runquill"
 
 설치 스크립트는 체크섬을 검증하고 바뀐 릴리스 파일을 교체합니다. 이전 파일은 `.previous/`에 보관합니다. 릴리스 파일을 되돌리려면 설치 디렉터리에서 `cp -p .previous/* .`를 실행합니다. 매니저까지 되돌릴 때는 이전 이미지 태그도 복구하고, 데이터베이스 호환 여부는 해당 릴리스 노트를 확인합니다. 업그레이드 전에 [대기열을 백업](#대기열-백업과-복구)하세요. `--upgrade`는 릴리스 파일만 다루며 `--version`, `--dir`, `--yes`, `--no-install`과 함께 쓸 수 있습니다.
 
-설치 스크립트는 아무것도 재시작하지 않습니다. `.env`에 릴리스 이미지가 지정되어 있으면 새로 설정할 `RUNQUILL_MANAGER_IMAGE`와 `RUNQUILL_RUNNER_IMAGE` 값과 함께, 평소 쓰는 Compose 파일로 실행할 이미지 다운로드, `docker compose up -d --no-build`, `doctor` 명령을 출력합니다. 새 러너 이미지는 매니저가 `local`과 `ssh://` 호스트에 받습니다. 아웃바운드 워커에서는 새 이미지를 받아 두고 `runquill worker` 실행 파일도 업그레이드합니다. K3s 설치에서는 대신 `kubectl apply -f runquill-k3s.yaml`을 안내합니다.
+설치 스크립트는 아무것도 재시작하지 않습니다. `.env`에 릴리스 이미지가 지정되어 있으면 새로 설정할 `RUNQUILL_MANAGER_IMAGE`와 `RUNQUILL_RUNNER_IMAGE` 값과 함께, 이미지 다운로드, `docker compose up -d --no-build`, `doctor` 명령을 출력합니다. `.env`에 `COMPOSE_FILE`이 있으면 이 명령만으로 기록된 오버레이를 사용하고, 없으면 평소 쓰는 `-f` 파일을 붙이라고 안내합니다. 새 러너 이미지는 매니저가 `local`과 `ssh://` 호스트에 받습니다. 아웃바운드 워커에서는 새 이미지를 받아 두고 `runquill worker` 실행 파일도 업그레이드합니다. `setup`이 `.env`에 `RUNQUILL_BACKEND=kubernetes`를 기록한 K3s 설치에서는 `kubectl apply -f runquill-k3s.yaml`만 안내합니다. 두 설정이 모두 없는 이전 설치에는 Compose와 K3s 안내를 함께 출력합니다.
 
 `--upgrade`가 없는 릴리스나 수동 설치에서는 `.env`의 두 이미지 태그를 새 릴리스로 바꾸고 [매니저 시작](install.ko.md#매니저-시작)의 다운로드 명령을 다시 실행합니다.
 
-패널을 사용하는 Compose 설치에서는 태그를 수정한 뒤 아래 순서로 적용합니다. 실행 중인 작업이 끝난 뒤 시작하고 `queue` 볼륨은 유지합니다. 대기 작업을 이어받는지 확인한 뒤 [첫 작업](workflows.ko.md#첫-작업-확인)을 실행합니다.
+Compose 설치에서는 태그를 수정한 뒤 아래 순서로 적용합니다. 이 명령은 `.env`의 `COMPOSE_FILE`에서 Compose 파일을 읽습니다. 이 설정이 없다면 `-f compose.yaml -f compose.panel.yaml`과 다른 오버레이를 붙입니다. 실행 중인 작업이 끝난 뒤 시작하고, 같은 디렉터리와 같은 프로젝트 이름으로 실행해 `queue` 볼륨을 유지합니다. 대기 작업을 이어받는지 확인한 뒤 [첫 작업](workflows.ko.md#첫-작업-확인)을 실행합니다.
 
 ```sh
 cd "$HOME/runquill"
-docker compose -f compose.yaml -f compose.panel.yaml pull manager
-docker compose -f compose.yaml -f compose.panel.yaml up -d --no-build
-docker compose -f compose.yaml -f compose.panel.yaml exec -T manager runquill doctor
-docker compose -f compose.yaml -f compose.panel.yaml exec -T manager runquill status
+docker compose pull manager
+docker compose up -d --no-build
+docker compose exec -T manager runquill doctor
+docker compose exec -T manager runquill status
 ```
 
 ## 매니저 설정 추가
