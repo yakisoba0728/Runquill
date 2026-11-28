@@ -91,7 +91,7 @@ RUNQUILL_MANAGER_IMAGE=runquill-manager:local docker compose -f compose.yaml -f 
 | `hosts:write` | `POST /api/hosts/cordon`에 `{"host":"local","cordoned":true}`를 보냅니다. 배정을 멈춰도 실행 중인 러너는 계속 처리됩니다. |
 | `jobs:write` | `POST /api/jobs/{id}/cancel`, `POST /api/jobs/{id}/retry` |
 
-**작업 기록**은 최신 작업부터 대기, 실행 중, 종료, 실패 결과와 함께 보여줍니다. 저장소, 결과, 최근 1시간·24시간·7일로 필터링할 수 있습니다. 끝난 작업은 7일 동안 보관하고 작업 로그는 GitHub에 남습니다. `GET /api/jobs`도 같은 목록을 반환하며 `repository`, `outcome`, `since`와 `until`(Unix 초), `limit`(최대 100), 그리고 응답의 `next` 값을 `before`로 받습니다.
+**작업 기록**은 최신 작업부터 대기, 실행 중, 종료, 실패 결과와 함께 보여줍니다. 저장소, 결과, 최근 1시간·24시간·7일로 필터링할 수 있습니다. 끝난 작업은 7일 동안 보관하고 작업 로그는 GitHub에 남습니다. `GET /api/jobs`도 같은 목록을 반환하며 `repository`, `outcome`, `since`와 `until`(Unix 초), `limit`(최대 100), 그리고 응답의 `next` 값을 `before`로 받습니다. 각 행에는 GitHub가 보고한 작업 결론이 `github_conclusion`(`success`, `failure`, `cancelled` 등)으로, 워크플로 이름과 브랜치가 `workflow_name`과 `head_branch`로 들어 있습니다. Runquill은 이 값을 `workflow_job` completed 웹훅에서 읽거나, 러너가 끝났을 때 GitHub에 직접 물어보므로 폴링만 쓰는 설치에서도 기록됩니다.
 
 Operator와 Admin은 러너 없이 대기 중인 작업을 패널이나 `jobs:write` 토큰으로 관리할 수 있습니다. **지금 재시도**는 재시도 대기 시간을 없애 다음 스케줄링에서 작업을 시도하게 합니다. **작업 취소**는 작업을 `cancelled by @LOGIN` 사유로 실패 처리하고 러너를 시작하지 않습니다. GitHub의 실행은 GitHub에서 취소하거나 다시 실행할 때까지 대기 상태로 남습니다.
 
@@ -103,7 +103,7 @@ Operator와 Admin은 러너 없이 대기 중인 작업을 패널이나 `jobs:wr
 
 ## 사용량 통계
 
-**사용량** 화면과 `GET /api/usage`는 끝난 작업의 수, 실패, 러너 사용 시간, 대기 시간을 UTC 날짜, 저장소, 풀, 호스트별로 보여줍니다. 작업은 끝난 UTC 날짜에 한 번만 집계합니다. 실패는 Runquill이 포기했거나 패널에서 취소한 작업이며 GitHub 작업 결과와는 다릅니다. 일별 합계는 대기열 DB에 400일 동안 보관하지만 대기열 백업에는 포함되지 않습니다. [자세히](panel.ko.md#사용량-통계)
+**사용량** 화면과 `GET /api/usage`는 끝난 작업의 수, 실패, 러너 사용 시간, 대기 시간을 UTC 날짜, 저장소, 풀, 호스트별로 보여줍니다. 작업은 끝난 UTC 날짜에 한 번만 집계합니다. 실패는 Runquill이 포기했거나 패널에서 취소한 작업이며 GitHub 작업 결과와는 다릅니다. GitHub 결론은 `github_succeeded`와 `github_failed`로 따로 셉니다. 일별 합계는 대기열 DB에 400일 동안 보관하지만 대기열 백업에는 포함되지 않습니다. [자세히](panel.ko.md#사용량-통계)
 
 매니저는 작업마다 측정한 CPU와 메모리 최고값, 러너의 메모리 부족 종료 여부도 기록합니다. `runquill usage --rightsizing`은 최고값이 한도보다 훨씬 낮거나 한도에 가까운 풀이나 워크플로 작업을 보여 줍니다. [작업 자원](elastic-limits.ko.md#작업-자원)
 

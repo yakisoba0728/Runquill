@@ -444,7 +444,7 @@ var mcpTools = []mcpTool{
 			"limit":      mcpInteger("Number of jobs to return.", 1, panelHistoryMaxPage, mcpDefaultJobs),
 		})},
 	{Name: "get_job", Title: "Get job", Annotations: mcpReadOnly,
-		Description: "Show one job by its GitHub job id: outcome, failure or retry reason, timing, runner, sampled CPU and memory with an out-of-memory flag, and its GitHub URL.",
+		Description: "Show one job by its GitHub job id: outcome, GitHub conclusion, workflow and branch, failure or retry reason, timing, runner, sampled CPU and memory with an out-of-memory flag, and its GitHub URL.",
 		InputSchema: mcpObject([]string{"id"}, map[string]*mcpSchema{
 			"id": mcpInteger("The GitHub Actions job id.", 1, mcpMaxJobID, nil),
 		})},
@@ -452,7 +452,7 @@ var mcpTools = []mcpTool{
 		Description: "List runner hosts from the latest snapshot with status, slots and the runners on each.",
 		InputSchema: mcpObject(nil, map[string]*mcpSchema{})},
 	{Name: "usage_summary", Title: "Usage summary", Annotations: mcpReadOnly,
-		Description: "Total finished jobs, failures, runner time and queue wait over the last 24 hours or 7 days. " +
+		Description: "Total finished jobs, Runquill failures, GitHub successes and failures, runner time and queue wait over the last 24 hours or 7 days. " +
 			"With group, also returns series: the same statistics per UTC day, repository, pool or host over the whole UTC days from and to that contain the window.",
 		InputSchema: mcpObject(nil, map[string]*mcpSchema{
 			"window": {Type: "string", Description: "The rolling window.", Enum: []string{"24h", "7d"}, Default: "24h"},

@@ -240,8 +240,18 @@ components:
         outcome:
           type: string
           enum: [waiting, running, finished, failed]
+          description: How Runquill handled the job. GitHub's own result is github_conclusion.
         failure:
           type: string
+        github_conclusion:
+          type: string
+          description: GitHub's conclusion for the completed job, as GitHub reports it (for example success, failure, cancelled, skipped or timed_out). Absent until GitHub reports one, and for jobs finished before Runquill recorded it.
+        workflow_name:
+          type: string
+          description: Name of the job's workflow, as GitHub reports it.
+        head_branch:
+          type: string
+          description: Branch the workflow run is for, as GitHub reports it.
         retry_reason:
           type: string
         retry_at:
@@ -966,8 +976,8 @@ components:
           description: Why Docker rejected the update.
     UsageTotals:
       type: object
-      description: Finished jobs only. failed counts jobs Runquill gave up on or that were cancelled in the panel, not GitHub job conclusions. runner_seconds run from provisioning to runner cleanup. Waits run from queueing to provisioning (or to the failure for jobs that never got a runner); percentiles are interpolated within fixed histogram buckets.
-      required: [jobs, failed, runner_seconds, wait_count, wait_avg_seconds, wait_p50_seconds, wait_p95_seconds]
+      description: Finished jobs only. failed counts jobs Runquill gave up on or that were cancelled in the panel, not GitHub job conclusions; github_succeeded and github_failed count those. runner_seconds run from provisioning to runner cleanup. Waits run from queueing to provisioning (or to the failure for jobs that never got a runner); percentiles are interpolated within fixed histogram buckets.
+      required: [jobs, failed, github_succeeded, github_failed, runner_seconds, wait_count, wait_avg_seconds, wait_p50_seconds, wait_p95_seconds]
       properties:
         jobs:
           type: integer
@@ -975,6 +985,14 @@ components:
         failed:
           type: integer
           format: int64
+        github_succeeded:
+          type: integer
+          format: int64
+          description: Jobs whose GitHub conclusion is success.
+        github_failed:
+          type: integer
+          format: int64
+          description: Jobs whose GitHub conclusion is failure, timed_out or startup_failure. Other conclusions (such as cancelled or skipped) and jobs without a recorded conclusion count in neither GitHub column; days rolled up before this was recorded read zero.
         runner_seconds:
           type: integer
           format: int64

@@ -28,7 +28,7 @@ func TestBackupOnlineAndRestoreToFencedQueue(t *testing.T) {
 	if _, err := q.Exec("INSERT INTO jobs (job_id, repository, repository_id, installation_id, route, phase, changed_at, runner_name, runner_host, runner_id) VALUES (5, 'owner/repo', 8, 9, 'runquill-12-1-example', 1, 123, 'runquill-5-abcdef012345', 'local', 77)"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := q.Exec("UPDATE jobs SET jit_requested_ms = 123001, jit_registered_ms = 123020, runner_launch_ms = 123490 WHERE job_id = 5"); err != nil {
+	if _, err := q.Exec("UPDATE jobs SET jit_requested_ms = 123001, jit_registered_ms = 123020, runner_launch_ms = 123490, conclusion = 'success' WHERE job_id = 5"); err != nil {
 		t.Fatal(err)
 	}
 	digest := strings.Repeat("a", 64)
@@ -104,9 +104,10 @@ func TestBackupOnlineAndRestoreToFencedQueue(t *testing.T) {
 		t.Fatalf("snapshot lost a lease or included newer jobs: %+v, %v", jobs, err)
 	}
 	var requested, registered, launched int64
-	if err := restored.QueryRow("SELECT jit_requested_ms, jit_registered_ms, runner_launch_ms FROM jobs WHERE job_id = 5").
-		Scan(&requested, &registered, &launched); err != nil || requested != 123001 || registered != 123020 || launched != 123490 {
-		t.Fatalf("restored job stages: %d %d %d, %v", requested, registered, launched, err)
+	var conclusion string
+	if err := restored.QueryRow("SELECT jit_requested_ms, jit_registered_ms, runner_launch_ms, conclusion FROM jobs WHERE job_id = 5").
+		Scan(&requested, &registered, &launched, &conclusion); err != nil || requested != 123001 || registered != 123020 || launched != 123490 || conclusion != "success" {
+		t.Fatalf("restored job stages: %d %d %d %q, %v", requested, registered, launched, conclusion, err)
 	}
 	var engine, restoredDigest string
 	if err := restored.QueryRow("SELECT engine, token_digest FROM worker_authorities WHERE host = 'builder'").Scan(&engine, &restoredDigest); err != nil || engine != "test-engine" || restoredDigest != digest {

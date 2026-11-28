@@ -80,7 +80,8 @@ func newRemoteFixture(t *testing.T) *remoteFixture {
 			t.Fatal(err)
 		}
 	}
-	if _, err := q.Exec(`UPDATE jobs SET phase = ?, failure = 'image pull failed', changed_at = ? WHERE job_id = 8`, completed, now.Unix()); err != nil {
+	if _, err := q.Exec(`UPDATE jobs SET phase = ?, failure = 'image pull failed', changed_at = ?,
+        conclusion = 'cancelled', workflow_name = 'CI', head_branch = 'main' WHERE job_id = 8`, completed, now.Unix()); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("RUNQUILL_URL", origin)
@@ -369,9 +370,9 @@ func TestRemoteJobsListAgainstPanel(t *testing.T) {
 	t.Setenv("RUNQUILL_TOKEN", f.token(102, "fleet:read"))
 	_, code, stdout, stderr := runRemote(t, "jobs", "list")
 	lines := rows(stdout)
-	if code != 0 || stderr != "" || len(lines) != 3 || !slices.Equal(lines[0], []string{"JOB", "REPOSITORY", "OUTCOME", "POOL", "HOST", "QUEUED", "WAIT", "DETAIL"}) ||
-		!slices.Equal(lines[1], []string{"8", "owner/lib", "failed", "-", "-", "2h", "ago", "2h", "image", "pull", "failed"}) ||
-		!slices.Equal(lines[2][:6], []string{"7", "owner/app", "waiting", "-", "-", "2h"}) {
+	if code != 0 || stderr != "" || len(lines) != 3 || !slices.Equal(lines[0], []string{"JOB", "REPOSITORY", "OUTCOME", "GITHUB", "POOL", "HOST", "QUEUED", "WAIT", "DETAIL"}) ||
+		!slices.Equal(lines[1], []string{"8", "owner/lib", "failed", "cancelled", "-", "-", "2h", "ago", "2h", "image", "pull", "failed"}) ||
+		!slices.Equal(lines[2][:7], []string{"7", "owner/app", "waiting", "-", "-", "-", "2h"}) {
 		t.Fatalf("jobs list: code %d, stderr %q\n%s", code, stderr, stdout)
 	}
 	_, code, stdout, _ = runRemote(t, "jobs", "list", "--repo", "Owner/App", "--outcome", "waiting", "--since", "3h", "--json")
@@ -449,9 +450,9 @@ func TestRemoteUsageAgainstPanel(t *testing.T) {
 	t.Setenv("RUNQUILL_TOKEN", f.token(102, "fleet:read"))
 	_, code, stdout, stderr := runRemote(t, "usage", "--group", "repository")
 	want := [][]string{
-		{"REPOSITORY", "JOBS", "FAILED", "RUNNER_TIME", "WAIT"},
-		{"owner/lib", "1", "1", "0s", "2h"},
-		{"(total)", "1", "1", "0s", "2h"},
+		{"REPOSITORY", "JOBS", "FAILED", "GITHUB_SUCCEEDED", "GITHUB_FAILED", "RUNNER_TIME", "WAIT"},
+		{"owner/lib", "1", "1", "0", "0", "0s", "2h"},
+		{"(total)", "1", "1", "0", "0", "0s", "2h"},
 	}
 	if code != 0 || stderr != "" || !slices.EqualFunc(rows(stdout), want, slices.Equal) {
 		t.Fatalf("usage --group repository: code %d, stderr %q\n%s", code, stderr, stdout)
@@ -540,6 +541,7 @@ func TestRemoteJobsShowAgainstPanel(t *testing.T) {
 	}
 	queued := f.now.Add(-2*time.Hour).UTC().Format(time.RFC3339) + " (2h ago)"
 	if code != 0 || stderr != "" || fields["JOB"] != "8" || fields["REPOSITORY"] != "owner/lib" || fields["OUTCOME"] != "failed" ||
+		fields["GITHUB"] != "cancelled" || fields["WORKFLOW"] != "CI" || fields["BRANCH"] != "main" ||
 		fields["LABEL"] != "runquill-8-1-build" || fields["QUEUED"] != queued || fields["WAIT"] != "2h" ||
 		fields["FAILURE"] != "image pull failed" || fields["RETRY_AT"] != "-" ||
 		fields["URL"] != "https://github.com/owner/lib/actions/runs/8/job/8" {

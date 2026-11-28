@@ -96,6 +96,7 @@ If the stream does not reopen within 10 seconds, or the server refuses it, the p
 Usage counts finished jobs: jobs, failures, runner time and queue wait. Each job counts once, on the UTC day it finished, grouped by day, repository, pool or host.
 
 - **Failed** means Runquill gave up on the job (24 hours without a start) or it was cancelled in the panel. It is not the GitHub job conclusion.
+- `GET /api/usage` also returns `github_succeeded` (GitHub conclusion `success`) and `github_failed` (`failure`, `timed_out` or `startup_failure`). Other conclusions, such as `cancelled` or `skipped`, and jobs without a recorded conclusion count in neither. Days rolled up before an upgrade that records conclusions read zero, and a conclusion GitHub reports after the job was rolled up appears in the job history but not in these counts.
 - **Runner time** runs from runner provisioning to runner cleanup.
 - **Wait** runs from queueing to provisioning, or to the failure for jobs that never got a runner. Median and 95th percentile are estimated from fixed histogram buckets.
 

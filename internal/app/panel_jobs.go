@@ -11,6 +11,8 @@ import (
 	"time"
 )
 
+const jobGitHubResultColumns = "coalesce(conclusion, ''), coalesce(workflow_name, ''), coalesce(head_branch, '')"
+
 const (
 	panelHistoryPage    = 50
 	panelHistoryMaxPage = 100
@@ -20,24 +22,29 @@ const (
 // from the phase, the failure reason and the runner lease: completed rows keep
 // stale retry columns that say nothing about how the job ended.
 type panelHistoryJob struct {
-	ID          int64            `json:"id"`
-	Repository  string           `json:"repository"`
-	RunnerLabel string           `json:"runner_label"`
-	Pool        string           `json:"pool,omitempty"`
-	RunnerOS    string           `json:"runner_os,omitempty"`
-	Host        string           `json:"host,omitempty"`
-	Outcome     string           `json:"outcome"`
-	Failure     string           `json:"failure,omitempty"`
-	RetryReason string           `json:"retry_reason,omitempty"`
-	RetryAt     *time.Time       `json:"retry_at,omitempty"`
-	QueuedAt    *time.Time       `json:"queued_at,omitempty"`
-	StartedAt   *time.Time       `json:"started_at,omitempty"`
-	FinishedAt  *time.Time       `json:"finished_at,omitempty"`
-	CleanedAt   *time.Time       `json:"cleaned_at,omitempty"`
-	WaitSeconds *int64           `json:"wait_seconds,omitempty"`
-	URL         string           `json:"url,omitempty"`
-	Diagnostic  *jobDiagnostic   `json:"diagnostic,omitempty"`
-	Timing      *statusJobTiming `json:"timing,omitempty"`
+	ID          int64  `json:"id"`
+	Repository  string `json:"repository"`
+	RunnerLabel string `json:"runner_label"`
+	Pool        string `json:"pool,omitempty"`
+	RunnerOS    string `json:"runner_os,omitempty"`
+	Host        string `json:"host,omitempty"`
+	Outcome     string `json:"outcome"`
+	Failure     string `json:"failure,omitempty"`
+	// GitHubConclusion is GitHub's result for the job, separate from Outcome,
+	// which only says how Runquill handled it. It is empty until GitHub reports it.
+	GitHubConclusion string           `json:"github_conclusion,omitempty"`
+	WorkflowName     string           `json:"workflow_name,omitempty"`
+	HeadBranch       string           `json:"head_branch,omitempty"`
+	RetryReason      string           `json:"retry_reason,omitempty"`
+	RetryAt          *time.Time       `json:"retry_at,omitempty"`
+	QueuedAt         *time.Time       `json:"queued_at,omitempty"`
+	StartedAt        *time.Time       `json:"started_at,omitempty"`
+	FinishedAt       *time.Time       `json:"finished_at,omitempty"`
+	CleanedAt        *time.Time       `json:"cleaned_at,omitempty"`
+	WaitSeconds      *int64           `json:"wait_seconds,omitempty"`
+	URL              string           `json:"url,omitempty"`
+	Diagnostic       *jobDiagnostic   `json:"diagnostic,omitempty"`
+	Timing           *statusJobTiming `json:"timing,omitempty"`
 	// Resources is set only by the single-job reads.
 	Resources *jobResources `json:"resources,omitempty"`
 }
@@ -204,7 +211,8 @@ func readPanelHistory(ctx context.Context, db *sql.DB, filter panelHistoryFilter
         coalesce(runner_name, ''), coalesce(runner_host, runner_cleaned_host, ''), retry_at, retry_reason,
         coalesce(failure, ''), coalesce(github_created_at, 0), coalesce(discovered_at, 0),
         coalesce(provisioned_at, 0), coalesce(github_started_at, 0), coalesce(runner_cleaned_at, 0),
-        coalesce(discovery_source, ''), `+jobLaunchTimingColumns+`, coalesce(github_completed_at, 0)
+        coalesce(discovery_source, ''), `+jobLaunchTimingColumns+`, coalesce(github_completed_at, 0),
+        `+jobGitHubResultColumns+`
         FROM jobs WHERE `+strings.Join(conditions, " AND ")+` ORDER BY sequence DESC LIMIT ?`, args...)
 	if err != nil {
 		return panelHistoryPageResponse{}, err
@@ -218,7 +226,8 @@ func readPanelHistory(ctx context.Context, db *sql.DB, filter panelHistoryFilter
 		if err := rows.Scan(&sequence, &j.id, &j.repository, &j.route, &j.phase, &j.changedAt, &j.runnerName,
 			&j.runnerHost, &j.retryAt, &j.retryReason, &j.failure, &j.githubCreatedAt, &j.discoveredAt,
 			&j.provisionedAt, &j.githubStartedAt, &cleanedAt, &j.discoverySource,
-			&j.jitRequestedMS, &j.jitRegisteredMS, &j.runnerLaunchMS, &j.githubCompletedAt); err != nil {
+			&j.jitRequestedMS, &j.jitRegisteredMS, &j.runnerLaunchMS, &j.githubCompletedAt,
+			&j.conclusion, &j.workflowName, &j.headBranch); err != nil {
 			return panelHistoryPageResponse{}, err
 		}
 		if len(page.Jobs) == filter.limit {
@@ -240,11 +249,13 @@ func readPanelJob(ctx context.Context, db *sql.DB, id int64, pools workerPools, 
         coalesce(runner_name, ''), coalesce(runner_host, runner_cleaned_host, ''), retry_at, retry_reason,
         coalesce(failure, ''), coalesce(github_created_at, 0), coalesce(discovered_at, 0),
         coalesce(provisioned_at, 0), coalesce(github_started_at, 0), coalesce(runner_cleaned_at, 0),
-        coalesce(discovery_source, ''), `+jobLaunchTimingColumns+`, coalesce(github_completed_at, 0)
+        coalesce(discovery_source, ''), `+jobLaunchTimingColumns+`, coalesce(github_completed_at, 0),
+        `+jobGitHubResultColumns+`
         FROM jobs WHERE job_id = ?`, id).Scan(&j.id, &j.repository, &j.route, &j.phase, &j.changedAt, &j.runnerName,
 		&j.runnerHost, &j.retryAt, &j.retryReason, &j.failure, &j.githubCreatedAt, &j.discoveredAt,
 		&j.provisionedAt, &j.githubStartedAt, &cleanedAt, &j.discoverySource,
-		&j.jitRequestedMS, &j.jitRegisteredMS, &j.runnerLaunchMS, &j.githubCompletedAt)
+		&j.jitRequestedMS, &j.jitRegisteredMS, &j.runnerLaunchMS, &j.githubCompletedAt,
+		&j.conclusion, &j.workflowName, &j.headBranch)
 	if errors.Is(err, sql.ErrNoRows) {
 		return panelHistoryJob{}, errPanelJobMissing
 	}
@@ -260,7 +271,8 @@ func panelHistoryRow(j job, cleanedAt int64, pools workerPools, now time.Time) p
 	pool, _ := pools.forJob(j)
 	osName, _ := routeOS(j.route)
 	row := panelHistoryJob{ID: j.id, Repository: j.repository, RunnerLabel: j.route, Pool: pool, RunnerOS: osName, Host: j.runnerHost,
-		URL: jobURL(j), StartedAt: statusTime(j.githubStartedAt), CleanedAt: statusTime(cleanedAt), Timing: jobTiming(j, now)}
+		URL: jobURL(j), StartedAt: statusTime(j.githubStartedAt), CleanedAt: statusTime(cleanedAt), Timing: jobTiming(j, now),
+		GitHubConclusion: j.conclusion, WorkflowName: j.workflowName, HeadBranch: j.headBranch}
 	queuedAt := j.discoveredAt
 	if queuedAt == 0 {
 		queuedAt = j.githubCreatedAt

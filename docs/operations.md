@@ -91,7 +91,7 @@ Team users sign in with their enrolled GitHub account. Administrators add a team
 | `hosts:write` | `POST /api/hosts/cordon` with `{"host":"local","cordoned":true}`. Pausing a host does not interrupt its active runners. |
 | `jobs:write` | `POST /api/jobs/{id}/cancel`, `POST /api/jobs/{id}/retry` |
 
-**Job history** lists jobs newest first with their outcome: waiting, running, finished or failed. Filter it by repository, outcome, and the last hour, 24 hours or 7 days. Runquill keeps finished jobs for seven days, and job logs stay on GitHub. `GET /api/jobs` returns the same rows and accepts `repository`, `outcome`, `since` and `until` (Unix seconds), `limit` (up to 100), and the `next` cursor as `before`.
+**Job history** lists jobs newest first with their outcome: waiting, running, finished or failed. Filter it by repository, outcome, and the last hour, 24 hours or 7 days. Runquill keeps finished jobs for seven days, and job logs stay on GitHub. `GET /api/jobs` returns the same rows and accepts `repository`, `outcome`, `since` and `until` (Unix seconds), `limit` (up to 100), and the `next` cursor as `before`. Each row also carries GitHub's own result for the job in `github_conclusion` (such as `success`, `failure` or `cancelled`) once GitHub reports it, with `workflow_name` and `head_branch`. Runquill reads it from the `workflow_job` completed webhook, or asks GitHub for it when a runner exits, so polling-only installations record it too.
 
 Operators and administrators can act on a job that waits without a runner, in the panel or with a `jobs:write` token. **Retry now** clears a retry delay so the next scheduler pass tries the job. **Cancel job** marks it failed with `cancelled by @LOGIN`, and Runquill starts no runner for it. The run stays queued on GitHub until you cancel or rerun it there.
 
@@ -103,7 +103,7 @@ Select a job in the panel to see its runner label, current queue or startup expl
 
 ## Usage statistics
 
-The **Usage** screen and `GET /api/usage` report finished jobs, failures, runner time and queue wait by UTC day, repository, pool or host. A job counts once, on the UTC day it finished. Failures are jobs Runquill gave up on or that were cancelled in the panel, not GitHub job conclusions. Daily totals are kept for 400 days in the queue database but are not included in queue backups. [Details](panel.md#usage-statistics)
+The **Usage** screen and `GET /api/usage` report finished jobs, failures, runner time and queue wait by UTC day, repository, pool or host. A job counts once, on the UTC day it finished. Failures are jobs Runquill gave up on or that were cancelled in the panel, not GitHub job conclusions; `github_succeeded` and `github_failed` count those. Daily totals are kept for 400 days in the queue database but are not included in queue backups. [Details](panel.md#usage-statistics)
 
 The manager also records each job's sampled CPU and memory peaks and whether its runner was killed for memory. `runquill usage --rightsizing` lists pools or workflow jobs whose peaks stay far below or near their limits. [Job resources](elastic-limits.md#job-resources)
 
