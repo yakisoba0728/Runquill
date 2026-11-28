@@ -25,13 +25,25 @@ CGO_ENABLED=0 go build -o runquill .
 
 The manager and worker run only on Linux, and the tests run there. Windows and macOS builds are for the [remote CLI](remote-cli.md) and `runquill workflow check`, and CI cross-compiles both.
 
-The runner Dockerfile pins the upstream GitHub Actions runner image by digest. Use `--build-arg RUNQUILL_RUNNER_BASE=IMAGE` to extend a compatible image with your own toolchain. Pass `--build-arg RUNQUILL_RUNNER_OS=` with `ubuntu22.04`, `ubuntu26.04`, `debian12` or `debian13` to build another base. Keep the runner files in `/home/runner` and its user at UID 1001 for Kubernetes plain mode and pools with `privileged: false`.
+The runner Dockerfile pins the upstream GitHub Actions runner image and every OS base by digest, and the manager Dockerfile pins its Go and Docker CLI images the same way. Use `--build-arg RUNQUILL_RUNNER_BASE=IMAGE` to extend a compatible image with your own toolchain. Pass `--build-arg RUNQUILL_RUNNER_OS=` with `ubuntu22.04`, `ubuntu26.04`, `debian12` or `debian13` to build another base. Keep the runner files in `/home/runner` and its user at UID 1001 for Kubernetes plain mode and pools with `privileged: false`.
 
 Run the nested Docker smoke test with `RUNQUILL_TEST_DOCKER_IMAGE=runquill-runner:local go test ./internal/app -run '^TestDockerRunner$' -v` after building the runner image. It checks Docker build, PostgreSQL, bind mounts, and removal with a local stand-in for the GitHub listener. `-run '^TestDockerWarmRunner$'` with the same image starts [warm runners](workers.md#keep-runners-warm) in both runner modes and hands each a JIT config.
 
 [CI](../.github/workflows/ci.yml) runs the Go checks in parallel with the native amd64 and arm64 image builds and nested Docker smoke tests. The amd64 runtime check also runs K3s to verify host maintenance, runner assignment, and Pod and Secret cleanup. Changes to the runner image or its build workflows trigger the four additional OS builds. The [two-account OAuth check](../internal/app/panel_live_oauth_test.go) can be run with a dedicated OAuth App and separate GitHub accounts for the administrator and viewer.
 
 On a version tag, the [release workflow](../.github/workflows/release.yml) builds each image once across native architecture and OS jobs. It publishes the tested images to GHCR and takes the standalone binaries from those same manager images. It then verifies the published release with the public installer on both architectures. Forks publish to their own GitHub owner's namespace. Set both packages to public to allow anonymous pulls. [GHCR access](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
+
+## Dependency updates
+
+[Dependabot](../.github/dependabot.yml) opens one grouped pull request a week for each ecosystem: GitHub Actions, Go modules, the panel's npm packages, and the Docker base images in both Dockerfiles. It refreshes digests of the pinned tags but skips tag changes that would replace a runner OS release, a Go minor version or a Docker CLI major version. Make those changes by hand together with `releaseRunnerOS`, the workflows and the docs.
+
+On an npm pull request, check out the branch, run `npm ci && npm run build` in `internal/webui/panel`, and push the rebuilt `internal/webui/panelv2/` output. Otherwise CI fails the committed-assets check.
+
+To refresh the Docker digests by hand, look up each pinned tag and replace the `sha256` in its `FROM` line:
+
+```sh
+docker buildx imagetools inspect ubuntu:22.04 --format '{{json .Manifest.Digest}}'
+```
 
 ## Build and test the web panel
 

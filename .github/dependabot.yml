@@ -1,0 +1,49 @@
+# One grouped pull request a week per ecosystem. See docs/development.md#dependency-updates.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      go:
+        patterns: ["*"]
+
+  # Maintainers rebuild internal/webui/panelv2 on these pull requests before merging.
+  - package-ecosystem: npm
+    directory: /internal/webui/panel
+    schedule:
+      interval: weekly
+    groups:
+      panel:
+        patterns: ["*"]
+
+  # Dependabot reads only FROM lines, so both Dockerfiles pin their bases there.
+  - package-ecosystem: docker
+    directories:
+      - /
+      - /runner
+    schedule:
+      interval: weekly
+    groups:
+      base-images:
+        patterns: ["*"]
+    ignore:
+      # Each runner variant names one OS release; only refresh its digest.
+      - dependency-name: ubuntu
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: debian
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      # The build image follows the go directive in go.mod.
+      - dependency-name: golang
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: docker
+        update-types: ["version-update:semver-major"]

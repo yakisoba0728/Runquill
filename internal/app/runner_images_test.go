@@ -706,3 +706,44 @@ func TestDockerRunnerCatalogueImages(t *testing.T) {
 		})
 	}
 }
+
+// TestReleaseRunnerOSMatchesBuilds keeps the published variants in step with the image builds and
+// checks that each pinned OS base still names its variant's release, so a base bump cannot swap one.
+func TestReleaseRunnerOSMatchesBuilds(t *testing.T) {
+	read := func(path string) string {
+		t.Helper()
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	want := slices.Sorted(slices.Values(releaseRunnerOS))
+	check := func(source string, got []string) {
+		t.Helper()
+		if slices.Sort(got); !slices.Equal(got, want) {
+			t.Errorf("%s lists runner OS variants %v, want %v as in releaseRunnerOS", source, got, want)
+		}
+	}
+
+	matrix := regexp.MustCompile(`(?m)^\s+os: \[([^\]]+)\]`).FindStringSubmatch(read("../../.github/workflows/images.yml"))
+	if matrix == nil {
+		t.Fatal("images.yml has no variants os matrix")
+	}
+	check("images.yml", strings.Split(strings.ReplaceAll(matrix[1], " ", ""), ","))
+
+	var tags []string
+	for _, m := range regexp.MustCompile(`\$image-runner:\$GITHUB_REF_NAME-([a-z0-9.]+)"`).FindAllStringSubmatch(read("../../.github/workflows/release.yml"), -1) {
+		tags = append(tags, m[1])
+	}
+	check("release.yml", tags)
+
+	var stages []string
+	for _, m := range regexp.MustCompile(`(?m)^FROM ([a-z]+):([0-9.]+)@sha256:[0-9a-f]{64} AS pinned-([a-z0-9.]+)$`).FindAllStringSubmatch(read("../../runner/Dockerfile"), -1) {
+		if m[1]+m[2] != m[3] {
+			t.Errorf("runner/Dockerfile stage pinned-%s uses %s:%s", m[3], m[1], m[2])
+		}
+		stages = append(stages, m[3])
+	}
+	check("runner/Dockerfile", stages)
+}

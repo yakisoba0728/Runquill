@@ -25,13 +25,25 @@ CGO_ENABLED=0 go build -o runquill .
 
 매니저와 워커는 Linux에서만 실행하며 테스트도 Linux에서 실행합니다. Windows와 macOS 빌드는 [원격 CLI](remote-cli.ko.md)와 `runquill workflow check`용이며 CI가 두 OS의 교차 컴파일을 확인합니다.
 
-러너 Dockerfile은 GitHub Actions 러너 이미지를 다이제스트로 고정합니다. `--build-arg RUNQUILL_RUNNER_BASE=IMAGE`로 호환 이미지에 자체 도구를 추가할 수 있습니다. 다른 기반 이미지는 `--build-arg RUNQUILL_RUNNER_OS=`에 `ubuntu22.04`, `ubuntu26.04`, `debian12`, `debian13` 중 하나를 넣어 빌드합니다. Kubernetes `plain` 모드와 `privileged: false` 풀을 위해 러너 파일은 `/home/runner`에 두고 사용자 UID는 1001로 유지합니다.
+러너 Dockerfile은 GitHub Actions 러너 이미지와 모든 OS 기반 이미지를 다이제스트로 고정하고, 매니저 Dockerfile도 Go와 Docker CLI 이미지를 같은 방식으로 고정합니다. `--build-arg RUNQUILL_RUNNER_BASE=IMAGE`로 호환 이미지에 자체 도구를 추가할 수 있습니다. 다른 기반 이미지는 `--build-arg RUNQUILL_RUNNER_OS=`에 `ubuntu22.04`, `ubuntu26.04`, `debian12`, `debian13` 중 하나를 넣어 빌드합니다. Kubernetes `plain` 모드와 `privileged: false` 풀을 위해 러너 파일은 `/home/runner`에 두고 사용자 UID는 1001로 유지합니다.
 
 러너 이미지를 빌드한 뒤 `RUNQUILL_TEST_DOCKER_IMAGE=runquill-runner:local go test ./internal/app -run '^TestDockerRunner$' -v`로 중첩 Docker 검증을 실행합니다. 로컬 GitHub 리스너 대역으로 Docker 빌드, PostgreSQL, 바인드 마운트, 컨테이너 삭제를 확인합니다. 같은 이미지로 `-run '^TestDockerWarmRunner$'`를 실행하면 두 러너 모드에서 [미리 띄운 러너](workers.ko.md#러너를-미리-띄워-두기)를 시작하고 각각에 JIT 설정을 넘겨 봅니다.
 
 [CI](../.github/workflows/ci.yml)는 Go 점검을 amd64와 arm64 네이티브 이미지 빌드, 중첩 Docker 검증과 병렬로 실행합니다. amd64 런타임 점검에서는 K3s도 실행해 호스트 정비, 러너 배정, Pod와 Secret 정리를 확인합니다. 러너 이미지나 그 빌드 워크플로가 바뀌면 추가 OS 빌드 4개도 실행합니다. 관리자와 뷰어에 별도 GitHub 계정을 쓰는 [OAuth 검증](../internal/app/panel_live_oauth_test.go)은 전용 OAuth 앱을 준비해 실행할 수 있습니다.
 
 버전 태그를 올리면 [릴리스 워크플로](../.github/workflows/release.yml)가 아키텍처와 OS별 네이티브 작업에서 각 이미지를 한 번씩 빌드합니다. 테스트한 이미지를 GHCR에 게시하고, 단독 실행 파일은 같은 매니저 이미지에서 꺼냅니다. 그런 다음 두 아키텍처에서 공개 설치 스크립트로 게시된 릴리스를 검증합니다. 포크는 자기 GitHub 소유자의 네임스페이스에 게시합니다. 익명으로 받을 수 있게 하려면 두 패키지를 공개로 바꿉니다. [GitHub Container registry 접근](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
+
+## 의존성 업데이트
+
+[Dependabot](../.github/dependabot.yml)은 GitHub Actions, Go 모듈, 패널 npm 패키지, 두 Dockerfile의 Docker 기반 이미지마다 매주 묶음 풀 리퀘스트 하나를 엽니다. 고정한 태그의 다이제스트는 갱신하지만 러너 OS 릴리스, Go 마이너 버전, Docker CLI 메이저 버전을 바꾸는 태그 변경은 건너뜁니다. 이런 변경은 `releaseRunnerOS`, 워크플로, 문서와 함께 직접 합니다.
+
+npm 풀 리퀘스트에서는 브랜치를 체크아웃해 `internal/webui/panel`에서 `npm ci && npm run build`를 실행하고, 다시 빌드한 `internal/webui/panelv2/` 결과물을 푸시합니다. 그러지 않으면 CI의 커밋된 에셋 검사가 실패합니다.
+
+Docker 다이제스트를 직접 갱신하려면 고정한 태그마다 다이제스트를 조회해 해당 `FROM` 줄의 `sha256`을 바꿉니다.
+
+```sh
+docker buildx imagetools inspect ubuntu:22.04 --format '{{json .Manifest.Digest}}'
+```
 
 ## 웹 패널 빌드와 테스트
 
