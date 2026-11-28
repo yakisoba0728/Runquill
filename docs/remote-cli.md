@@ -24,12 +24,12 @@ runquill jobs list --token-file ~/.config/runquill/token --outcome failed --sinc
 | Command | Token scope | Output |
 | --- | --- | --- |
 | `fleet status [--check]` | `fleet:read` | Queue depth, running jobs, host totals and current problems from the latest snapshot, the same summary as the MCP `fleet_status` tool. |
-| `jobs list [--repo OWNER/NAME] [--outcome waiting\|running\|finished\|failed] [--since 24h\|7d] [--limit 1-100]` | `fleet:read` | Newest jobs first from the seven-day history. |
-| `jobs show JOB_ID` | `fleet:read` | One job from the history: outcome, failure or retry reason, diagnostic, times, wait, stage timing, sampled CPU and memory against the limits, whether the runner was killed for memory, and its GitHub URL. |
+| `jobs list [--repo OWNER/NAME] [--outcome waiting\|running\|finished\|failed] [--since 24h\|7d] [--limit 1-100]` | `fleet:read` | Newest jobs first from the seven-day history, with GitHub's conclusion in the `GITHUB` column. |
+| `jobs show JOB_ID` | `fleet:read` | One job from the history: outcome, GitHub conclusion, workflow name and branch, failure or retry reason, diagnostic, times, wait, stage timing, sampled CPU and memory against the limits, whether the runner was killed for memory, and its GitHub URL. |
 | `runners list` | `fleet:read` | Runners in the latest snapshot. |
 | `hosts list` | `fleet:read` | Hosts with status, maintenance state and slots. |
 | `pools list` | `fleet:read` | Hosts summarized by pool. |
-| `usage [--group day\|repository\|pool\|host] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--repo OWNER/NAME]` | `fleet:read` | Finished jobs, failures, runner time and average queue wait per group, with a `(total)` row. The range is in UTC days and defaults to the last 30, at most 400. |
+| `usage [--group day\|repository\|pool\|host] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--repo OWNER/NAME]` | `fleet:read` | Finished jobs, Runquill failures, GitHub successes and failures, runner time and average queue wait per group, with a `(total)` row. The range is in UTC days and defaults to the last 30, at most 400. |
 | `usage --rightsizing [--group pool\|job] [--days 1-7]` | `fleet:read` | Per pool, or per repository and runner label, the jobs with [recorded resources](elastic-limits.md#job-resources), memory kills, and CPU and memory peaks against the limits with a verdict such as `tight` or `oversized`. Covers finished jobs from the last 7 days by default. |
 | `elastic` | `fleet:read` | The [elastic limits](elastic-limits.md) mode, per-host surplus, runner limits and the newest 20 resize decisions. |
 | `hosts cordon HOST`, `hosts uncordon HOST` | `hosts:write` | Pause or resume new assignments to a host from `hosts list`. |

@@ -45,8 +45,11 @@ type workflowJob struct {
 	Status    string   `json:"status"`
 	CreatedAt string   `json:"created_at"`
 	StartedAt string   `json:"started_at"`
-	// CompletedAt is set once GitHub reports the job completed.
-	CompletedAt string `json:"completed_at"`
+	// CompletedAt and Conclusion are set once GitHub reports the job completed.
+	CompletedAt  string `json:"completed_at"`
+	Conclusion   string `json:"conclusion"`
+	WorkflowName string `json:"workflow_name"`
+	HeadBranch   string `json:"head_branch"`
 }
 
 type workflowEvent struct {
@@ -258,14 +261,24 @@ func (j workflowJob) queueJob(owner string, allowPublic bool, repo repository, i
 		return job{}, false, errors.New("invalid workflow job")
 	}
 	observed := job{id: j.ID, repositoryID: repo.ID, installationID: installationID,
-		repository: name, route: route, phase: p, githubCreatedAt: githubTimestamp(j.CreatedAt)}
+		repository: name, route: route, phase: p, githubCreatedAt: githubTimestamp(j.CreatedAt),
+		workflowName: githubText(j.WorkflowName), headBranch: githubText(j.HeadBranch)}
 	if p != queued {
 		observed.githubStartedAt = githubTimestamp(j.StartedAt)
 	}
 	if p == completed {
 		observed.githubCompletedAt = githubTimestamp(j.CompletedAt)
+		observed.conclusion = githubText(j.Conclusion)
 	}
 	return observed, true, nil
+}
+
+// githubText bounds a workflow-controlled name before Runquill stores it.
+func githubText(raw string) string {
+	if len(raw) > 255 {
+		raw = strings.ToValidUTF8(raw[:255], "")
+	}
+	return raw
 }
 
 func githubTimestamp(raw string) int64 {

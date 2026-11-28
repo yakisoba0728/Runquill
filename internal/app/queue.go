@@ -40,6 +40,8 @@ type job struct {
 	runnerLaunchMS                   int64
 	discoverySource                  string
 	failure                          string
+	// conclusion is GitHub's result for a completed job, such as success or failure.
+	conclusion, workflowName, headBranch string
 }
 
 type queue struct {
@@ -141,6 +143,9 @@ func (q *queue) migrate() error {
 		{"runner_launch_ms", "INTEGER"},
 		{"launch_failures", "INTEGER NOT NULL DEFAULT 0"},
 		{"github_completed_at", "INTEGER"},
+		{"conclusion", "TEXT"},
+		{"workflow_name", "TEXT"},
+		{"head_branch", "TEXT"},
 	} {
 		present, err := hasJobColumn(context.Background(), q.DB, column.name)
 		if err != nil {
@@ -216,8 +221,10 @@ func (q *queue) record(ctx context.Context, j job, now time.Time) (bool, error) 
 	// moves to it until a runner is leased; nothing else changes, so its age is kept.
 	result, err := q.ExecContext(ctx, `
         INSERT INTO jobs (job_id, repository, repository_id, installation_id, route, phase, changed_at,
-                          github_created_at, discovered_at, discovery_source, github_started_at, github_completed_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, nullif(?, 0), nullif(?, 0), nullif(?, ''), nullif(?, 0), nullif(?, 0))
+                          github_created_at, discovered_at, discovery_source, github_started_at, github_completed_at,
+                          workflow_name, head_branch)
+        VALUES (?, ?, ?, ?, ?, ?, ?, nullif(?, 0), nullif(?, 0), nullif(?, ''), nullif(?, 0), nullif(?, 0),
+                nullif(?, ''), nullif(?, ''))
         ON CONFLICT (job_id) DO UPDATE SET
             installation_id = CASE WHEN excluded.phase = jobs.phase THEN excluded.installation_id ELSE jobs.installation_id END,
             phase = excluded.phase,
@@ -225,15 +232,25 @@ func (q *queue) record(ctx context.Context, j job, now time.Time) (bool, error) 
             repository = CASE WHEN excluded.phase > jobs.phase THEN excluded.repository ELSE jobs.repository END,
             github_created_at = coalesce(jobs.github_created_at, excluded.github_created_at),
             github_started_at = coalesce(jobs.github_started_at, excluded.github_started_at),
-            github_completed_at = coalesce(jobs.github_completed_at, excluded.github_completed_at)
+            github_completed_at = coalesce(jobs.github_completed_at, excluded.github_completed_at),
+            workflow_name = coalesce(jobs.workflow_name, excluded.workflow_name),
+            head_branch = coalesce(jobs.head_branch, excluded.head_branch)
         WHERE excluded.phase > jobs.phase OR excluded.phase = ? AND jobs.phase = ? AND jobs.runner_name IS NULL
             AND excluded.installation_id <> jobs.installation_id AND excluded.repository_id = jobs.repository_id`,
 		j.id, j.repository, j.repositoryID, j.installationID, j.route, j.phase, now.Unix(),
-		j.githubCreatedAt, discoveredAt, source, j.githubStartedAt, j.githubCompletedAt, queued, queued)
+		j.githubCreatedAt, discoveredAt, source, j.githubStartedAt, j.githubCompletedAt,
+		j.workflowName, j.headBranch, queued, queued)
 	if err != nil {
 		return false, err
 	}
 	changed, err := result.RowsAffected()
+	if err != nil || j.conclusion == "" {
+		return changed > 0, err
+	}
+	// Separate from the upsert so a job Runquill already completed, by failing or
+	// cancelling it, still takes GitHub's result without any other column changing.
+	_, err = q.ExecContext(ctx, `UPDATE jobs SET conclusion = ?
+        WHERE job_id = ? AND phase = ? AND conclusion IS NULL`, j.conclusion, j.id, completed)
 	return changed > 0, err
 }
 
@@ -283,9 +300,13 @@ func (q *queue) advanceGitHubJob(ctx context.Context, id int64, p phase, now tim
         changed_at = CASE WHEN phase < ? THEN ? ELSE changed_at END,
         github_created_at = coalesce(github_created_at, nullif(?, 0)),
         github_started_at = coalesce(github_started_at, nullif(?, 0)),
-        github_completed_at = coalesce(github_completed_at, nullif(?, 0))
+        github_completed_at = coalesce(github_completed_at, nullif(?, 0)),
+        conclusion = coalesce(conclusion, nullif(?, '')),
+        workflow_name = coalesce(workflow_name, nullif(?, '')),
+        head_branch = coalesce(head_branch, nullif(?, ''))
         WHERE job_id = ?`, p, p, now.Unix(), githubTimestamp(observed.CreatedAt),
-		githubTimestamp(observed.StartedAt), githubTimestamp(observed.CompletedAt), id)
+		githubTimestamp(observed.StartedAt), githubTimestamp(observed.CompletedAt),
+		githubText(observed.Conclusion), githubText(observed.WorkflowName), githubText(observed.HeadBranch), id)
 	return err
 }
 

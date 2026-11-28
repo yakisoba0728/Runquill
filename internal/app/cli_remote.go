@@ -338,7 +338,7 @@ func runJobsList(ctx context.Context, c *apiClient, o *remoteOptions, _ []string
 		return err
 	}
 	table := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(table, "JOB\tREPOSITORY\tOUTCOME\tPOOL\tHOST\tQUEUED\tWAIT\tDETAIL")
+	fmt.Fprintln(table, "JOB\tREPOSITORY\tOUTCOME\tGITHUB\tPOOL\tHOST\tQUEUED\tWAIT\tDETAIL")
 	for _, job := range page.Jobs {
 		wait := "-"
 		if job.WaitSeconds != nil {
@@ -356,7 +356,8 @@ func runJobsList(ctx context.Context, c *apiClient, o *remoteOptions, _ []string
 				detail += timing
 			}
 		}
-		fmt.Fprintf(table, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", job.ID, cell(job.Repository), cell(job.Outcome), cell(job.Pool),
+		fmt.Fprintf(table, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", job.ID, cell(job.Repository), cell(job.Outcome),
+			cell(job.GitHubConclusion), cell(job.Pool),
 			cell(job.Host), remoteAgo(job.QueuedAt), wait, cell(detail))
 	}
 	if err := table.Flush(); err != nil {
@@ -391,6 +392,9 @@ func runJobsShow(ctx context.Context, c *apiClient, o *remoteOptions, _ []string
 		{"JOB", strconv.FormatInt(row.ID, 10)},
 		{"REPOSITORY", cell(row.Repository)},
 		{"OUTCOME", cell(row.Outcome)},
+		{"GITHUB", cell(row.GitHubConclusion)},
+		{"WORKFLOW", cell(row.WorkflowName)},
+		{"BRANCH", cell(row.HeadBranch)},
 		{"LABEL", cell(row.RunnerLabel)},
 		{"POOL", cell(row.Pool)},
 		{"OS", cell(row.RunnerOS)},
@@ -759,9 +763,10 @@ func runUsageReport(ctx context.Context, c *apiClient, o *remoteOptions, _ []str
 		return err
 	}
 	table := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	fmt.Fprintf(table, "%s\tJOBS\tFAILED\tRUNNER_TIME\tWAIT\n", strings.ToUpper(cell(report.Group)))
+	fmt.Fprintf(table, "%s\tJOBS\tFAILED\tGITHUB_SUCCEEDED\tGITHUB_FAILED\tRUNNER_TIME\tWAIT\n", strings.ToUpper(cell(report.Group)))
 	row := func(key string, t usageTotals) {
-		fmt.Fprintf(table, "%s\t%d\t%d\t%s\t%s\n", key, t.Jobs, t.Failed, usageRunnerTime(t.RunnerSeconds), usageWait(t))
+		fmt.Fprintf(table, "%s\t%d\t%d\t%d\t%d\t%s\t%s\n", key, t.Jobs, t.Failed, t.GitHubSucceeded, t.GitHubFailed,
+			usageRunnerTime(t.RunnerSeconds), usageWait(t))
 	}
 	for _, group := range report.Series {
 		key := cell(group.Key)

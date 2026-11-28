@@ -24,12 +24,12 @@ runquill jobs list --token-file ~/.config/runquill/token --outcome failed --sinc
 | 명령 | 토큰 범위 | 출력 |
 | --- | --- | --- |
 | `fleet status [--check]` | `fleet:read` | 최신 스냅샷의 대기 작업 수, 실행 중인 작업, 호스트 합계, 현재 문제입니다. MCP `fleet_status` 도구와 같은 요약입니다. |
-| `jobs list [--repo OWNER/NAME] [--outcome waiting\|running\|finished\|failed] [--since 24h\|7d] [--limit 1-100]` | `fleet:read` | 7일간의 작업 기록을 최신 작업부터 보여 줍니다. |
-| `jobs show JOB_ID` | `fleet:read` | 작업 기록의 작업 하나입니다. 결과, 실패 또는 재시도 이유, 진단, 시각, 대기 시간, 단계별 소요 시간, 한도 대비 측정한 CPU와 메모리, 러너의 메모리 부족 종료 여부, GitHub URL을 보여 줍니다. |
+| `jobs list [--repo OWNER/NAME] [--outcome waiting\|running\|finished\|failed] [--since 24h\|7d] [--limit 1-100]` | `fleet:read` | 7일간의 작업 기록을 최신 작업부터 보여 줍니다. GitHub 결론은 `GITHUB` 열에 나옵니다. |
+| `jobs show JOB_ID` | `fleet:read` | 작업 기록의 작업 하나입니다. 결과, GitHub 결론, 워크플로 이름과 브랜치, 실패 또는 재시도 이유, 진단, 시각, 대기 시간, 단계별 소요 시간, 한도 대비 측정한 CPU와 메모리, 러너의 메모리 부족 종료 여부, GitHub URL을 보여 줍니다. |
 | `runners list` | `fleet:read` | 최신 스냅샷의 러너입니다. |
 | `hosts list` | `fleet:read` | 호스트별 상태, 정비 상태, 슬롯입니다. |
 | `pools list` | `fleet:read` | 호스트를 풀별로 요약합니다. |
-| `usage [--group day\|repository\|pool\|host] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--repo OWNER/NAME]` | `fleet:read` | 그룹별 끝난 작업 수, 실패, 러너 사용 시간, 평균 대기 시간과 `(total)` 행입니다. 범위는 UTC 날짜 단위이며 기본값은 최근 30일, 최대 400일입니다. |
+| `usage [--group day\|repository\|pool\|host] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--repo OWNER/NAME]` | `fleet:read` | 그룹별 끝난 작업 수, Runquill 실패, GitHub 성공과 실패, 러너 사용 시간, 평균 대기 시간과 `(total)` 행입니다. 범위는 UTC 날짜 단위이며 기본값은 최근 30일, 최대 400일입니다. |
 | `usage --rightsizing [--group pool\|job] [--days 1-7]` | `fleet:read` | 풀별로, 또는 저장소와 러너 라벨별로 [자원이 기록된](elastic-limits.ko.md#작업-자원) 작업 수, 메모리 부족 종료 수, 한도 대비 CPU와 메모리 최고값과 `tight`나 `oversized` 같은 판정입니다. 기본값은 최근 7일 동안 끝난 작업입니다. |
 | `elastic` | `fleet:read` | [탄력적 한도](elastic-limits.ko.md)의 모드, 호스트별 여유분, 러너 한도, 최근 크기 조정 결정 20개입니다. |
 | `hosts cordon HOST`, `hosts uncordon HOST` | `hosts:write` | `hosts list`에 나온 호스트의 새 작업 배정을 멈추거나 재개합니다. |

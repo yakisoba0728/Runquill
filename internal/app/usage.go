@@ -83,22 +83,43 @@ CREATE TABLE IF NOT EXISTS usage_meta (
 );
 INSERT OR IGNORE INTO usage_meta (id, floor, floor_job, swept_day) VALUES (1, 0, 0, '');
 `+jobResourcesSchema)
-	return err
+	if err != nil {
+		return err
+	}
+	// Days rolled up before these columns existed read 0: GitHub's result was not recorded.
+	for _, column := range []string{"github_succeeded", "github_failed"} {
+		var present bool
+		if err := db.QueryRowContext(ctx, `SELECT EXISTS (
+            SELECT 1 FROM pragma_table_info('usage_daily') WHERE name = ?)`, column).Scan(&present); err != nil {
+			return err
+		}
+		if !present {
+			if _, err := db.ExecContext(ctx, "ALTER TABLE usage_daily ADD COLUMN "+column+" INTEGER NOT NULL DEFAULT 0"); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // usageTotals aggregates finished jobs. Failed counts jobs Runquill gave up
 // on or that were cancelled (the failure column), not GitHub conclusions.
+// GitHubSucceeded counts the GitHub conclusion success and GitHubFailed the
+// conclusions failure, timed_out and startup_failure; other conclusions, such
+// as cancelled or skipped, and jobs without a recorded one count in neither.
 // Runner seconds run from provisioning to runner cleanup. Wait is the
 // history view's wait: queued to provisioned, or to the failure for jobs that
 // never got a runner; jobs without a known wait are left out of it.
 type usageTotals struct {
-	Jobs           int64 `json:"jobs"`
-	Failed         int64 `json:"failed"`
-	RunnerSeconds  int64 `json:"runner_seconds"`
-	WaitCount      int64 `json:"wait_count"`
-	WaitAvgSeconds int64 `json:"wait_avg_seconds"`
-	WaitP50Seconds int64 `json:"wait_p50_seconds"`
-	WaitP95Seconds int64 `json:"wait_p95_seconds"`
+	Jobs            int64 `json:"jobs"`
+	Failed          int64 `json:"failed"`
+	GitHubSucceeded int64 `json:"github_succeeded"`
+	GitHubFailed    int64 `json:"github_failed"`
+	RunnerSeconds   int64 `json:"runner_seconds"`
+	WaitCount       int64 `json:"wait_count"`
+	WaitAvgSeconds  int64 `json:"wait_avg_seconds"`
+	WaitP50Seconds  int64 `json:"wait_p50_seconds"`
+	WaitP95Seconds  int64 `json:"wait_p95_seconds"`
 
 	waitSum int64
 	waits   [usageBuckets]int64
@@ -123,6 +144,7 @@ type usageResponse struct {
 type usageSample struct {
 	day, repository, pool, host string
 	failed                      bool
+	conclusion                  string
 	runnerSeconds               int64
 	wait                        *int64
 }
@@ -137,6 +159,12 @@ func (t *usageTotals) add(s usageSample) {
 	if s.failed {
 		t.Failed++
 	}
+	switch s.conclusion {
+	case "success":
+		t.GitHubSucceeded++
+	case "failure", "timed_out", "startup_failure":
+		t.GitHubFailed++
+	}
 	t.RunnerSeconds += s.runnerSeconds
 	if s.wait != nil {
 		t.WaitCount++
@@ -148,6 +176,8 @@ func (t *usageTotals) add(s usageSample) {
 func (t *usageTotals) merge(other usageTotals) {
 	t.Jobs += other.Jobs
 	t.Failed += other.Failed
+	t.GitHubSucceeded += other.GitHubSucceeded
+	t.GitHubFailed += other.GitHubFailed
 	t.RunnerSeconds += other.RunnerSeconds
 	t.WaitCount += other.WaitCount
 	t.waitSum += other.waitSum
@@ -192,7 +222,7 @@ func (t *usageTotals) percentile(p float64) int64 {
 const usageJobColumns = `sequence, job_id, repository, route, phase, changed_at, coalesce(runner_name, ''),
     coalesce(runner_host, runner_cleaned_host, ''), retry_at, retry_reason, coalesce(failure, ''),
     coalesce(github_created_at, 0), coalesce(discovered_at, 0), coalesce(provisioned_at, 0),
-    coalesce(github_started_at, 0), coalesce(runner_cleaned_at, 0)`
+    coalesce(github_started_at, 0), coalesce(runner_cleaned_at, 0), coalesce(conclusion, '')`
 
 type usageRow struct {
 	sequence, cleanedAt int64
@@ -207,7 +237,7 @@ func scanUsageRows(rows *sql.Rows) ([]usageRow, error) {
 		j := &r.job
 		if err := rows.Scan(&r.sequence, &j.id, &j.repository, &j.route, &j.phase, &j.changedAt, &j.runnerName,
 			&j.runnerHost, &j.retryAt, &j.retryReason, &j.failure, &j.githubCreatedAt, &j.discoveredAt,
-			&j.provisionedAt, &j.githubStartedAt, &r.cleanedAt); err != nil {
+			&j.provisionedAt, &j.githubStartedAt, &r.cleanedAt, &j.conclusion); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -220,7 +250,7 @@ func (r usageRow) sample(pools workerPools) usageSample {
 	j := r.job
 	row := panelHistoryRow(j, r.cleanedAt, pools, time.Unix(j.changedAt, 0))
 	s := usageSample{day: usageDay(j.changedAt), repository: strings.ToLower(j.repository), pool: row.Pool,
-		host: row.Host, failed: row.Outcome == "failed", wait: row.WaitSeconds}
+		host: row.Host, failed: row.Outcome == "failed", conclusion: j.conclusion, wait: row.WaitSeconds}
 	if j.provisionedAt > 0 {
 		end := r.cleanedAt
 		if end == 0 {
@@ -330,8 +360,8 @@ func upsertUsage(ctx context.Context, tx *sql.Tx, groups map[usageKey]*usageTota
 	if len(groups) == 0 {
 		return nil
 	}
-	columns := append([]string{"day", "repository", "pool", "host", "jobs", "failed", "runner_seconds",
-		"wait_count", "wait_seconds"}, usageWaitColumns...)
+	columns := append([]string{"day", "repository", "pool", "host", "jobs", "failed", "github_succeeded", "github_failed",
+		"runner_seconds", "wait_count", "wait_seconds"}, usageWaitColumns...)
 	updates := make([]string, 0, len(columns)-4)
 	for _, column := range columns[4:] {
 		updates = append(updates, column+" = usage_daily."+column+" + excluded."+column)
@@ -344,7 +374,8 @@ func upsertUsage(ctx context.Context, tx *sql.Tx, groups map[usageKey]*usageTota
 	}
 	defer statement.Close()
 	for key, t := range groups {
-		args := []any{key.day, key.repository, key.pool, key.host, t.Jobs, t.Failed, t.RunnerSeconds, t.WaitCount, t.waitSum}
+		args := []any{key.day, key.repository, key.pool, key.host, t.Jobs, t.Failed, t.GitHubSucceeded, t.GitHubFailed,
+			t.RunnerSeconds, t.WaitCount, t.waitSum}
 		for _, count := range t.waits {
 			args = append(args, count)
 		}
@@ -432,8 +463,9 @@ func readUsage(ctx context.Context, db *sql.DB, u usageQuery, pools workerPools)
 		return response, err
 	}
 	defer tx.Rollback()
-	sums := make([]string, 0, len(usageWaitColumns)+5)
-	for _, column := range append([]string{"jobs", "failed", "runner_seconds", "wait_count", "wait_seconds"}, usageWaitColumns...) {
+	sums := make([]string, 0, len(usageWaitColumns)+7)
+	for _, column := range append([]string{"jobs", "failed", "github_succeeded", "github_failed", "runner_seconds",
+		"wait_count", "wait_seconds"}, usageWaitColumns...) {
 		sums = append(sums, "sum("+column+")")
 	}
 	filter, args := "", []any{response.From, response.To}
@@ -449,7 +481,7 @@ func readUsage(ctx context.Context, db *sql.DB, u usageQuery, pools workerPools)
 	for rows.Next() {
 		var key string
 		t := &usageTotals{}
-		target := []any{&key, &t.Jobs, &t.Failed, &t.RunnerSeconds, &t.WaitCount, &t.waitSum}
+		target := []any{&key, &t.Jobs, &t.Failed, &t.GitHubSucceeded, &t.GitHubFailed, &t.RunnerSeconds, &t.WaitCount, &t.waitSum}
 		for i := range t.waits {
 			target = append(target, &t.waits[i])
 		}

@@ -23,7 +23,7 @@ const (
 )
 
 const queueBackupMetadata = `CREATE TABLE runquill_backup (owner TEXT NOT NULL, app_id TEXT NOT NULL)`
-const queueBackupOptionalJobColumns = "jit_requested_ms jit_registered_ms runner_launch_ms github_completed_at"
+const queueBackupOptionalJobColumns = "jit_requested_ms jit_registered_ms runner_launch_ms github_completed_at conclusion workflow_name head_branch"
 
 var (
 	errQueueBackupIdentity          = errors.New("queue backup belongs to another GitHub owner or app")
