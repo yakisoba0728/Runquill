@@ -155,6 +155,61 @@ func TestSchedulerDoesNotClaimJobCancelledDuringLookup(t *testing.T) {
 	}
 }
 
+// A re-run keeps the run's labels, so a completed job's idle runner can take the new job.
+func TestSchedulerKeepsBusyRunnerOfCompletedJob(t *testing.T) {
+	const runner = "runquill-9-0123456789ab"
+	for _, tt := range []struct {
+		lookup  int
+		busy    bool
+		removed bool
+	}{
+		{http.StatusOK, true, false},
+		{http.StatusOK, false, true},
+		{http.StatusServiceUnavailable, false, false},
+	} {
+		t.Run(fmt.Sprintf("status %d busy %v", tt.lookup, tt.busy), func(t *testing.T) {
+			q := testQueue(t)
+			ctx := t.Context()
+			now := time.Unix(1_800_000_000, 0)
+			j := recordTestJob(t, q, 9, "runquill-1-1-ci", now)
+			if _, err := q.ExecContext(ctx, `UPDATE jobs SET phase = ?, changed_at = ?, runner_name = ?, runner_host = 'local',
+				runner_id = 55, launched_at = ? WHERE job_id = ?`, completed, now.Add(-time.Minute).Unix(), runner,
+				now.Add(-2*time.Minute).Unix(), j.id); err != nil {
+				t.Fatal(err)
+			}
+			var deleted atomic.Int32
+			gh := testGitHub(t, func(w http.ResponseWriter, r *http.Request) {
+				switch r.Method + " " + r.URL.Path {
+				case "POST /app/installations/1/access_tokens":
+					fmt.Fprint(w, `{"token":"stub"}`)
+				case "GET /repos/owner/repo/actions/runners":
+					w.WriteHeader(tt.lookup)
+					fmt.Fprintf(w, `{"runners":[{"id":55,"name":%q,"busy":%v}]}`, runner, tt.busy)
+				case "DELETE /repos/owner/repo/actions/runners/55":
+					deleted.Add(1)
+					w.WriteHeader(http.StatusNoContent)
+				default:
+					t.Errorf("unexpected GitHub request: %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			})
+			runtime := &testRuntime{hosts: []dockerHostSnapshot{{Name: "local", Containers: map[string]string{runner: "running"}}}}
+			s := &scheduler{queue: q, github: gh, runtime: runtime}
+			if err := s.tick(ctx, now); err != nil {
+				t.Fatal(err)
+			}
+			got := readJob(t, q, j.id)
+			if tt.removed {
+				if len(runtime.removed) != 1 || deleted.Load() != 1 || got.runnerName != "" {
+					t.Fatalf("idle runner kept: removed %v, deleted %d, job %+v", runtime.removed, deleted.Load(), got)
+				}
+			} else if len(runtime.removed) != 0 || deleted.Load() != 0 || got.runnerName != runner {
+				t.Fatalf("runner removed: removed %v, deleted %d, job %+v", runtime.removed, deleted.Load(), got)
+			}
+		})
+	}
+}
+
 func TestSchedulerReconcilesLeaseOnRecordedHost(t *testing.T) {
 	const runner = "runquill-9-0123456789ab"
 	for _, tt := range []struct {

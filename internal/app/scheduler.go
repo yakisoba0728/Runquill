@@ -799,6 +799,18 @@ func (s *scheduler) reconcile(ctx context.Context, j job, state string, detail j
 				return false, err
 			}
 		}
+		// A re-run or an unindexed matrix sibling shares the runner's label, so it may have taken another job.
+		token, err := s.github.runnerToken(ctx, j)
+		var registration githubRunner
+		if err == nil {
+			registration, err = s.github.findRunner(ctx, j, token)
+		}
+		if err != nil && !githubNotFound(err) && !errors.Is(err, errRepositoryOutsideInstallation) {
+			return false, err
+		}
+		if registration.Busy {
+			return false, nil
+		}
 	}
 	if state != "" {
 		err := s.runtime.removeOn(ctx, j.runnerHost, j.runnerName)
