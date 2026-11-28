@@ -20,7 +20,7 @@ As a panel administrator, open **Hosts**, choose **Enroll worker** on the slot, 
 
 Keep the token file and use the displayed restart command from the same directory in your service manager. If the enrollment request loses its reply, the restart command can still connect with the saved token if the manager accepted the code. A configured slot awaiting its first credentials stays unavailable without reserving unused capacity.
 
-Worker credentials are checked against their Docker engine. The manager stores token hashes with the queue, and queue backups include those bindings. Pending enrollment codes are excluded from backups. Keep worker token files separately. Removing `RUNQUILL_WORKER_ENROLLMENT_URL` disables code issuance while registered workers keep using their existing credentials.
+Worker credentials are checked against their Docker engine. The manager stores token hashes with the queue, and queue backups include those bindings. Only a sealed backup restores them. After an unsealed restore, [enroll the workers again](backups.md#restore). Pending enrollment codes are excluded from backups. Keep worker token files separately. Removing `RUNQUILL_WORKER_ENROLLMENT_URL` disables code issuance while registered workers keep using their existing credentials.
 
 ## Register manually
 

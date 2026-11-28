@@ -2,7 +2,7 @@
 
 [Runquill README](../README.md) · [한국어](backups.ko.md)
 
-A queue backup is a consistent SQLite copy of jobs, runner leases, host maintenance state, repository scan history and operational settings. It includes enrolled outbound workers' host and engine IDs and token digests. It excludes worker enrollment codes and observations, panel users, sessions, tokens, audit records and [usage statistics](panel.md#usage-statistics). The basic `runquill backup` and `runquill restore` flow is in [Back up and recover the queue](operations.md#back-up-and-recover-the-queue). This guide adds encryption, a schedule and offsite copies.
+A queue backup is a consistent SQLite copy of jobs, runner leases, host maintenance state, repository scan history and operational settings. It includes enrolled outbound workers' host and engine IDs and token digests, which only a [sealed](#sealed-backups) restore brings back. It excludes worker enrollment codes and observations, panel users, sessions, tokens, audit records and [usage statistics](panel.md#usage-statistics). The basic `runquill backup` and `runquill restore` flow is in [Back up and recover the queue](operations.md#back-up-and-recover-the-queue). This guide adds encryption, a schedule and offsite copies.
 
 ## Sealed backups
 
@@ -102,3 +102,5 @@ docker compose -f compose.yaml -f compose.backups.yaml run --rm --no-deps -e RUN
 ```
 
 Restore from S3 needs only the S3 variables and the passphrase. It does not need `RUNQUILL_BACKUP_INTERVAL`.
+
+An unsealed file is not authenticated, so anyone who can write to the backup directory or bucket could replace it. While a passphrase is configured through `RUNQUILL_BACKUP_PASSPHRASE`, `RUNQUILL_BACKUP_PASSPHRASE_FILE` or `--passphrase-file`, `runquill restore` refuses an unsealed file, whatever its name. Add `--allow-plaintext` only for a file you trust. An unsealed restore never brings back enrolled worker credentials, with or without a passphrase. After activation, issue a new enrollment code on **Hosts** for each panel-enrolled worker, stop that worker, and run the enroll command from the directory that holds its existing token file. Without `RUNQUILL_WORKER_ENROLLMENT_URL`, the manager does not start while a configured worker lacks credentials, so keep it set or provide the workers in `RUNQUILL_WORKER_AUTH_FILE`. Workers configured in that file are unaffected.

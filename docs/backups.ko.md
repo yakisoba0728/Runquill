@@ -2,7 +2,7 @@
 
 [Runquill README](../README.ko.md) · [English](backups.md)
 
-대기열 백업은 작업, 러너 리스, 호스트 정비 상태, 저장소 조회 기록, 운영 설정을 일관된 시점으로 복사한 SQLite 파일입니다. 등록된 아웃바운드 워커의 호스트 ID, 엔진 ID, 토큰 해시도 들어 있습니다. 워커 등록 코드와 관측 정보, 패널 사용자, 세션, 토큰, 감사 기록, [사용량 통계](panel.ko.md#사용량-통계)는 제외됩니다. 기본적인 `runquill backup`과 `runquill restore` 절차는 [대기열 백업과 복구](operations.ko.md#대기열-백업과-복구)에 있습니다. 이 가이드는 여기에 암호화, 예약 실행, 외부 저장소 복사를 더합니다.
+대기열 백업은 작업, 러너 리스, 호스트 정비 상태, 저장소 조회 기록, 운영 설정을 일관된 시점으로 복사한 SQLite 파일입니다. 등록된 아웃바운드 워커의 호스트 ID, 엔진 ID, 토큰 해시도 들어 있으며, 이 정보는 [암호화 백업](#암호화-백업)을 복구할 때만 되살아납니다. 워커 등록 코드와 관측 정보, 패널 사용자, 세션, 토큰, 감사 기록, [사용량 통계](panel.ko.md#사용량-통계)는 제외됩니다. 기본적인 `runquill backup`과 `runquill restore` 절차는 [대기열 백업과 복구](operations.ko.md#대기열-백업과-복구)에 있습니다. 이 가이드는 여기에 암호화, 예약 실행, 외부 저장소 복사를 더합니다.
 
 ## 암호화 백업
 
@@ -102,3 +102,5 @@ docker compose -f compose.yaml -f compose.backups.yaml run --rm --no-deps -e RUN
 ```
 
 S3에서 복구할 때는 S3 변수와 암호만 있으면 됩니다. `RUNQUILL_BACKUP_INTERVAL`은 필요하지 않습니다.
+
+암호화하지 않은 파일은 인증되지 않으므로, 백업 디렉터리나 버킷에 쓸 수 있는 사람이면 누구나 바꿔 놓을 수 있습니다. `RUNQUILL_BACKUP_PASSPHRASE`, `RUNQUILL_BACKUP_PASSPHRASE_FILE`, `--passphrase-file` 중 하나로 암호가 설정되어 있으면 `runquill restore`는 이름과 상관없이 암호화하지 않은 파일을 거부합니다. 믿을 수 있는 파일일 때만 `--allow-plaintext`를 붙입니다. 암호화하지 않은 백업을 복구하면 암호 설정 여부와 상관없이 등록된 워커 인증 정보는 되살리지 않습니다. 활성화한 뒤 패널에서 등록한 워커마다 **호스트** 화면에서 새 등록 코드를 발급하고, 그 워커를 멈춘 뒤 기존 토큰 파일이 있는 디렉터리에서 등록 명령을 실행합니다. `RUNQUILL_WORKER_ENROLLMENT_URL`이 없으면 설정된 워커 중 인증 정보가 없는 워커가 있을 때 매니저가 시작하지 않으므로, 이 변수를 유지하거나 `RUNQUILL_WORKER_AUTH_FILE`에 워커를 지정하세요. 이 파일에 지정한 워커는 영향을 받지 않습니다.

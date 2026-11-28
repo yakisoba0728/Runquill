@@ -608,7 +608,7 @@ func TestLiveS3BackupRestore(t *testing.T) {
 		t.Fatalf("sealed S3 backup did not complete: %+v", snapshot)
 	}
 	recovered := filepath.Join(dir, "recovered.sqlite3")
-	if err := restoreFromS3Command(ctx, io.Discard, name, recovered, ""); err != nil {
+	if err := restoreFromS3Command(ctx, io.Discard, name, recovered, "", false); err != nil {
 		t.Fatalf("restore from S3: %s", redactSecrets(err.Error(), cfg.secrets()...))
 	}
 	if err := checkQueueReady(recovered); err == nil || !strings.Contains(err.Error(), "fenced") {

@@ -153,7 +153,7 @@ func sealedQueueBackup(ctx context.Context, source, destination string, identity
 	}
 	defer os.RemoveAll(staging)
 	plain := filepath.Join(staging, "queue.sqlite3")
-	if err := publishQueueCopy(ctx, source, plain, identity, queueArchiveID); err != nil {
+	if err := publishQueueCopy(ctx, source, plain, identity, queueArchiveID, false); err != nil {
 		return err
 	}
 	if err := verifyQueueBackup(ctx, plain, identity); err != nil {

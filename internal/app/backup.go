@@ -29,6 +29,7 @@ var (
 	errQueueBackupIdentity          = errors.New("queue backup belongs to another GitHub owner or app")
 	errBackupVerificationPassphrase = errors.New("could not load the backup passphrase for verification")
 	errBackupVerificationWorkspace  = errors.New("could not create a temporary directory beside the backup for verification")
+	errPlaintextRestore             = errors.New("refusing to restore an unsealed backup while a backup passphrase is configured. Restore a sealed backup, or pass --allow-plaintext if you trust this file")
 )
 
 // backupVerifyPrefix names the private directory that holds an unsealed copy
@@ -75,6 +76,7 @@ func runQueueBackup(ctx context.Context, out io.Writer, command string, args []s
 	source := flags.String("from", "", "prepare a recovery queue from this backup")
 	remote := flags.String("from-s3", "", "prepare a recovery queue from this backup in the configured S3-compatible bucket")
 	activate := flags.Bool("activate", false, "lift the recovery fence after stopping the previous fleet and checking its runners")
+	allowPlaintext := flags.Bool("allow-plaintext", false, "restore an unsealed backup although a backup passphrase is configured")
 	flags.Parse(args)
 	chosen := 0
 	for _, set := range []bool{*source != "", *remote != "", *activate} {
@@ -82,16 +84,16 @@ func runQueueBackup(ctx context.Context, out io.Writer, command string, args []s
 			chosen++
 		}
 	}
-	if flags.NArg() != 0 || chosen != 1 || (*activate && *passphraseFile != "") {
-		return errors.New("usage: runquill restore --from FILE [--passphrase-file FILE], runquill restore --from-s3 KEY [--passphrase-file FILE] or runquill restore --activate")
+	if flags.NArg() != 0 || chosen != 1 || (*activate && (*passphraseFile != "" || *allowPlaintext)) {
+		return errors.New("usage: runquill restore --from FILE [--passphrase-file FILE] [--allow-plaintext], runquill restore --from-s3 KEY [--passphrase-file FILE] [--allow-plaintext] or runquill restore --activate")
 	}
 	if *activate {
 		return activateQueue(ctx, out, path)
 	}
 	if *remote != "" {
-		return restoreFromS3Command(ctx, out, *remote, path, *passphraseFile)
+		return restoreFromS3Command(ctx, out, *remote, path, *passphraseFile, *allowPlaintext)
 	}
-	return restoreQueueFrom(ctx, out, *source, path, *passphraseFile)
+	return restoreQueueFrom(ctx, out, *source, path, *passphraseFile, *allowPlaintext)
 }
 
 func sealedBackupCommand(ctx context.Context, out io.Writer, source, destination, passphraseFile string) error {
@@ -115,7 +117,7 @@ func backupQueue(ctx context.Context, out io.Writer, source, destination string)
 	if err != nil {
 		return err
 	}
-	if err := publishQueueCopy(ctx, source, destination, identity, queueArchiveID); err != nil {
+	if err := publishQueueCopy(ctx, source, destination, identity, queueArchiveID, false); err != nil {
 		return err
 	}
 	_, err = fmt.Fprintf(out, "Created Runquill queue backup %s.\n", destination)
@@ -123,12 +125,14 @@ func backupQueue(ctx context.Context, out io.Writer, source, destination string)
 }
 
 func restoreQueue(ctx context.Context, out io.Writer, source, destination string) error {
-	return restoreQueueFrom(ctx, out, source, destination, "")
+	return restoreQueueFrom(ctx, out, source, destination, "", false)
 }
 
 // restoreQueueFrom accepts a plain or sealed backup. A sealed one is fully
 // authenticated into a private temporary file before the restore starts.
-func restoreQueueFrom(ctx context.Context, out io.Writer, source, destination, passphraseFile string) error {
+// A plain one is unauthenticated, so it is refused while a passphrase is
+// configured unless allowPlaintext is set, and it never restores worker credentials.
+func restoreQueueFrom(ctx context.Context, out io.Writer, source, destination, passphraseFile string, allowPlaintext bool) error {
 	identity, err := currentQueueBackupIdentity()
 	if err != nil {
 		return err
@@ -167,15 +171,21 @@ func restoreQueueFrom(ctx context.Context, out io.Writer, source, destination, p
 			return err
 		}
 		source = plain
+	} else if !allowPlaintext && (passphraseFile != "" || os.Getenv("RUNQUILL_BACKUP_PASSPHRASE") != "" || os.Getenv("RUNQUILL_BACKUP_PASSPHRASE_FILE") != "") {
+		// Any configured source counts, even an unreadable or empty one, so the check fails closed.
+		return errPlaintextRestore
 	}
-	if err := publishQueueCopy(ctx, source, path, identity, queueFencedID); err != nil {
+	if err := publishQueueCopy(ctx, source, path, identity, queueFencedID, !sealed); err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(out, "Prepared recovery queue %s. Stop the prior manager, check for outstanding runners, then run restore --activate with RUNQUILL_DB set to this queue.\n", path)
+	if _, err := fmt.Fprintf(out, "Prepared recovery queue %s. Stop the prior manager, check for outstanding runners, then run restore --activate with RUNQUILL_DB set to this queue.\n", path); err != nil || sealed {
+		return err
+	}
+	_, err = fmt.Fprintln(out, "Enrolled outbound worker credentials were not restored from this unsealed backup. After activation, issue a new enrollment code for each panel-enrolled worker, stop that worker, and run the enroll command with its existing token file.")
 	return err
 }
 
-func publishQueueCopy(ctx context.Context, source, destination string, identity queueBackupIdentity, artifactID int) error {
+func publishQueueCopy(ctx context.Context, source, destination string, identity queueBackupIdentity, artifactID int, dropWorkers bool) error {
 	source, err := filepath.Abs(source)
 	if err != nil {
 		return err
@@ -203,7 +213,7 @@ func publishQueueCopy(ctx context.Context, source, destination string, identity 
 		return err
 	}
 	defer file.Close()
-	if err := copyQueueFile(ctx, source, target, identity, artifactID); err != nil {
+	if err := copyQueueFile(ctx, source, target, identity, artifactID, dropWorkers); err != nil {
 		return err
 	}
 	if err := file.Sync(); err != nil {
@@ -243,7 +253,7 @@ func checkNewQueuePath(path string) error {
 	return nil
 }
 
-func copyQueueFile(ctx context.Context, source, target string, identity queueBackupIdentity, artifactID int) error {
+func copyQueueFile(ctx context.Context, source, target string, identity queueBackupIdentity, artifactID int, dropWorkers bool) error {
 	db, err := openQueueDB(target, "rw")
 	if err != nil {
 		return err
@@ -283,6 +293,9 @@ func copyQueueFile(ctx context.Context, source, target string, identity queueBac
 
 	// Copy a single read snapshot of the allowlisted queue data. Do not copy enrollment codes or other credentials.
 	for _, table := range queueBackupTables {
+		if dropWorkers && table.name == "worker_authorities" {
+			continue
+		}
 		columns := strings.Fields(table.columns)
 		required := table.baseColumns
 		if artifactID == queueFencedID {
