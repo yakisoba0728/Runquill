@@ -738,12 +738,15 @@ func TestReleaseRunnerOSMatchesBuilds(t *testing.T) {
 	}
 	check("release.yml", tags)
 
+	codenames := map[string]string{
+		"ubuntu22.04": "ubuntu:jammy", "ubuntu26.04": "ubuntu:resolute", "debian12": "debian:bookworm", "debian13": "debian:trixie",
+	}
 	var stages []string
-	for _, m := range regexp.MustCompile(`(?m)^FROM ([a-z]+):([0-9.]+)@sha256:[0-9a-f]{64} AS pinned-([a-z0-9.]+)$`).FindAllStringSubmatch(read("../../runner/Dockerfile"), -1) {
-		if m[1]+m[2] != m[3] {
-			t.Errorf("runner/Dockerfile stage pinned-%s uses %s:%s", m[3], m[1], m[2])
+	for _, m := range regexp.MustCompile(`(?m)^FROM ([a-z]+:[a-z]+)@sha256:[0-9a-f]{64} AS pinned-([a-z0-9.]+)$`).FindAllStringSubmatch(read("../../runner/Dockerfile"), -1) {
+		if codenames[m[2]] != m[1] {
+			t.Errorf("runner/Dockerfile stage pinned-%s uses %s, want %q", m[2], m[1], codenames[m[2]])
 		}
-		stages = append(stages, m[3])
+		stages = append(stages, m[2])
 	}
 	check("runner/Dockerfile", stages)
 }

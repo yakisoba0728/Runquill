@@ -35,14 +35,14 @@ CGO_ENABLED=0 go build -o runquill .
 
 ## 의존성 업데이트
 
-[Dependabot](../.github/dependabot.yml)은 GitHub Actions, Go 모듈, 패널 npm 패키지, 두 Dockerfile의 Docker 기반 이미지마다 매주 묶음 풀 리퀘스트 하나를 엽니다. 고정한 태그의 다이제스트는 갱신하지만 러너 OS 릴리스, Go 마이너 버전, Docker CLI 메이저 버전을 바꾸는 태그 변경은 건너뜁니다. 이런 변경은 `releaseRunnerOS`, 워크플로, 문서와 함께 직접 합니다.
+[Dependabot](../.github/dependabot.yml)은 GitHub Actions, Go 모듈, 패널 npm 패키지, 두 Dockerfile의 Docker 기반 이미지마다 매주 묶음 풀 리퀘스트 하나를 엽니다. 러너 OS 기반 이미지는 릴리스 코드네임(`jammy`, `bookworm`, `resolute`, `trixie`)으로 고정하므로 Dependabot은 변형을 다른 릴리스로 옮기지 않고 다이제스트만 갱신합니다. Go 이미지는 패치, Docker CLI 이미지는 마이너 태그 업데이트를 받고, Go 마이너나 Docker CLI 메이저 버전은 건너뜁니다. 새 러너 OS 릴리스는 `releaseRunnerOS`, 워크플로, 문서를 직접 고쳐 추가합니다.
 
 npm 풀 리퀘스트에서는 브랜치를 체크아웃해 `internal/webui/panel`에서 `npm ci && npm run build`를 실행하고, 다시 빌드한 `internal/webui/panelv2/` 결과물을 푸시합니다. 그러지 않으면 CI의 커밋된 에셋 검사가 실패합니다.
 
-Docker 다이제스트를 직접 갱신하려면 고정한 태그마다 다이제스트를 조회해 해당 `FROM` 줄의 `sha256`을 바꿉니다.
+주간 실행 뒤에도 다이제스트가 뒤처져 있으면 고정한 태그의 다이제스트를 조회해 해당 `FROM` 줄의 `sha256`을 직접 바꿉니다.
 
 ```sh
-docker buildx imagetools inspect ubuntu:22.04 --format '{{json .Manifest.Digest}}'
+docker buildx imagetools inspect ubuntu:jammy --format '{{json .Manifest.Digest}}'
 ```
 
 ## 웹 패널 빌드와 테스트

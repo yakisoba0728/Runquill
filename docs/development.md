@@ -35,14 +35,14 @@ On a version tag, the [release workflow](../.github/workflows/release.yml) build
 
 ## Dependency updates
 
-[Dependabot](../.github/dependabot.yml) opens one grouped pull request a week for each ecosystem: GitHub Actions, Go modules, the panel's npm packages, and the Docker base images in both Dockerfiles. It refreshes digests of the pinned tags but skips tag changes that would replace a runner OS release, a Go minor version or a Docker CLI major version. Make those changes by hand together with `releaseRunnerOS`, the workflows and the docs.
+[Dependabot](../.github/dependabot.yml) opens one grouped pull request a week for each ecosystem: GitHub Actions, Go modules, the panel's npm packages, and the Docker base images in both Dockerfiles. The runner OS bases are pinned by release codename (`jammy`, `bookworm`, `resolute`, `trixie`), so Dependabot refreshes their digests without moving a variant to another release. The Go and Docker CLI images take patch and minor tag updates respectively; Dependabot skips a Go minor or Docker CLI major version, and a new runner OS release means editing `releaseRunnerOS`, the workflows and the docs by hand.
 
 On an npm pull request, check out the branch, run `npm ci && npm run build` in `internal/webui/panel`, and push the rebuilt `internal/webui/panelv2/` output. Otherwise CI fails the committed-assets check.
 
-To refresh the Docker digests by hand, look up each pinned tag and replace the `sha256` in its `FROM` line:
+If a weekly run leaves a digest behind, look up the pinned tag and replace the `sha256` in its `FROM` line by hand:
 
 ```sh
-docker buildx imagetools inspect ubuntu:22.04 --format '{{json .Manifest.Digest}}'
+docker buildx imagetools inspect ubuntu:jammy --format '{{json .Manifest.Digest}}'
 ```
 
 ## Build and test the web panel

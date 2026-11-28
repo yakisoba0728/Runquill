@@ -26,7 +26,8 @@ updates:
       panel:
         patterns: ["*"]
 
-  # Dependabot reads only FROM lines, so both Dockerfiles pin their bases there.
+  # Dependabot reads only FROM lines, so both Dockerfiles pin their bases there. The runner OS
+  # bases use codename tags, which get digest refreshes but never a move to another release.
   - package-ecosystem: docker
     directories:
       - /
@@ -37,11 +38,6 @@ updates:
       base-images:
         patterns: ["*"]
     ignore:
-      # Each runner variant names one OS release; only refresh its digest.
-      - dependency-name: ubuntu
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
-      - dependency-name: debian
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
       # The build image follows the go directive in go.mod.
       - dependency-name: golang
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
