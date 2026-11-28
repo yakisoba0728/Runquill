@@ -670,7 +670,7 @@ func uploadStagingDir(database string) (string, error) {
 
 // restoreFromS3Command downloads a backup by key, or by name under the
 // configured prefix, then restores it like a local file.
-func restoreFromS3Command(ctx context.Context, out io.Writer, key, destination, passphraseFile string) error {
+func restoreFromS3Command(ctx context.Context, out io.Writer, key, destination, passphraseFile string, allowPlaintext bool) error {
 	cfg, err := loadS3Config(os.Getenv)
 	if err != nil {
 		return err
@@ -708,5 +708,5 @@ func restoreFromS3Command(ctx context.Context, out io.Writer, key, destination, 
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return restoreQueueFrom(ctx, out, file, destination, passphraseFile)
+	return restoreQueueFrom(ctx, out, file, destination, passphraseFile, allowPlaintext)
 }

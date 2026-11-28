@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -54,6 +55,10 @@ func TestSealedBackupRestoresEndToEnd(t *testing.T) {
 	// Span multiple sealed chunks so late authentication failure happens after plaintext has been written.
 	failure := strings.Repeat("x", 128<<10)
 	if _, err := q.Exec("INSERT INTO jobs (job_id, repository, repository_id, installation_id, route, phase, changed_at, failure) VALUES (7, 'owner/repo', 8, 9, 'runquill-12-1-sealed', 0, 123, ?)", failure); err != nil {
+		t.Fatal(err)
+	}
+	digest := strings.Repeat("b", 64)
+	if _, err := q.Exec("INSERT INTO worker_authorities (host, engine, token_digest) VALUES ('builder', 'test-engine', ?)", digest); err != nil {
 		t.Fatal(err)
 	}
 	passFile := filepath.Join(dir, "passphrase")
@@ -128,6 +133,114 @@ func TestSealedBackupRestoresEndToEnd(t *testing.T) {
 	}
 	if jobs[0].failure != failure {
 		t.Fatalf("restored job failure length %d, want %d", len(jobs[0].failure), len(failure))
+	}
+	var restoredDigest string
+	if err := restored.QueryRow("SELECT token_digest FROM worker_authorities WHERE host = 'builder'").Scan(&restoredDigest); err != nil || restoredDigest != digest {
+		t.Fatalf("sealed restore lost the worker authority: digest matched %t, %v", restoredDigest == digest, err)
+	}
+}
+
+func TestPlaintextRestoreNeedsConsentWhileSealing(t *testing.T) {
+	ctx := t.Context()
+	t.Setenv("RUNQUILL_OWNER", "owner")
+	t.Setenv("RUNQUILL_APP_ID", "123")
+	fake, _, env := newTestS3(t, true)
+	for name, value := range env {
+		t.Setenv(name, value)
+	}
+	t.Setenv("RUNQUILL_BACKUP_PASSPHRASE", "")
+	t.Setenv("RUNQUILL_BACKUP_PASSPHRASE_FILE", "")
+	dir := t.TempDir()
+	live := filepath.Join(dir, "live.sqlite3")
+	q, err := openQueue(live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer q.close()
+	if _, err := q.Exec("INSERT INTO jobs (job_id, repository, repository_id, installation_id, route, phase, changed_at) VALUES (9, 'owner/repo', 8, 9, 'runquill-12-1-plain', 0, 123)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.Exec("INSERT INTO worker_authorities (host, engine, token_digest) VALUES ('builder', 'attacker-engine', ?)", strings.Repeat("c", 64)); err != nil {
+		t.Fatal(err)
+	}
+	plain := filepath.Join(dir, "runquill-queue-20260101T000000Z.sqlite3")
+	if err := backupQueue(ctx, io.Discard, live, plain); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Anyone who can write to the bucket can plant an unsealed file, even under a sealed name.
+	fake.mu.Lock()
+	fake.objects["fleet/a/runquill-queue-20260101T000000Z.sqlite3"] = data
+	fake.objects["fleet/a/runquill-queue-20260102T000000Z.sqlite3.sealed"] = data
+	fake.mu.Unlock()
+	passFile := filepath.Join(dir, "passphrase")
+	os.WriteFile(passFile, []byte(testPassphrase), 0600)
+	empty := filepath.Join(dir, "empty")
+	os.WriteFile(empty, nil, 0600)
+
+	target := filepath.Join(dir, "recovered.sqlite3")
+	for _, tc := range []struct {
+		env  string
+		args []string
+	}{
+		{"", []string{"--from", plain, "--passphrase-file", passFile}},
+		{"", []string{"--from", plain, "--passphrase-file", empty}},
+		{"", []string{"--from", plain, "--passphrase-file", filepath.Join(dir, "missing")}},
+		{testPassphrase, []string{"--from", plain}},
+		{testPassphrase, []string{"--from-s3", "runquill-queue-20260101T000000Z.sqlite3"}},
+		{testPassphrase, []string{"--from-s3", "runquill-queue-20260102T000000Z.sqlite3.sealed"}},
+	} {
+		t.Setenv("RUNQUILL_BACKUP_PASSPHRASE", tc.env)
+		if err := runQueueBackupWithDB(t, target, append([]string{"restore"}, tc.args...)...); !errors.Is(err, errPlaintextRestore) {
+			t.Fatalf("restore %v with a passphrase: %v", tc.args, err)
+		}
+		if _, err := os.Stat(target); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("refused restore %v wrote the queue", tc.args)
+		}
+	}
+	t.Setenv("RUNQUILL_BACKUP_PASSPHRASE", "")
+	t.Setenv("RUNQUILL_BACKUP_PASSPHRASE_FILE", passFile)
+	if err := runQueueBackupWithDB(t, target, "restore", "--from", plain); !errors.Is(err, errPlaintextRestore) {
+		t.Fatalf("restore with RUNQUILL_BACKUP_PASSPHRASE_FILE: %v", err)
+	}
+	if err := runQueueBackupWithDB(t, target, "restore", "--activate", "--allow-plaintext"); err == nil {
+		t.Fatal("accepted --allow-plaintext with --activate")
+	}
+
+	for i, args := range [][]string{
+		{"--from", plain, "--allow-plaintext"},
+		{"--from-s3", "runquill-queue-20260101T000000Z.sqlite3", "--allow-plaintext"},
+	} {
+		target := filepath.Join(dir, fmt.Sprintf("allowed-%d.sqlite3", i))
+		if err := runQueueBackupWithDB(t, target, append([]string{"restore"}, args...)...); err != nil {
+			t.Fatalf("restore %v: %v", args, err)
+		}
+		assertPlaintextRestore(t, target)
+	}
+	t.Setenv("RUNQUILL_BACKUP_PASSPHRASE_FILE", "")
+	target = filepath.Join(dir, "unconfigured.sqlite3")
+	if err := runQueueBackupWithDB(t, target, "restore", "--from", plain); err != nil {
+		t.Fatalf("restore without a configured passphrase: %v", err)
+	}
+	assertPlaintextRestore(t, target)
+}
+
+func assertPlaintextRestore(t *testing.T, target string) {
+	t.Helper()
+	if err := activateQueue(t.Context(), io.Discard, target); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := openQueue(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restored.close()
+	var jobs, authorities int
+	if err := restored.QueryRow("SELECT (SELECT count(*) FROM jobs), (SELECT count(*) FROM worker_authorities)").Scan(&jobs, &authorities); err != nil || jobs != 1 || authorities != 0 {
+		t.Fatalf("plaintext restore: %d jobs, %d worker authorities, %v", jobs, authorities, err)
 	}
 }
 

@@ -108,9 +108,13 @@ func TestBackupOnlineAndRestoreToFencedQueue(t *testing.T) {
 		Scan(&requested, &registered, &launched); err != nil || requested != 123001 || registered != 123020 || launched != 123490 {
 		t.Fatalf("restored job stages: %d %d %d, %v", requested, registered, launched, err)
 	}
-	var engine, restoredDigest string
-	if err := restored.QueryRow("SELECT engine, token_digest FROM worker_authorities WHERE host = 'builder'").Scan(&engine, &restoredDigest); err != nil || engine != "test-engine" || restoredDigest != digest {
-		t.Fatalf("restored worker authority: engine %q, digest matched %t, %v", engine, restoredDigest == digest, err)
+	// An unsealed restore never adopts the live queue's binding.
+	var archived, authorities int
+	if err := q.QueryRow("SELECT count(*) FROM worker_authorities").Scan(&archived); err != nil || archived != 1 {
+		t.Fatalf("live worker authorities: %d, %v", archived, err)
+	}
+	if err := restored.QueryRow("SELECT count(*) FROM worker_authorities").Scan(&authorities); err != nil || authorities != 0 {
+		t.Fatalf("restored %d worker authorities from an unsealed backup, %v", authorities, err)
 	}
 	hosts, err := readHostStates(ctx, restored.DB)
 	if err != nil || !hosts["local"].cordoned {
