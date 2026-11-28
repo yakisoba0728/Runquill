@@ -89,7 +89,7 @@ jobs:
         run: |
           test "$(docker run --rm runquill-manager:ci --version)" = "$VERSION"
           docker run --rm --entrypoint sh runquill-manager:ci -c \
-            'runquill panel --demo --port 8081 & sleep 2; wget -q -O /dev/null http://127.0.0.1:8081/views/overview.js'
+            'runquill panel --demo --port 8081 & sleep 2; wget -q -O - http://127.0.0.1:8081/ | grep -q assets/panel- && wget -q -O /dev/null http://127.0.0.1:8081/theme.js'
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod

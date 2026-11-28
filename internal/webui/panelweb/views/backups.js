@@ -99,7 +99,7 @@ async function verifyBackup() {
     const result = await current.ctx.api.post("./api/backups/verify", undefined, { timeout: 30 * 60 * 1000 + 10000 });
     if (parts !== current) return;
     renderVerification(current, result);
-    message(current.verificationOutput, "");
+    message(current.verificationOutput, tr(result?.ok ? "The latest backup was verified." : "Verification failed."), result?.ok ? "ok" : "failed");
   } catch (error) {
     if (parts === current && error.status !== 401) message(current.verificationOutput, errorText(error), "failed");
   } finally {
@@ -176,12 +176,12 @@ export default {
   mount(root, ctx) {
     loadStyle("backups");
     const refresh = button("Refresh", () => void load());
-    const schedule = h("div", { "aria-live": "polite" }, h("p", { class: "muted" }, tr("Loading…")));
+    const schedule = h("div", {}, h("p", { class: "muted" }, tr("Loading…")));
     const last = h("div");
     const enable = h("div");
     const output = statusLine();
     const queueBackup = downloadBlock(ctx);
-    const verification = h("div", { "aria-live": "polite" });
+    const verification = h("div");
     const verificationOutput = statusLine();
     const verify = ctx.can("admin") && !ctx.demo ? button("Verify latest backup", () => void verifyBackup()) : null;
     const verificationBlock = block("Backup verification", { note: "Checks the latest local scheduled copy and its GitHub App identity." },

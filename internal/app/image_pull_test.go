@@ -486,7 +486,6 @@ func TestSchedulerWaitsForRunnerImageBeforeProvisioning(t *testing.T) {
 }
 
 func TestImageMessagesHaveTranslations(t *testing.T) {
-	keys, patterns := panelTranslations(t)
 	images := testImagePull(t, "missing")
 	var messages []string
 	_, wait := images.observe("ssh://ci@build:22", "ghcr.io/o/r@sha256:ab", false)
@@ -499,19 +498,22 @@ func TestImageMessagesHaveTranslations(t *testing.T) {
 	messages = append(messages, wait)
 	images.pulls.Done()
 	placeholder := regexp.MustCompile(`\{[a-z]+\}`)
-	for _, message := range messages {
-		matched := false
-		for pattern := range patterns {
-			parts := placeholder.Split(pattern, -1)
-			for i := range parts {
-				parts[i] = regexp.QuoteMeta(parts[i])
+	for _, catalogue := range panelTranslations(t) {
+		keys, patterns := catalogue.keys, catalogue.patterns
+		for _, message := range messages {
+			matched := false
+			for pattern := range patterns {
+				parts := placeholder.Split(pattern, -1)
+				for i := range parts {
+					parts[i] = regexp.QuoteMeta(parts[i])
+				}
+				if regexp.MustCompile("^(?s)"+strings.Join(parts, "(.+?)")+"$").MatchString(message) && keys[pattern] {
+					matched = true
+				}
 			}
-			if regexp.MustCompile("^(?s)"+strings.Join(parts, "(.+?)")+"$").MatchString(message) && keys[pattern] {
-				matched = true
+			if !matched {
+				t.Errorf("%s: no translated server pattern for %q", catalogue.name, message)
 			}
-		}
-		if !matched {
-			t.Errorf("panelweb/i18n.js has no translated serverPatterns template for %q", message)
 		}
 	}
 }

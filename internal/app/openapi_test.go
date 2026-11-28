@@ -89,7 +89,8 @@ func TestOpenAPIRoutesAreServed(t *testing.T) {
 	access := panelAccessForTest(t, q)
 	panel := newPanel(config{})
 	panel.operations = &operations{}
-	live, demo := panelHandler(panel, access), panelHandler(nil, nil)
+	live, demo := panelHandler(panel, access, false), panelHandler(nil, nil, false)
+	liveV2, demoV2 := panelHandler(panel, access, true), panelHandler(nil, nil, true)
 	served := func(handler http.Handler, origin, method, path string) bool {
 		path = regexp.MustCompile(`\{[^}]+\}`).ReplaceAllString(path, "1")
 		res := httptest.NewRecorder()
@@ -105,7 +106,8 @@ func TestOpenAPIRoutesAreServed(t *testing.T) {
 	}
 	for _, key := range sortedKeys(keys) {
 		method, path, _ := strings.Cut(key, " ")
-		if !served(live, access.cfg.origin, method, path) && !served(demo, "http://127.0.0.1:8081", method, path) {
+		if !served(live, access.cfg.origin, method, path) && !served(demo, "http://127.0.0.1:8081", method, path) &&
+			!served(liveV2, access.cfg.origin, method, path) && !served(demoV2, "http://127.0.0.1:8081", method, path) {
 			t.Errorf("%s does not reach a handler in the live or demo panel", key)
 		}
 	}

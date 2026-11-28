@@ -103,7 +103,7 @@ RUNQUILL_WORKER_POOLS='{"default":{"warm":2,"warm_max_idle_minutes":30}}'
 - `warm` cannot be combined with `cache: true`, because the cache volume belongs to the job's repository, which is unknown before the job arrives. The manager rejects `warm` for pools with outbound `agent://` workers, and K3s does not use worker pools.
 - Warm runners need the runner image from this release or later. A custom pool image must keep its entrypoint.
 - Each warm runner takes at most one job and is removed afterwards, like any runner. Idle warm runners still hold memory and, with Docker-in-Docker, a running daemon, so keep `warm` within the host's capacity.
-- Warm runners are named `runquill-warm-…`. See idle counts and configured targets in **Hosts & pools** or in the `warm` and `warm_target` fields of `runquill status --json`. `gc --dry-run` omits idle warm runners, and `gc --remove-orphans` skips them. List them with `docker ps --filter name=runquill-warm-`. Podman has not been tested with warm runners.
+- Warm runners are named `runquill-warm-…`. See idle counts and configured targets in **Hosts** or in the `warm` and `warm_target` fields of `runquill status --json`. `gc --dry-run` omits idle warm runners, and `gc --remove-orphans` skips them. List them with `docker ps --filter name=runquill-warm-`. Podman has not been tested with warm runners.
 
 ## Share capacity across repositories
 
@@ -117,4 +117,4 @@ Releases publish the runner image as `runquill-runner:<version>` on Ubuntu 24.04
 
 ## Elastic runner limits
 
-With `RUNQUILL_ELASTIC=observe` or `apply`, a busy runner on the `local` Docker host can borrow CPU and memory that no other runner or free slot has been promised, up to a multiple of its pool's `cpus` and `memory_mib`. Limits never fall below the pool's values, and memory is never lowered. `observe` only records the decisions, which the **Hosts & pools** screen shows. Elastic limits have not yet been exercised on a real host under load. [Elastic limits](elastic-limits.md)
+With `RUNQUILL_ELASTIC=observe` or `apply`, a busy runner on the `local` Docker host can borrow CPU and memory that no other runner or free slot has been promised, up to a multiple of its pool's `cpus` and `memory_mib`. Limits never fall below the pool's values, and memory is never lowered. `observe` only records the decisions, which the **Hosts** screen shows. Elastic limits have not yet been exercised on a real host under load. [Elastic limits](elastic-limits.md)

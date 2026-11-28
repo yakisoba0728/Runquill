@@ -15,6 +15,7 @@ servers:
         description: The RUNQUILL_PANEL_URL origin (HTTPS, or HTTP on loopback).
 tags:
   - name: assets
+    description: Panel v2 uses /assets/{file} by default. The deprecated RUNQUILL_PANEL_V2=0 opt-out selects the legacy assets. Both versions share / and /theme.js.
   - name: auth
   - name: fleet
   - name: jobs
@@ -165,7 +166,7 @@ components:
         expires_at:
           type: integer
           format: int64
-          description: Unix seconds.
+          description: Token expiration as Unix seconds.
     TokenScope:
       type: string
       enum: ['fleet:read', 'hosts:write', 'jobs:write']
@@ -216,7 +217,7 @@ components:
         occurred_at:
           type: integer
           format: int64
-          description: Unix seconds.
+          description: Audit event time as Unix seconds.
     HistoryJob:
       type: object
       required: [id, repository, runner_label, outcome]
@@ -486,6 +487,10 @@ components:
         warm_target:
           type: integer
           description: The warm runners its worker pool keeps on each local or SSH host. Absent when the pool keeps none or the host is an outbound worker.
+        last_seen:
+          type: string
+          format: date-time
+          description: In the panel snapshot only, when an OFFLINE host last answered. Kept in memory, so absent until the host has answered since the manager started.
     StatusJob:
       type: object
       required: [id, repository, status]
@@ -1138,6 +1143,7 @@ components:
           description: Why the whole file is left alone.
         jobs:
           type: [array, 'null']
+          description: Null when no job outcomes were collected (for example when a file is too large to read).
           items:
             $ref: '#/components/schemas/MigrationJob'
     MigrationPreview:
@@ -1327,6 +1333,7 @@ paths:
     get:
       operationId: getPanelCSS
       tags: [assets]
+      deprecated: true
       summary: Panel stylesheet.
       x-runquill-permission: public
       security: []
@@ -1343,10 +1350,32 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/Asset'
+  /assets/{file}:
+    get:
+      operationId: getPanelV2Asset
+      tags: [assets]
+      summary: A bundled stylesheet or script for panel v2.
+      x-runquill-permission: public
+      security: []
+      parameters:
+        - name: file
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^(?:panel|chunk|demo)-[A-Za-z0-9_-]+\.(?:js|css)$'
+      responses:
+        '200':
+          $ref: '#/components/responses/Asset'
+        '400':
+          description: Use a panel file name.
+        '404':
+          description: The asset is missing, panel v1 was selected, or a demo chunk was requested from the live panel.
   /app.js:
     get:
       operationId: getPanelAppJS
       tags: [assets]
+      deprecated: true
       summary: The panel shell with sign-in, navigation, routing and live updates.
       x-runquill-permission: public
       security: []
@@ -1357,6 +1386,7 @@ paths:
     get:
       operationId: getPanelApiJS
       tags: [assets]
+      deprecated: true
       summary: Panel API client module.
       x-runquill-permission: public
       security: []
@@ -1367,6 +1397,7 @@ paths:
     get:
       operationId: getPanelUIJS
       tags: [assets]
+      deprecated: true
       summary: Shared panel interface helpers.
       x-runquill-permission: public
       security: []
@@ -1377,6 +1408,7 @@ paths:
     get:
       operationId: getPanelFleetJS
       tags: [assets]
+      deprecated: true
       summary: Fleet snapshot helpers shared by panel screens.
       x-runquill-permission: public
       security: []
@@ -1387,6 +1419,7 @@ paths:
     get:
       operationId: getI18nJS
       tags: [assets]
+      deprecated: true
       summary: Korean and English panel text.
       x-runquill-permission: public
       security: []
@@ -1397,6 +1430,7 @@ paths:
     get:
       operationId: getDemoJS
       tags: [assets]
+      deprecated: true
       summary: Example fleet snapshots, served only by runquill panel --demo.
       x-runquill-permission: public
       security: []
@@ -1407,6 +1441,7 @@ paths:
     get:
       operationId: getPanelView
       tags: [assets]
+      deprecated: true
       summary: One panel screen as an ES module (views/<id>.js).
       x-runquill-permission: public
       security: []
@@ -1428,6 +1463,7 @@ paths:
     get:
       operationId: getPanelDemoData
       tags: [assets]
+      deprecated: true
       summary: Sample responses for one panel screen, served only by runquill panel --demo.
       x-runquill-permission: public
       security: []
@@ -1476,31 +1512,7 @@ paths:
             maxLength: 512
       responses:
         '303':
-          description: Signed in; redirect to /.
-        '400':
-          description: 'State missing or expired ("Sign-in expired. Return to the panel and try again." or "Sign-in expired or cancelled. Return to the panel and try again.").'
-          content:
-            text/plain:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '403':
-          description: 'Body "Your GitHub account is not enrolled in this Runquill panel."'
-          content:
-            text/plain:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '502':
-          description: 'Body "Could not verify the GitHub login. Try again."'
-          content:
-            text/plain:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '503':
-          description: 'Body "Could not start a panel session."'
-          content:
-            text/plain:
-              schema:
-                $ref: '#/components/schemas/Error'
+          description: 'Signed in, redirect to /. A refused sign-in also redirects, to /?signin=CODE, whose reason the sign-in screen shows: expired (state missing, mismatched or expired), cancelled (cancelled at GitHub or already used), github (GitHub did not verify the login), not_enrolled (the account is not enrolled) or unavailable (no session could be started).'
   /api/me:
     get:
       operationId: getMe

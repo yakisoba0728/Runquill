@@ -14,13 +14,13 @@ Runquill is a Go manager and CLI for ephemeral GitHub Actions runners in private
 | Match a workflow or accept a job | `internal/workflow/`, `internal/route/`, `internal/app/webhook.go`, `internal/app/poller.go`, `examples/`. Use the [job-specific label rules](docs/workflows.md). |
 | Retry, place or clean up jobs | In `internal/app/`, start at `queue.go`, `scheduler.go`, `worker_*.go`, `docker*.go`, `kubernetes*.go`, or `gc.go`. Preserve GitHub job ID deduplication and runner lease reconciliation. For public repositories, refuse fork workflow runs, require the `all_external_contributors` fork approval policy, and wait while a fork run has an unfinished job with a Runquill label. |
 | Debug runner images, OS or cache | `runner/`, `internal/app/runner_images*.go`, `internal/app/runner_runtime.go`, `internal/app/worker_pools.go`. See [runner images](docs/runner-images.md). |
-| Change the panel, CLI or MCP | `internal/webui/`, `internal/app/panel*.go`, `internal/app/cli*.go`, `internal/app/mcp*.go`, `api/openapi.yaml`. See [panel roles](docs/panel.md#roles-and-tokens), [remote CLI](docs/remote-cli.md) and [MCP](docs/mcp.md). |
+| Change the panel, CLI or MCP | `internal/webui/` ([default panel source](internal/webui/panel/README.md)), `internal/app/panel*.go`, `internal/app/cli*.go`, `internal/app/mcp*.go`, `api/openapi.yaml`. See [panel roles](docs/panel.md#roles-and-tokens), [remote CLI](docs/remote-cli.md) and [MCP](docs/mcp.md). |
 | Change backup storage or the sealed format | `internal/app/backup*.go`, `internal/backupseal/`. See [backups](docs/backups.md). |
 | Check release and integration tests | `.github/workflows/`, `.github/scripts/`. See [development and release](docs/development.md). |
 
 ## Work and verify
 
-- Check `go.mod` for the required Go version. Run the tests closest to your change, `go test -race ./...` and `go vet ./...` for Go changes. The panel is embedded static HTML, CSS and JavaScript and has no frontend build step.
+- Check `go.mod` for the required Go version. Run the tests closest to your change, `go test -race ./...` and `go vet ./...` for Go changes. Go embeds the committed panel assets and builds without Node. After editing the v2 frontend, run `npm run build` in `internal/webui/panel` and commit the output in `internal/webui/panelv2`. CI checks that build and runs Playwright in Chromium, Firefox and WebKit. The legacy v1 panel stays in `internal/webui/panelweb` for this release.
 - For an installer change, run `sh -n install.sh` and `sh .github/scripts/test-install-offline.sh sh`. See [development](docs/development.md) for Docker and GitHub App smoke tests.
 - For a workflow example, run `go run . workflow check --strict path/to/workflow.yml`. Use a different Runquill label suffix for each job and add `strategy.job-index` to matrix jobs.
 - If you change behavior described in an English and Korean guide, update both. Keep the README install and first-job anchors usable by already released binaries and panels.

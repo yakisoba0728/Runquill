@@ -9,7 +9,7 @@
 | `main.go` | Executable entry point for `go build .` and `go run .`. |
 | `internal/app/` | CLI, manager, persistent queue, runner backends, GitHub integration and panel API. Integration tests live beside the manager code. |
 | `internal/workflow/` and `internal/route/` | Offline workflow inspection and rewriting, and the runner label selectors shared with the scheduler. |
-| `internal/webui/` | Embedded web panel and setup wizard assets. The release demo is packaged from the panel files. |
+| `internal/webui/` | Embedded setup wizard and panel assets. Panel v2 source is in `panel/`, its committed build is in `panelv2/`, and the legacy panel is in `panelweb/`. |
 | `internal/backupseal/` | The sealed backup format and its streaming encryption and decryption. |
 | `runner/`, `deploy/`, `api/`, `examples/` | The runner image, K3s manifest, OpenAPI contract and starter workflows. The installer and Compose files are at the root. |
 
@@ -32,6 +32,23 @@ Run the nested Docker smoke test with `RUNQUILL_TEST_DOCKER_IMAGE=runquill-runne
 [CI](../.github/workflows/ci.yml) runs the Go checks in parallel with the native amd64 and arm64 image builds and nested Docker smoke tests. The amd64 runtime check also runs K3s to verify host maintenance, runner assignment, and Pod and Secret cleanup. Changes to the runner image or its build workflows trigger the four additional OS builds. The [two-account OAuth check](../internal/app/panel_live_oauth_test.go) can be run with a dedicated OAuth App and separate GitHub accounts for the administrator and viewer.
 
 On a version tag, the [release workflow](../.github/workflows/release.yml) builds each image once across native architecture and OS jobs. It publishes the tested images to GHCR and takes the standalone binaries from those same manager images. It then verifies the published release with the public installer on both architectures. Forks publish to their own GitHub owner's namespace. Set both packages to public to allow anonymous pulls. [GHCR access](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
+
+## Build and test the web panel
+
+Use the version pinned in [`.node-version`](../internal/webui/panel/.node-version), currently Node 26.13.1. The Go build embeds the committed assets and needs no Node installation.
+
+```sh
+cd internal/webui/panel
+npm ci
+npm run typecheck
+npm test
+npm run build
+npm run size
+npx playwright install
+npx playwright test
+```
+
+Commit changes to `internal/webui/panelv2/` with panel source changes. CI checks that rebuilding produces exactly the committed files and runs Playwright on Chromium, Firefox and WebKit against `go run . panel --demo`. On Ubuntu, use `npx playwright install --with-deps` to install system libraries too. The same v2 build supplies the GitHub Pages sample and the release’s `runquill-panel-demo.tar.gz`. To open the release demo, extract the archive and serve the `panelv2/` directory over HTTP. [Panel development guide](../internal/webui/panel/README.md)
 
 ## Installer and upgrade checks
 

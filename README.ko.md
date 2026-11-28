@@ -48,6 +48,8 @@ runs-on: ${{ format('runquill-{0}-{1}-build', github.run_id, github.run_attempt)
 
 ## 문서
 
+패널 v2에서는 실시간 대기열과 작업 기록을 **작업** 화면에서 함께 볼 수 있고, 러너 상세에서 **로그** 탭을 열 수 있습니다. 예전 북마크는 새 화면으로 연결됩니다. [웹 패널 안내](docs/panel.ko.md)
+
 | 할 일 | 문서 |
 | --- | --- |
 | 설치, 저장소 접근 범위 선택, 조직 App 등록 | [설치](docs/install.ko.md) |

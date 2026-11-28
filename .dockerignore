@@ -6,6 +6,7 @@
 !LICENSE
 !internal/
 !internal/**
+internal/webui/panel/
 internal/**/*_test.go
 internal/**/testdata/
 !examples/

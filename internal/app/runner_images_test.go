@@ -601,7 +601,6 @@ func TestRunnerImageSettingsFollowLiveDefault(t *testing.T) {
 }
 
 func TestRunnerImageMessagesHaveTranslations(t *testing.T) {
-	keys, patterns := panelTranslations(t)
 	images := testReleaseImages(t, "")
 	var messages []string
 	_, unknown := images.forJob("runquill-1-1-os__plan9__x", workerPool{})
@@ -617,31 +616,34 @@ func TestRunnerImageMessagesHaveTranslations(t *testing.T) {
 		"select runner image: no host can start runner image x:1; outbound agent:// workers start only their own image",
 		"waiting for runner image x:1 on ssh://ci@build; pull failed: unauthorized")
 	placeholder := regexp.MustCompile(`\{[a-z]+\}`)
-	var match func(string) bool
-	match = func(message string) bool {
-		if keys[message] {
-			return true
+	for _, catalogue := range panelTranslations(t) {
+		keys, patterns := catalogue.keys, catalogue.patterns
+		var match func(string) bool
+		match = func(message string) bool {
+			if keys[message] {
+				return true
+			}
+			for pattern := range patterns {
+				parts := placeholder.Split(pattern, -1)
+				for i := range parts {
+					parts[i] = regexp.QuoteMeta(parts[i])
+				}
+				m := regexp.MustCompile("^(?s)" + strings.Join(parts, "(.+?)") + "$").FindStringSubmatch(message)
+				if m == nil || !keys[pattern] {
+					continue
+				}
+				// A {detail} must itself be translated.
+				if strings.HasSuffix(pattern, "{detail}") && !match(m[len(m)-1]) {
+					continue
+				}
+				return true
+			}
+			return false
 		}
-		for pattern := range patterns {
-			parts := placeholder.Split(pattern, -1)
-			for i := range parts {
-				parts[i] = regexp.QuoteMeta(parts[i])
+		for _, message := range messages {
+			if !match(message) {
+				t.Errorf("%s: no translated server pattern for %q", catalogue.name, message)
 			}
-			m := regexp.MustCompile("^(?s)" + strings.Join(parts, "(.+?)") + "$").FindStringSubmatch(message)
-			if m == nil || !keys[pattern] {
-				continue
-			}
-			// A {detail} must itself be translated.
-			if strings.HasSuffix(pattern, "{detail}") && !match(m[len(m)-1]) {
-				continue
-			}
-			return true
-		}
-		return false
-	}
-	for _, message := range messages {
-		if !match(message) {
-			t.Errorf("panelweb/i18n.js has no translated serverPatterns template for %q", message)
 		}
 	}
 }

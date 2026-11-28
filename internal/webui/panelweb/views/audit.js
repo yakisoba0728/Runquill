@@ -1,7 +1,7 @@
 // Audit: sign-ins and management actions from GET /api/audit, newest first,
 // filtered by action family and actor, 50 per page.
 import { tr } from "../i18n.js";
-import { button, createTable, errorText, field, h, message, pageHead, select, statusLine, time } from "../ui.js";
+import { button, createTable, errorText, field, h, message, pageHead, select, settled, statusLine, time } from "../ui.js";
 
 const pageSize = 50;
 let parts = null;
@@ -52,7 +52,7 @@ export default {
       event.preventDefault();
       void load();
     });
-    form.elements.action.addEventListener("change", () => void load());
+    form.elements.action.addEventListener("change", settled(() => void load()));
     const table = createTable({
       label: "Audit history",
       key: (entry) => entry.id,

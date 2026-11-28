@@ -171,7 +171,7 @@ func TestKubernetesRunnerLifecycle(t *testing.T) {
 	}
 	panel := newPanel(config{})
 	access := panelAccessForTest(t, q)
-	handler := panelHandler(panel, access)
+	handler := panelHandler(panel, access, true)
 	admin, err := access.startSession(ctx, panelIdentity{GitHubID: 101, Login: "fixture-admin"})
 	if err != nil {
 		t.Fatal(err)

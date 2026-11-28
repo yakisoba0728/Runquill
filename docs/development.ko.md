@@ -9,7 +9,7 @@
 | `main.go` | `go build .`, `go run .`에서 사용하는 실행 진입점입니다. |
 | `internal/app/` | CLI, 매니저, 대기열, 러너 백엔드, GitHub 연동, 패널 API와 통합 테스트를 둡니다. |
 | `internal/workflow/`, `internal/route/` | 오프라인 워크플로 검사와 변환, 스케줄러도 쓰는 러너 라벨 규칙을 담당합니다. |
-| `internal/webui/` | 바이너리에 포함되는 운영 패널과 설치 마법사 파일입니다. 릴리스 데모에는 패널 파일을 사용합니다. |
+| `internal/webui/` | 바이너리에 포함되는 설치 마법사와 패널 파일입니다. v2 소스는 `panel/`, 커밋한 빌드 결과는 `panelv2/`, 이전 패널은 `panelweb/`에 있습니다. |
 | `internal/backupseal/` | 암호화된 백업 형식과 스트리밍 암·복호화를 담당합니다. |
 | `runner/`, `deploy/`, `api/`, `examples/` | 러너 이미지, K3s 매니페스트, OpenAPI 명세, 워크플로 예제입니다. 설치 스크립트와 Compose 파일은 루트에 둡니다. |
 
@@ -32,6 +32,23 @@ CGO_ENABLED=0 go build -o runquill .
 [CI](../.github/workflows/ci.yml)는 Go 점검을 amd64와 arm64 네이티브 이미지 빌드, 중첩 Docker 검증과 병렬로 실행합니다. amd64 런타임 점검에서는 K3s도 실행해 호스트 정비, 러너 배정, Pod와 Secret 정리를 확인합니다. 러너 이미지나 그 빌드 워크플로가 바뀌면 추가 OS 빌드 4개도 실행합니다. 관리자와 뷰어에 별도 GitHub 계정을 쓰는 [OAuth 검증](../internal/app/panel_live_oauth_test.go)은 전용 OAuth 앱을 준비해 실행할 수 있습니다.
 
 버전 태그를 올리면 [릴리스 워크플로](../.github/workflows/release.yml)가 아키텍처와 OS별 네이티브 작업에서 각 이미지를 한 번씩 빌드합니다. 테스트한 이미지를 GHCR에 게시하고, 단독 실행 파일은 같은 매니저 이미지에서 꺼냅니다. 그런 다음 두 아키텍처에서 공개 설치 스크립트로 게시된 릴리스를 검증합니다. 포크는 자기 GitHub 소유자의 네임스페이스에 게시합니다. 익명으로 받을 수 있게 하려면 두 패키지를 공개로 바꿉니다. [GitHub Container registry 접근](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
+
+## 웹 패널 빌드와 테스트
+
+[`.node-version`](../internal/webui/panel/.node-version)에 고정된 버전을 사용합니다. 현재 Node 26.13.1입니다. Go 빌드는 커밋된 결과를 바이너리에 포함하므로 Node가 필요 없습니다.
+
+```sh
+cd internal/webui/panel
+npm ci
+npm run typecheck
+npm test
+npm run build
+npm run size
+npx playwright install
+npx playwright test
+```
+
+패널 소스가 바뀌면 `internal/webui/panelv2/`의 결과도 함께 커밋합니다. CI는 다시 빌드한 결과가 커밋된 파일과 정확히 일치하는지 확인하고, `go run . panel --demo`를 띄워 Chromium, Firefox, WebKit에서 Playwright를 실행합니다. Ubuntu에서는 `npx playwright install --with-deps`로 시스템 라이브러리도 설치합니다. GitHub Pages 샘플과 릴리스의 `runquill-panel-demo.tar.gz`는 같은 v2 결과를 사용합니다. 릴리스 데모를 열려면 압축을 풀고 `panelv2/` 디렉터리를 HTTP로 서빙합니다. [패널 개발 안내](../internal/webui/panel/README.md)
 
 ## 설치와 업그레이드 검증
 

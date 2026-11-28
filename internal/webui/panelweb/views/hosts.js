@@ -4,7 +4,7 @@
 import { availableSlots, poolName, workerState } from "../fleet.js";
 import { serverText, tr } from "../i18n.js";
 import {
-  block, button, createKv, createTable, errorText, fill, format, h, linkTarget, message, pageHead, state, statusLine, time, whenVisible,
+  block, button, copyButton, createKv, createTable, errorText, fill, format, h, linkTarget, message, pageHead, state, statusLine, time, whenVisible,
 } from "../ui.js";
 
 let parts = null;
@@ -36,16 +36,7 @@ function workerEnrollment(ctx) {
   const command = h("input", { type: "text", readOnly: true, "aria-label": tr("Enrollment command") });
   const restart = h("input", { type: "text", readOnly: true, "aria-label": tr("Worker start command") });
   const output = statusLine();
-  const copy = (input, label) => button(label, async () => {
-    try {
-      await navigator.clipboard.writeText(input.value);
-      message(output, tr("Command copied."), "ok");
-    } catch {
-      input.focus();
-      input.select();
-      message(output, tr("Copy the selected command."));
-    }
-  });
+  const copy = (input, label) => copyButton(input, label, output, "Command copied.");
   const element = h("div", { class: "secret", hidden: true },
     instructions, command, copy(command, "Copy enrollment command"),
     h("p", {}, tr("After enrollment, use this command to restart the worker.")),
@@ -101,6 +92,7 @@ export default {
       { label: "Pool", cell: (host) => poolName(host.pool) },
       { label: "State", cell: (host) => [state(workerState(host)),
         imageStates[host.image_status] ? h("span", { class: "sub" }, tr(imageStates[host.image_status])) : null,
+        host.last_seen ? h("span", { class: "sub" }, tr("Last seen"), " ", time(host.last_seen, "relative")) : null,
         host.warm || host.warm_target ? h("span", { class: "sub" }, tr("{n} of {target} warm runners idle", { n: host.warm || 0, target: host.warm_target || 0 })) : null] },
       { label: "Slot limit", num: true, cell: (host) => format.number(host.slot_limit) },
       { label: "Occupied", num: true, cell: (host) => format.number(host.occupied_slots) },

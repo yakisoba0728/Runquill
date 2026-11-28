@@ -2,7 +2,7 @@
 // teammates, change roles and disable accounts.
 import { tr } from "../i18n.js";
 import {
-  block, button, createTable, errorText, field, format, h, message, pageHead, roleLabel, select, state, statusLine, submitForm,
+  block, button, copyButton, createTable, errorText, field, format, h, message, pageHead, roleLabel, select, state, statusLine, submitForm,
 } from "../ui.js";
 
 const scopes = [
@@ -27,14 +27,18 @@ async function guarded(output, action) {
 
 function tokensBlock(ctx) {
   const output = statusLine();
-  const secret = h("input", { type: "text", readOnly: true, id: "token-secret", "aria-describedby": "token-secret-note" });
+  const secret = h("input", { type: "text", readOnly: true, id: "token-secret", "aria-describedby": "token-secret-note",
+    "aria-label": tr("New API token") });
+  const copied = statusLine();
   const issued = h("div", { class: "secret", hidden: true },
     h("p", { id: "token-secret-note" }, tr("Copy your token now. Its value is shown once.")),
     secret,
+    copyButton(secret, "Copy token", copied, "Token copied."),
     button("Hide token", () => {
       secret.value = "";
+      message(copied, "");
       issued.hidden = true;
-    }));
+    }), copied);
   const scope = select("scope", scopes);
   for (const option of scope.options) option.disabled = option.value !== "fleet:read" && !ctx.can("operator");
   const form = h("form", { class: "toolbar", "aria-label": tr("Create an API token") },
@@ -51,7 +55,7 @@ function tokensBlock(ctx) {
       { label: "Scope", cell: (token) => [scopeLabel(token.scope), h("span", { class: "sub mono" }, token.scope)] },
       { label: "Expires", num: true, cell: (token) => format.day(token.expires_at) },
       { label: "", cell: (token) => h("div", { class: "row-actions" }, button("Revoke", async () => {
-        if (!await ctx.confirm(tr("Revoke the token {name}?", { name: token.name }), "Revoke")) return;
+        if (!await ctx.confirm(tr("Revoke the token {name}?", { name: token.name }), "Revoke", { danger: true })) return;
         await guarded(output, async () => {
           await ctx.api.del("./api/tokens/" + encodeURIComponent(token.id));
           if (issued.dataset.token === String(token.id)) {
@@ -89,7 +93,7 @@ function teamBlock(ctx) {
     field("Role", select("role", [["viewer", "Viewer"], ["operator", "Operator"], ["admin", "Admin"]])),
     button("Save team member", null, { type: "submit", primary: true }));
   async function change(member, update, question, done) {
-    if (question && !await ctx.confirm(question, update.disabled ? "Disable" : "Change role")) return false;
+    if (question && !await ctx.confirm(question, update.disabled ? "Disable" : "Change role", { danger: !!update.disabled })) return false;
     return guarded(output, async () => {
       await ctx.api.put("./api/team/" + encodeURIComponent(member.github_id), update);
       ctx.toast(tr(done));
@@ -102,17 +106,22 @@ function teamBlock(ctx) {
     columns: [
       { label: "Member", cell: (member) => memberName(member) },
       { label: "GitHub ID", num: true, cell: (member) => String(member.github_id) },
+      // Choosing a role does nothing until Change role is pressed, so arrow keys can browse the options.
       { label: "Role", cell: (member) => {
         const role = select("role", [["viewer", "Viewer"], ["operator", "Operator"], ["admin", "Admin"]],
           { "aria-label": tr("Role for {name}", { name: memberName(member) }) });
         role.value = member.role;
-        role.addEventListener("change", async () => {
+        const apply = button("Change role", async () => {
           const next = role.value;
           const applied = await change(member, { role: next, disabled: member.disabled },
             tr("Change {name} to {role}?", { name: memberName(member), role: roleLabel(next) }), "Role changed.");
-          if (!applied) role.value = member.role;
-        });
-        return role;
+          if (!applied && role.isConnected) {
+            role.value = member.role;
+            apply.hidden = true;
+          }
+        }, { small: true, hidden: true, "aria-label": tr("Change role for {name}", { name: memberName(member) }) });
+        role.addEventListener("change", () => { apply.hidden = role.value === member.role; });
+        return h("div", { class: "row-actions role-pick" }, role, apply);
       } },
       { label: "Status", cell: (member) => member.disabled ? state("OFFLINE", "Disabled") : state("UP", "Active") },
       { label: "", cell: (member) => h("div", { class: "row-actions" }, button(member.disabled ? "Enable" : "Disable", () => {

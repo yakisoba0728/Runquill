@@ -66,7 +66,7 @@ func newRemoteFixture(t *testing.T) *remoteFixture {
 		panel.elastic.record(elasticDecision{At: time.Unix(1700000000+int64(i)*60, 0), Error: []string{"", "\x1b[31mrejected"}[i],
 			elasticChange: elasticChange{Host: "local", ID: "c1", Runner: "runquill-7", Resource: []string{"cpu", "memory"}[i], From: 1, To: 1.5, Reason: reason}})
 	}
-	server.Config.Handler = panelHandler(panel, access)
+	server.Config.Handler = panelHandler(panel, access, true)
 	server.Start()
 	t.Cleanup(server.Close)
 

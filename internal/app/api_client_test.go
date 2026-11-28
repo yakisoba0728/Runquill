@@ -92,7 +92,7 @@ func TestAPIClientSendsTokenAndDecodesErrors(t *testing.T) {
 
 // The demo panel has no API, so its bare 404 explains what the address lacks.
 func TestAPIClientExplainsMissingAPI(t *testing.T) {
-	server := httptest.NewServer(panelHandler(nil, nil))
+	server := httptest.NewServer(panelHandler(nil, nil, true))
 	defer server.Close()
 	client, err := newAPIClient(server.URL, testAPIToken)
 	if err != nil {

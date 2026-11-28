@@ -2,7 +2,7 @@
 
 [Runquill README](../README.ko.md) · [English](remote-cli.md)
 
-`runquill` 실행 파일은 API 토큰과 패널 API를 이용해 다른 컴퓨터에서 매니저를 조회하고 조작할 수 있습니다. 토큰은 패널의 **팀과 토큰**에서 만듭니다. 클라이언트에는 그 밖에 설정할 것이 없습니다. 릴리스에는 Linux 실행 파일만 포함되므로, Windows나 macOS에서는 소스 체크아웃에서 `go build -o runquill .`(Windows에서는 `-o runquill.exe`)로 클라이언트를 빌드합니다.
+`runquill` 실행 파일은 API 토큰과 패널 API를 이용해 다른 컴퓨터에서 매니저를 조회하고 조작할 수 있습니다. 토큰은 패널 사용자 메뉴의 **API 토큰**에서 만듭니다. 클라이언트에는 그 밖에 설정할 것이 없습니다. 릴리스에는 Linux 실행 파일만 포함되므로, Windows나 macOS에서는 소스 체크아웃에서 `go build -o runquill .`(Windows에서는 `-o runquill.exe`)로 클라이언트를 빌드합니다.
 
 ## 연결
 

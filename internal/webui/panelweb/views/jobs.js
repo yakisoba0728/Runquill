@@ -4,7 +4,7 @@
 import { jobActionButtons, poolName } from "../fleet.js";
 import { serverText, tr } from "../i18n.js";
 import {
-  button, createKv, createTable, errorText, externalLink, field, format, h, intro, isGitHubJobURL, message, pageHead, select, state,
+  button, createKv, createTable, errorText, externalLink, field, format, h, intro, isGitHubJobURL, message, pageHead, select, settled, state,
   statusLine, time,
 } from "../ui.js";
 import { resourceView, timingView } from "./jobinsight.js";
@@ -72,7 +72,7 @@ function render() {
 }
 
 // Keep the heading and close button in place while the details load.
-async function openDetail(id) {
+async function openDetail(id, focus = true) {
   const current = parts;
   if (!current) return;
   current.selected = id;
@@ -85,7 +85,7 @@ async function openDetail(id) {
   const head = h("div", { class: "detail-head" }, heading, actions);
   const loading = h("p", { class: "muted detail-loading", role: "status" }, tr("Loading job #{id}…", { id }));
   detail.replaceChildren(head, loading);
-  heading.focus();
+  if (focus) heading.focus();
   let job;
   try {
     job = await current.ctx.api.get("./api/jobs/" + encodeURIComponent(id));
@@ -151,7 +151,8 @@ export default {
       event.preventDefault();
       void load();
     });
-    for (const name of ["outcome", "range"]) form.elements[name].addEventListener("change", () => void load());
+    const reload = settled(() => void load());
+    for (const name of ["outcome", "range"]) form.elements[name].addEventListener("change", reload);
     const table = createTable({
       label: "Job history",
       key: (job) => job.id,
@@ -192,7 +193,11 @@ export default {
     const detail = h("section", { class: "detail", id: "job-history-detail", "aria-labelledby": "job-history-title", hidden: true,
       on: { keydown: (event) => { if (event.key === "Escape" && !event.isComposing) closeDetail(); } } });
     root.append(
-      pageHead("Jobs"),
+      // Refresh keeps the filters and the open job, like Apply filters does.
+      pageHead("Jobs", button("Refresh", () => {
+        void load();
+        if (parts?.selected) void openDetail(parts.selected, false);
+      })),
       intro("Runquill keeps finished jobs for seven days. Job logs stay on GitHub. Select a job ID for its stage timing and resources."),
       h("div", { class: "block" },
         form, table.element,

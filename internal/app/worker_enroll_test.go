@@ -32,7 +32,7 @@ func enrollmentTestFleet(t *testing.T, fixture *panelFixture, hosts string) *doc
 	panel.operations = &operations{}
 	panel.operations.current.Store(&operationState{runners: runnerConfiguration{runtime: f}})
 	f.workers.operations = panel.operations
-	fixture.handler = panelHandler(panel, fixture.access)
+	fixture.handler = panelHandler(panel, fixture.access, true)
 	return f
 }
 

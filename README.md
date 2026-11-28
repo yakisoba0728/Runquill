@@ -48,6 +48,8 @@ Run one manager per fleet and keep its SQLite queue on persistent storage. Use a
 
 ## Documentation
 
+Panel v2 brings the live queue and job history together under **Jobs** and moves logs to the selected runner’s **Logs** tab. Existing bookmarks redirect to the new screens. [Web panel guide](docs/panel.md)
+
 | Task | Guide |
 | --- | --- |
 | Install, choose repository access, or register an organization App | [Installation](docs/install.md) |

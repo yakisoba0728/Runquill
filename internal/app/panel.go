@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -20,6 +21,7 @@ import (
 // panelAssetName limits served files to flat, lower-case module and style
 // names, so nothing outside the panel's own files can be requested.
 var panelAssetName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*\.(?:js|css)$`)
+var panelV2AssetName = regexp.MustCompile(`^(?:panel|chunk|demo)-[A-Za-z0-9_-]+\.(?:js|css)$`)
 
 type panelSnapshot struct {
 	Fleet         *statusReport    `json:"fleet"`
@@ -57,6 +59,9 @@ type panelState struct {
 	maxPerRepository int
 	disk             hostDiskCache
 	engineRun        imageCommand // nil runs the engine CLI; tests replace it
+	// hostSeen is when each host last answered, kept in memory: a restarted
+	// manager shows no last-seen time until a host answers again.
+	hostSeen map[string]time.Time
 }
 
 func newPanel(cfg config) *panelState {
@@ -121,12 +126,29 @@ func (p *panelState) capture(ctx context.Context, q *queue, hosts []hostCapacity
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.stampHostsSeen(&report, now)
 	p.snapshot.Fleet = &report
 	p.snapshot.Inventory = inventory
 	p.snapshot.Recent = recent
 	p.snapshot.SampledAt = &now
 	p.snapshot.FirstJobSeen = firstSeen
 	p.snapshot.FirstJobClean = firstClean
+}
+
+// stampHostsSeen records when each reachable host answered and gives each
+// offline host the last time it did. The caller holds p.mu.
+func (p *panelState) stampHostsSeen(report *statusReport, now time.Time) {
+	if p.hostSeen == nil {
+		p.hostSeen = make(map[string]time.Time)
+	}
+	for i := range report.Hosts {
+		host := &report.Hosts[i]
+		if host.Status != "OFFLINE" {
+			p.hostSeen[host.Name] = now
+		} else if seen, ok := p.hostSeen[host.Name]; ok {
+			host.LastSeen = &seen
+		}
+	}
 }
 
 func readPanelCompleted(ctx context.Context, q *queue, now time.Time, pools workerPools) ([]panelCompleted, *panelCompleted, error) {
@@ -176,15 +198,29 @@ func readPanelCompleted(ctx context.Context, q *queue, now time.Time, pools work
 	return recent, firstClean, rows.Err()
 }
 
-func panelHTTPServer(panel *panelState, access *panelAccess) *http.Server {
-	return &http.Server{
-		Handler: panelHandler(panel, access), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 8 * time.Second,
-		WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10,
+func panelHTTPServer(panel *panelState, access *panelAccess) (*http.Server, error) {
+	v2 := true
+	if value := strings.TrimSpace(os.Getenv("RUNQUILL_PANEL_V2")); value != "" {
+		var err error
+		v2, err = strconv.ParseBool(value)
+		if err != nil {
+			return nil, errors.New("RUNQUILL_PANEL_V2 must be true or false")
+		}
 	}
+	if !v2 {
+		slog.Warn("RUNQUILL_PANEL_V2 selects deprecated panel v1; the opt-out will be removed in the next release")
+	}
+	return &http.Server{
+		Handler: panelHandler(panel, access, v2), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 8 * time.Second,
+		WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10,
+	}, nil
 }
 
-func panelHandler(panel *panelState, access *panelAccess) http.Handler {
+func panelHandler(panel *panelState, access *panelAccess, v2 bool) http.Handler {
 	assets := webui.Panel()
+	if v2 {
+		assets = webui.PanelV2()
+	}
 	files := http.FileServerFS(assets)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
@@ -219,17 +255,34 @@ func panelHandler(panel *panelState, access *panelAccess) http.Handler {
 			http.ServeFileFS(w, r, assets, dir+name)
 		}
 	}
-	mux.HandleFunc("GET /panel.css", serve(""))
 	mux.HandleFunc("GET /theme.js", serve(""))
-	mux.HandleFunc("GET /app.js", serve(""))
-	mux.HandleFunc("GET /api.js", serve(""))
-	mux.HandleFunc("GET /ui.js", serve(""))
-	mux.HandleFunc("GET /fleet.js", serve(""))
-	mux.HandleFunc("GET /i18n.js", serve(""))
-	mux.HandleFunc("GET /views/{file}", serve("views/"))
-	mux.HandleFunc("GET /demo/{file}", serve("demo/"))
-	if panel == nil {
-		mux.HandleFunc("GET /demo.js", serve(""))
+	if v2 {
+		mux.HandleFunc("GET /assets/{file}", func(w http.ResponseWriter, r *http.Request) {
+			name := r.PathValue("file")
+			if !panelV2AssetName.MatchString(name) {
+				http.Error(w, "Use a panel file name.", http.StatusBadRequest)
+				return
+			}
+			file := "assets/" + name
+			// ServeFileFS drops Cache-Control when it handles a missing file.
+			if _, err := fs.Stat(assets, file); err != nil || panel != nil && strings.HasPrefix(name, "demo-") {
+				http.NotFound(w, r)
+				return
+			}
+			http.ServeFileFS(w, r, assets, file)
+		})
+	} else {
+		mux.HandleFunc("GET /panel.css", serve(""))
+		mux.HandleFunc("GET /app.js", serve(""))
+		mux.HandleFunc("GET /api.js", serve(""))
+		mux.HandleFunc("GET /ui.js", serve(""))
+		mux.HandleFunc("GET /fleet.js", serve(""))
+		mux.HandleFunc("GET /i18n.js", serve(""))
+		mux.HandleFunc("GET /views/{file}", serve("views/"))
+		mux.HandleFunc("GET /demo/{file}", serve("demo/"))
+		if panel == nil {
+			mux.HandleFunc("GET /demo.js", serve(""))
+		}
 	}
 	if panel != nil && access != nil {
 		access.register(mux, panel)
@@ -257,11 +310,14 @@ func panelHandler(panel *panelState, access *panelAccess) http.Handler {
 }
 
 func runPanelDemo(ctx context.Context, port uint) error {
+	server, err := panelHTTPServer(nil, nil)
+	if err != nil {
+		return err
+	}
 	listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.FormatUint(uint64(port), 10)))
 	if err != nil {
 		return err
 	}
-	server := panelHTTPServer(nil, nil)
 	fmt.Printf("Runquill panel demo at http://%s\n", listener.Addr())
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(listener) }()
