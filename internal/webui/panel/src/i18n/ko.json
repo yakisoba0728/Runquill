@@ -1065,5 +1065,11 @@
   "Viewers can create read-only tokens.": "뷰어는 읽기 전용 토큰만 만들 수 있습니다.",
   "Unsaved changes: {n}": "저장하지 않은 변경 {n}건",
   "Unsaved changes ({n}) kept you here. Save them, or discard them and leave.": "변경 {n}건을 저장하지 않아 이동하지 않았습니다. 저장하거나 버리고 이동하세요.",
-  "Not saved: {error} Unsaved changes ({n}) are kept.": "저장하지 못했습니다: {error} 변경 {n}건은 그대로 있습니다."
+  "Not saved: {error} Unsaved changes ({n}) are kept.": "저장하지 못했습니다: {error} 변경 {n}건은 그대로 있습니다.",
+  "{n} jobs are assigned to a disconnected host": "작업 {n}개가 끊긴 호스트에 배정되어 있습니다",
+  "{n} jobs are waiting to retry": "작업 {n}개가 재시도를 기다립니다",
+  "{n} jobs were stopped at their memory limit": "작업 {n}개가 메모리 한도로 종료되었습니다",
+  "All states": "모든 상태",
+  "{shown} of {total} shown": "{total}개 중 {shown}개 표시",
+  "Show more": "더 보기"
 }

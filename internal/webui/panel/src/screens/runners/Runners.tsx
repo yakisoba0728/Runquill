@@ -5,7 +5,7 @@ import { DataTable, EmptyState, SplitView, Tabs, useSplitViewNavigation, type Co
 import { useMemo, useRef, type ReactNode } from "react";
 import { isSample } from "../../api";
 import { useScreenCommands, type ScreenCommand } from "../../commands";
-import { KeyValue, Notice, Page, StatusBadge } from "../../components";
+import { Clip, KeyValue, Notice, Page, StatusBadge } from "../../components";
 import { isGitHubJobURL, poolName, runnerRows, runnerStatus, type RunnerRow } from "../../fleet";
 import { date } from "../../format";
 import { t } from "../../i18n";
@@ -29,7 +29,8 @@ const os = (runner: RunnerRow) => runner.runner_os || runner.job?.runner_os;
 function JobLink({ runner }: { runner: RunnerRow }) {
   const job = runner.job;
   if (!job) return <span className="text-text-hint">{t("Untracked runner")}</span>;
-  return <a href={"#/jobs/" + job.id}>{job.repository + " #" + job.id}</a>;
+  const text = job.repository + " #" + job.id;
+  return <a href={"#/jobs/" + job.id} title={text}>{text}</a>;
 }
 
 /** Runner logs: operators and admins with a session; the sample panel shows its fixed lines to everyone (v1). */
@@ -37,20 +38,21 @@ const logsAllowed = () => isSample() || can("operator");
 const logsHref = (name: string) => "#/runners/" + enc(name) + "/logs";
 
 const columns: Column<RunnerRow>[] = [
-  { key: "name", header: t("Runner"), sticky: true, width: 220, cell: (runner) => <span className="font-mono">{runner.name}</span> },
+  // The image and OS sit under the name, so every column fits a 1366px window with the navigation open.
+  { key: "name", header: t("Runner"), sticky: true, width: 200, cell: (runner) => {
+    const sub = [image(runner), os(runner) && t("Runner OS {name}", { name: os(runner)! })].filter(Boolean).join(" · ");
+    return <><Clip className="font-mono" text={runner.name} />{sub && <Clip className="block-sub" text={sub} />}</>;
+  } },
   { key: "host", header: t("Host"), cell: (runner) => runner.host || "—" },
   { key: "pool", header: t("Pool"), cell: (runner) => poolName(runner.pool || runner.job?.pool) },
-  { key: "state", header: t("Runtime state"), width: 200, cell: (runner) => <RunnerState runner={runner} /> },
+  { key: "state", header: t("Runtime state"), width: 170, cell: (runner) => <RunnerState runner={runner} /> },
   // A start time, not a running duration, so rows stay unchanged between snapshots.
-  { key: "provisioned", header: t("Provisioned"), align: "end", cell: (runner) => date(runner.job?.timing?.provisioned_at) },
-  { key: "image", header: t("Runner image"), width: "minmax(200px, 2fr)", cell: (runner) => (
-    <>{image(runner) ? <span className="font-mono">{image(runner)}</span> : "—"}{os(runner) && <span className="block-sub">{t("Runner OS {name}", { name: os(runner)! })}</span>}</>
-  ) },
-  { key: "job", header: t("GitHub job"), width: "minmax(200px, 2fr)", cell: (runner) => <JobLink runner={runner} /> },
+  { key: "provisioned", header: t("Provisioned"), align: "end", width: 150, cell: (runner) => <Clip text={date(runner.job?.timing?.provisioned_at)} /> },
+  { key: "job", header: t("GitHub job"), width: "minmax(150px, 2fr)", cell: (runner) => <JobLink runner={runner} /> },
 ];
 
 const logsColumn: Column<RunnerRow> = {
-  key: "logs", header: t("Logs"), width: 110, cell: (runner) => unreadable(runner) ? null
+  key: "logs", header: t("Logs"), width: 100, cell: (runner) => unreadable(runner) ? null
     : <a href={logsHref(runner.name)} aria-label={t("View logs for {runner}", { runner: runner.name })}>{t("View logs")}</a>,
 };
 

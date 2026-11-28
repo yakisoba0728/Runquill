@@ -5,13 +5,14 @@
 import {
   Button, DataTable, EmptyState, Field, Input, Menu, SearchInput, Select, SplitView, Tabs, useSplitViewNavigation, type Column,
 } from "@yakihyuk0728/stratum-ui";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { flushSync } from "react-dom";
 import { useBusy } from "../../actions";
 import { request, type ApiError } from "../../api";
 import { useScreenCommands, type ScreenCommand } from "../../commands";
-import { Notice, Page, StatusBadge } from "../../components";
+import { Clip, Notice, Page, StatusBadge } from "../../components";
 import { RowMenu, rowMenuTabs } from "../../components/RowMenu";
-import { filterJobs, isGitHubJobURL, jobLists, jobReason, jobStatus, poolName } from "../../fleet";
+import { filterJobs, isGitHubJobURL, jobLists, jobReason, jobStatus, poolName, statusLabel } from "../../fleet";
 import { timeOfDay, date, duration, number } from "../../format";
 import { fill, t } from "../../i18n";
 import { stratum } from "../../i18n/stratum";
@@ -26,6 +27,8 @@ import { historyQuery, holder, jobId, outcomes, pickTab, ranges, tabs, type Tab 
 
 const labels = stratum();
 const tabNames: Record<Tab, string> = { waiting: "Waiting", running: "Running", cleaned: "Cleaned up", history: "History" };
+// Stratum's DataTable renders every row it gets; a live tab shows this many at a time (and always the open job).
+const rowCap = 200;
 const emptyText: Record<Exclude<Tab, "history">, string> = {
   waiting: "The queue is empty.", running: "No assigned jobs.", cleaned: "No confirmed runner cleanup yet.",
 };
@@ -40,12 +43,12 @@ function liveColumns(tab: Tab, menu?: (job: Job) => ReactNode): Column<Job>[] {
     { key: "id", header: t("Job"), width: 90, cell: (job) => "#" + job.id },
     ...(tab === "waiting" ? [{ key: "position", header: t("Position"), align: "end" as const, width: 90, cell: (job: Job) => job.queue_position ?? "—" }] : []),
     { key: "pool", header: t("Pool"), cell: (job) => (
-      <>{poolName(job.pool)}{job.runner_os && <span className="block-sub">{t("Runner OS {name}", { name: job.runner_os })}</span>}</>
+      <>{poolName(job.pool)}{job.runner_os && <Clip className="block-sub" text={t("Runner OS {name}", { name: job.runner_os })} />}</>
     ) },
     { key: "status", header: t("State"), width: 160, cell: (job) => (
-      <><StatusBadge status={jobStatus(job)} />{job.retry_at && <span className="block-sub">{t("Retry time {time}", { time: timeOfDay(job.retry_at) })}</span>}</>
+      <><StatusBadge status={jobStatus(job)} />{job.retry_at && <Clip className="block-sub" text={t("Retry time {time}", { time: timeOfDay(job.retry_at) })} />}</>
     ) },
-    { key: "reason", header: t("Reason"), width: "minmax(220px, 3fr)", cell: (job) => jobReason(job) || "—" },
+    { key: "reason", header: t("Reason"), width: "minmax(220px, 3fr)", cell: (job) => jobReason(job) ? <Clip className="clamp-2" text={jobReason(job)} /> : "—" },
     // The queue time grows each snapshot; only this cell changes, and rows keep their id.
     { key: "wait", header: t("Queue time"), align: "end", width: 110, cell: (job) => duration(job.timing?.runquill_queue_seconds) },
     { key: "host", header: t("Host"), cell: (job) => job.runner_host || "—" },
@@ -58,20 +61,20 @@ const historyColumns: Column<HistoryJob>[] = [
     ? <a href={job.url} target="_blank" rel="noopener noreferrer" aria-label={t("{repo} job {id} on GitHub", { repo: job.repository, id: job.id })}>{job.repository}</a>
     : job.repository },
   { key: "id", header: t("Job"), width: "minmax(140px, 1fr)", cell: (job) => (
-    <>{"#" + job.id}{job.runner_label && <span className="block-sub font-mono">{job.runner_label}</span>}</>
+    <>{"#" + job.id}{job.runner_label && <Clip className="block-sub font-mono" text={job.runner_label} />}</>
   ) },
   { key: "outcome", header: t("Outcome"), width: "minmax(200px, 2fr)", cell: (job) => {
     const reason = historyReason(job);
     return (
       <>
         <StatusBadge status={outcomeStatus(job)} />
-        {reason && <span className="block-sub">{job.failure || job.diagnostic ? t("Reason: {reason}", { reason }) : t("Last retry: {reason}", { reason })}</span>}
-        {job.retry_at && <span className="block-sub">{t("Retry time {time}", { time: timeOfDay(job.retry_at) })}</span>}
+        {reason && <Clip className="block-sub" text={job.failure || job.diagnostic ? t("Reason: {reason}", { reason }) : t("Last retry: {reason}", { reason })} />}
+        {job.retry_at && <Clip className="block-sub" text={t("Retry time {time}", { time: timeOfDay(job.retry_at) })} />}
       </>
     );
   } },
   { key: "pool", header: t("Pool"), cell: (job) => (
-    <>{job.pool ? poolName(job.pool) : "—"}{job.runner_os && <span className="block-sub">{t("Runner OS {name}", { name: job.runner_os })}</span>}</>
+    <>{job.pool ? poolName(job.pool) : "—"}{job.runner_os && <Clip className="block-sub" text={t("Runner OS {name}", { name: job.runner_os })} />}</>
   ) },
   { key: "host", header: t("Host"), cell: (job) => job.host || "—" },
   { key: "queued", header: t("Queued"), align: "end", cell: (job) => date(job.queued_at), sort: (a, b) => (a.queued_at ?? "").localeCompare(b.queued_at ?? "") },
@@ -118,6 +121,7 @@ export default function Jobs({ route }: { route: Route }) {
   const tab = pickTab(route.params.get("tab"), id, lists);
   const query = route.params.get("q") ?? "";
   const pool = route.params.get("pool") ?? "";
+  const state = route.params.get("state") ?? "";
   const [round, setRound] = useState(0);
   const [diagnose, setDiagnose] = useState(false);
   const admin = can("admin");
@@ -127,8 +131,23 @@ export default function Jobs({ route }: { route: Route }) {
 
   const pools = useMemo(() => [...new Set([...(lists ? [...lists.waiting, ...lists.running, ...lists.cleaned] : []),
     ...(snapshot?.fleet?.hosts ?? [])].map((item) => item.pool || "default"))].sort(), [lists, snapshot]);
-  const rows = useMemo(() => (lists && tab !== "history" ? filterJobs(lists[tab], query, pool) : []), [lists, tab, query, pool]);
+  // The states in the tab, and the address's even when no job has it now.
+  const states = useMemo(() => (lists && tab !== "history" ? [...new Set([...lists[tab].map(jobStatus), ...(state ? [state] : [])])].sort() : []),
+    [lists, tab, state]);
+  const rows = useMemo(() => (lists && tab !== "history" ? filterJobs(lists[tab], query, pool, state) : []), [lists, tab, query, pool, state]);
+  // j/k and the pane's arrows walk every row; the table shows the first rows up to the limit, and up to the open job.
   const ids = tab === "history" ? history.rows.map((job) => job.id) : rows.map((job) => job.id);
+  const [limit, setLimit] = useState(rowCap);
+  useEffect(() => setLimit(rowCap), [tab, query, pool, state]);
+  const openAt = id === null || tab === "history" ? -1 : ids.indexOf(id);
+  const shownRows = useMemo(() => rows.slice(0, Math.max(limit, openAt + 1)), [rows, limit, openAt]);
+  const showMore = (event: MouseEvent<HTMLElement>) => {
+    // The button goes with the last rows: focus the first row it revealed instead.
+    const list = event.currentTarget.closest(".tab-content");
+    const first = shownRows.length;
+    flushSync(() => setLimit(first + rowCap));
+    list?.querySelectorAll<HTMLElement>('.data-table-body > [role="row"]')[first]?.focus();
+  };
 
   // Opening from a live tab drops ?tab so the pane's tab follows the job; history keeps it.
   const open = (next: number, replace = false) =>
@@ -139,8 +158,8 @@ export default function Jobs({ route }: { route: Route }) {
   const closeRef = useRef(close);
   closeRef.current = close;
   const navigation = useSplitViewNavigation(ids, id, (next) => open(next, true));
-  const filtered = !!(query || pool);
-  const clearFilters = () => setParams({ q: null, pool: null });
+  const filtered = !!(query || pool || state);
+  const clearFilters = () => setParams({ q: null, pool: null, state: null });
 
   // With a job open, a missing tab follows the job, so a chosen tab is always written.
   const showTab = (value: string) => setParams({ tab: value === "waiting" && id === null ? null : value });
@@ -150,7 +169,7 @@ export default function Jobs({ route }: { route: Route }) {
     { id: "cleaned", label: "Show cleaned-up jobs", run: () => setParams({ tab: "cleaned" }) },
     { id: "history", label: "Show job history", run: () => setParams({ tab: "history" }) },
     ...(filtered || route.params.get("repo") || route.params.get("outcome") || route.params.get("range")
-      ? [{ id: "clear", label: "Clear job filters", run: () => setParams({ q: null, pool: null, repo: null, outcome: null, range: null }) }] : []),
+      ? [{ id: "clear", label: "Clear job filters", run: () => setParams({ q: null, pool: null, state: null, repo: null, outcome: null, range: null }) }] : []),
     ...(tab === "history" && history.next && !history.loading ? [{ id: "more", label: "Load older jobs", run: history.loadMore }] : []),
     ...(admin ? [{ id: "diagnose", label: "Check repository", run: () => setDiagnose(true) }] : []),
   ], [filtered, route, tab, id, history.next, history.loading, admin]);
@@ -200,16 +219,17 @@ export default function Jobs({ route }: { route: Route }) {
   const liveContent = tab !== "history" && (
     <>
       <div className="toolbar">
-        <SearchInput value={query} onChange={(event) => setParams({ q: event.currentTarget.value })} onClear={() => setParams({ q: null })}
-          placeholder={t("Repository or job ID")} aria-label={t("Filter jobs")} clearLabel={labels.search.clearLabel} className="toolbar-grow" />
+        <JobSearch query={query} />
         <Select aria-label={t("Pool")} value={pool} onValueChange={(value) => setParams({ pool: value })}
           options={[{ value: "", label: t("All pools") }, ...pools.map((name) => ({ value: name, label: poolName(name) }))]} />
+        <Select aria-label={t("State")} value={state} onValueChange={(value) => setParams({ state: value })}
+          options={[{ value: "", label: t("All states") }, ...states.map((value) => ({ value, label: statusLabel(value) }))]} />
       </div>
       <DataTable
         className="rows-2"
         aria-label={t(tabNames[tab])}
         columns={liveColumns(tab, operator ? rowMenu : undefined)}
-        rows={rows}
+        rows={shownRows}
         getRowId={(job) => job.id}
         onRowAction={(job) => open(job.id)}
         onFocus={tab === "waiting" && operator ? rowMenuTabs : undefined}
@@ -221,6 +241,12 @@ export default function Jobs({ route }: { route: Route }) {
             : undefined} actions={tab === "waiting" && admin
             ? <Button variant="secondary" size="sm" onClick={() => setDiagnose(true)}>{t("Check repository")}</Button> : undefined} />}
       />
+      {rows.length > shownRows.length && (
+        <div className="table-foot">
+          <span className="text-sm text-text-hint">{t("{shown} of {total} shown", { shown: number(shownRows.length), total: number(rows.length) })}</span>
+          <Button variant="secondary" size="sm" onClick={showMore}>{t("Show more")}</Button>
+        </div>
+      )}
     </>
   );
 
@@ -280,6 +306,30 @@ export default function Jobs({ route }: { route: Route }) {
         if (!next) refocus(diagnoseButton.current); // opened from the palette, which is gone
       }} />}
     </Tabs>
+  );
+}
+
+/**
+ * The live tabs' search. Typing stays in the box and writes ?q= once it pauses: each address change re-renders the
+ * whole screen, which takes long with a large queue.
+ */
+function JobSearch({ query }: { query: string }) {
+  const [text, setText] = useState(query);
+  const sent = useRef(query);
+  useEffect(() => {
+    // Clear filters, the palette or back/forward changed the address; the box already holds what it wrote itself.
+    if (query !== sent.current) setText((sent.current = query));
+  }, [query]);
+  useEffect(() => {
+    if (text === sent.current) return;
+    const timer = setTimeout(() => setParams({ q: (sent.current = text) }), 250);
+    return () => clearTimeout(timer);
+  }, [text]);
+  return (
+    <SearchInput value={text} onChange={(event) => setText(event.currentTarget.value)} onClear={() => {
+      setText("");
+      setParams({ q: (sent.current = "") });
+    }} placeholder={t("Repository or job ID")} aria-label={t("Filter jobs")} clearLabel={labels.search.clearLabel} className="toolbar-grow" />
   );
 }
 

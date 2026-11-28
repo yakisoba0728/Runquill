@@ -3,7 +3,7 @@
 import { Badge, DataTable, Disclosure, EmptyState, Skeleton, type Column } from "@yakihyuk0728/stratum-ui";
 import { useMemo, type ReactNode } from "react";
 import { attention, type AttentionItem } from "../../attention";
-import { Ago, KeyValue, Meter, Page, StatTile, StatusBadge, Steps, UpdatedAgo } from "../../components";
+import { Ago, Clip, KeyValue, Meter, Page, StatTile, StatusBadge, Steps, UpdatedAgo } from "../../components";
 import { isGitHubJobURL, jobStatus, pendingJob, poolName, summary, type Summary } from "../../fleet";
 import { duration, number } from "../../format";
 import { fill, serverText, t } from "../../i18n";
@@ -152,7 +152,10 @@ function Waiting({ snapshot }: { snapshot: Snapshot | null }) {
     { key: "id", header: t("Job"), width: 90, cell: (job) => "#" + job.id },
     { key: "pool", header: t("Pool"), cell: (job) => poolName(job.pool) },
     { key: "status", header: t("State"), cell: (job) => <StatusBadge status={jobStatus(job)} /> },
-    { key: "reason", header: t("Reason"), width: "minmax(200px, 3fr)", cell: (job) => serverText(job.diagnostic?.message || job.retry_reason || "") || "—" },
+    { key: "reason", header: t("Reason"), width: "minmax(200px, 3fr)", cell: (job) => {
+      const reason = serverText(job.diagnostic?.message || job.retry_reason || "");
+      return reason ? <Clip text={reason} /> : "—";
+    } },
     { key: "wait", header: t("Queue time"), align: "end", cell: (job) => duration(job.timing?.runquill_queue_seconds) },
   ];
   return (

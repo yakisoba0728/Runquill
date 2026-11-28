@@ -1,7 +1,7 @@
 // Small local components for what Stratum 0.1.1 lacks (design §8). Each is a stand-in until Stratum has its own.
 import { Badge, Button, PageHeader } from "@yakihyuk0728/stratum-ui";
 import { Component, useEffect, useLayoutEffect, useRef, type ComponentProps, type ReactNode } from "react";
-import { relative, useNow } from "../format";
+import { date, relative, useNow } from "../format";
 import { statusLabel, statusTone } from "../fleet";
 import { language, t } from "../i18n";
 import { takeFocus, useVisit } from "../router";
@@ -61,10 +61,15 @@ export function StatusBadge({ status, label }: { status: string; label?: string 
   return <Badge tone={statusTone(status)} dot>{label ?? statusLabel(status)}</Badge>;
 }
 
-/** G16: "3s ago", ticking on the shared clock. */
+/** G16: "3s ago", ticking on the shared clock; the local date and time on hover. */
 export function Ago({ at }: { at?: string | null }) {
   const now = useNow();
-  return <span title={at ?? undefined}>{relative(at, now)}</span>;
+  return <span title={at ? date(at) : undefined}>{relative(at, now)}</span>;
+}
+
+/** Text a table cell may cut short with an ellipsis; the whole text shows on hover. */
+export function Clip({ text, className }: { text: string; className?: string }) {
+  return <span className={className} title={text}>{text}</span>;
 }
 
 /** "Updated 3s ago" (lower case after "Updated" in English, as in v1). */

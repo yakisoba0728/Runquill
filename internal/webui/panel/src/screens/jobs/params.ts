@@ -1,4 +1,4 @@
-// The jobs screen's address (design §2.4): #/jobs[/ID]?tab=waiting|running|cleaned|history&q&pool&repo&outcome&range.
+// The jobs screen's address (design §2.4): #/jobs[/ID]?tab=waiting|running|cleaned|history&q&pool&state&repo&outcome&range.
 import type { jobLists, LiveTab } from "../../fleet";
 
 export const tabs = ["waiting", "running", "cleaned", "history"] as const;
