@@ -116,6 +116,8 @@ func TestKubernetesTerminatingPodReleasesLeaseButKeepsSlot(t *testing.T) {
 			fmt.Fprint(w, `{"token":"stub"}`)
 		case "GET /repos/owner/repo/actions/jobs/9":
 			fmt.Fprint(w, `{"status":"queued"}`)
+		case "GET /repos/owner/repo/actions/runners":
+			fmt.Fprint(w, `{"runners":[]}`)
 		case "DELETE /repos/owner/repo/actions/runners/55":
 			deleted.Add(1)
 			w.WriteHeader(http.StatusNoContent)

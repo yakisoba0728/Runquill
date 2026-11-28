@@ -164,6 +164,8 @@ func TestSchedulerRestoresLeasesAndMaintainsFIFO(t *testing.T) {
 				return
 			}
 			w.WriteHeader(204)
+		case "GET /repos/owner/repo/actions/runners":
+			fmt.Fprint(w, `{"runners":[]}`)
 		case "GET /repos/owner/repo/actions/jobs/60":
 			w.WriteHeader(503)
 		default:

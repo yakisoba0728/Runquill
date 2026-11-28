@@ -104,6 +104,8 @@ func TestSelectedRepositoryLifecycle(t *testing.T) {
 			}
 			registered.Add(1)
 			fmt.Fprint(w, `{"runner":{"id":55},"encoded_jit_config":"test-config"}`)
+		case "GET /repos/owner/approved/actions/runners":
+			fmt.Fprint(w, `{"runners":[]}`)
 		case "DELETE /repos/owner/approved/actions/runners/55":
 			removed.Add(1)
 			w.WriteHeader(http.StatusNoContent)
