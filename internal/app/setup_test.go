@@ -117,7 +117,7 @@ func testSetupCreatesComposeConfiguration(t *testing.T, scope string, organizati
 	}
 	want := map[string][]byte{
 		setupEnvFile: []byte(expectedEnv +
-			"RUNQUILL_WEBHOOK_URL=" + webhookURL + "\nRUNQUILL_WEBHOOK_SECRET=" + webhookSecret + "\nRUNQUILL_POLL_INTERVAL=30s\n"),
+			"RUNQUILL_WEBHOOK_URL=" + webhookURL + "\nRUNQUILL_WEBHOOK_SECRET=" + webhookSecret + "\nRUNQUILL_POLL_INTERVAL=30s\nCOMPOSE_FILE=compose.yaml\n"),
 		setupKeyFile: pemData,
 	}
 	for name, expected := range want {
@@ -216,8 +216,14 @@ func TestSetupRecoversAndReusesConfiguration(t *testing.T) {
 	if err := setup(t.Context(), &out, dir, service.Client(), service.URL, setupOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if data, err := os.ReadFile(envPath); err != nil || string(data) != config.Env {
-		t.Fatalf("setup rerun changed the saved webhook-only configuration: %v", err)
+	if data, err := os.ReadFile(envPath); err != nil || string(data) != config.Env+"COMPOSE_FILE=compose.yaml\n" {
+		t.Fatalf("setup rerun did not keep the webhook-only configuration and record the Compose file: %v", err)
+	}
+	if err := setup(t.Context(), io.Discard, dir, service.Client(), service.URL, setupOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(envPath); err != nil || string(data) != config.Env+"COMPOSE_FILE=compose.yaml\n" {
+		t.Fatalf("repeated setup changed the configuration: %v", err)
 	}
 	for _, want := range []string{"docker pull ghcr.io/owner/runquill-runner:v0.1.0", "docker compose up -d --no-build", "docker compose exec manager runquill doctor"} {
 		if !strings.Contains(out.String(), want) {

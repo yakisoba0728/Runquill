@@ -1096,19 +1096,30 @@ if [ "$upgrade" = true ]; then
     printf '%s\n' 'Your .env, GitHub App key, and data were not changed.'
     manager_image=
     runner_image=
+    compose_file=
+    backend=
     if [ -f .env ]; then
         manager_image=$(awk -F= '$1 == "RUNQUILL_MANAGER_IMAGE" {print $2}' .env)
         runner_image=$(awk -F= '$1 == "RUNQUILL_RUNNER_IMAGE" {print $2}' .env)
+        compose_file=$(awk -F= '$1 == "COMPOSE_FILE" {print $2}' .env)
+        backend=$(awk -F= '$1 == "RUNQUILL_BACKEND" {print $2}' .env)
     fi
-    if [ -n "$manager_image" ] || [ -n "$runner_image" ]; then
+    # Setup records RUNQUILL_BACKEND=kubernetes for K3s and COMPOSE_FILE for Compose; older installs have neither.
+    if [ "$backend" = kubernetes ]; then
+        printf '%s\n' 'Apply the new manifest to K3s: kubectl apply -f runquill-k3s.yaml'
+    elif [ -n "$manager_image" ] || [ -n "$runner_image" ]; then
         printf '%s\n' 'Point the images in .env at the new release:'
         if [ -n "$manager_image" ]; then printf '  RUNQUILL_MANAGER_IMAGE=%s:%s\n' "${manager_image%:*}" "$tag"; fi
         if [ -n "$runner_image" ]; then printf '  RUNQUILL_RUNNER_IMAGE=%s:%s\n' "${runner_image%:*}" "$tag"; fi
-        printf '%s\n' 'Then restart Compose from this directory (add -f compose.yaml -f compose.panel.yaml, or your other overlays, if you started it with them):'
+        if [ -n "$compose_file" ]; then
+            printf '%s\n' 'Then restart Compose from this directory. It uses the Compose files listed in COMPOSE_FILE in .env:'
+        else
+            printf '%s\n' 'Then restart Compose from this directory (add -f compose.yaml -f compose.panel.yaml, or your other overlays, if you started it with them):'
+        fi
         if [ -n "$runner_image" ]; then printf '  docker pull %s:%s\n' "${runner_image%:*}" "$tag"; fi
         printf '%s\n' '  docker compose pull manager' '  docker compose up -d --no-build' '  docker compose exec -T manager runquill doctor'
     fi
-    if [ -f runquill-k3s.yaml ]; then
+    if [ -z "$backend" ] && [ -z "$compose_file" ] && [ -f runquill-k3s.yaml ]; then
         printf '%s\n' 'On K3s, apply the new manifest instead: kubectl apply -f runquill-k3s.yaml'
     fi
     printf 'Release notes: %s/releases/tag/%s\n' "$repo" "$tag"

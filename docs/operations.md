@@ -2,7 +2,7 @@
 
 [Runquill README](../README.md) · [한국어](operations.ko.md)
 
-Run commands from the installation directory with the same Compose files in the same order as the original deployment. Where an example shows plain `docker compose`, add `-f compose.yaml -f compose.panel.yaml` if the panel is enabled, followed by any SSH worker or custom overlays in use.
+Run commands from the installation directory with the same Compose files in the same order as the original deployment. `setup` and the setup wizard record those files in `COMPOSE_FILE` in `.env`, for example `COMPOSE_FILE=compose.yaml:compose.panel.yaml`, so plain `docker compose` uses them. Append your own overlays, such as `compose.settings.yaml`, to that list. An older install or a manual `.env` has no `COMPOSE_FILE`. There, add `-f compose.yaml -f compose.panel.yaml` to each plain `docker compose` example if the panel is enabled, followed by any SSH worker or custom overlays in use, or add the `COMPOSE_FILE` line yourself.
 
 ## Verify a reboot
 
@@ -153,6 +153,7 @@ To clean up, run `docker compose exec manager runquill gc --remove-orphans`. It 
 - `GET /healthz` on port 8080 returns HTTP 200 when the queue database answers. `GET /readyz` also requires a successful scheduler pass within the last 2 minutes and no current GitHub App authentication failure. It returns HTTP 503 otherwise, with a JSON body whose `scheduler` is `starting`, `failing` or `stalled`, and whose `database` and `github_auth` show the other checks. Error details stay in the manager log.
 - Runners are ephemeral, repository-scoped JIT runners. In the default pool, each job gets a new container with its own Docker daemon, so `docker build`, `services:` and `container:` work. After the job, the container with its inner images, volumes and work directory is deleted. Named cache volumes for pools with `cache` enabled persist between jobs and follow the cleanup retention on local and SSH hosts.
 - Run one manager per fleet. Preserve the Compose `queue` volume during upgrades, including upgrades from the original Python version. A manager restart continues tracking existing runners.
+- Compose names the volume `PROJECT_queue`. The project name defaults to the installation directory's name in lower case, without characters other than letters, digits, `-` and `_`, so `$HOME/runquill` uses `runquill_queue`. Renaming or moving the directory, or passing a different `-p`, starts the manager on a new, empty volume without its leases, saved panel settings and pending jobs. Check the current name with `docker volume ls --filter name=_queue`. To run from another directory, stop the manager, then set `COMPOSE_PROJECT_NAME` in `.env` to the old project name, for example `COMPOSE_PROJECT_NAME=runquill`, before starting it there.
 - Runquill polls the GitHub API on startup and waits `RUNQUILL_POLL_INTERVAL` (default `30s`) after each scan. Each scan checks queued and in-progress runs in every eligible repository, giving recent activity priority. The poller rotates requested, waiting, and pending runs so each repository receives a full scan within four successful passes if the repository list stays stable. Webhooks and polling share one queue record per GitHub job ID. Set the interval to `0` to run with webhooks alone.
 - Job timing records the first discovery source, successful GitHub runner registration, and GitHub’s reported job start when available. The discovery delay measures GitHub job creation to Runquill discovery when GitHub provides a creation timestamp. The Runquill queue duration measures discovery to first registration, or elapsed wait for a queued job. Missing timestamps and durations are omitted in `status --json`. The job history, `GET /api/jobs/{id}` and `runquill jobs show` also add GitHub's completion time and the execution duration from GitHub's start to completion. [Job stage histograms](metrics.md#job-stage-histograms) aggregate the same stages.
 
@@ -167,18 +168,18 @@ sh install.sh --upgrade --dir "$HOME/runquill"
 
 The installer verifies the checksums, updates changed release files, and moves the prior copies into `.previous/`. Restore the previous release files with `cp -p .previous/* .` from the installation directory. To roll back the manager, also restore the previous image tags and check the release notes for database compatibility. [Back up the queue](#back-up-and-recover-the-queue) before upgrading. `--upgrade` accepts `--version`, `--dir`, `--yes` and `--no-install` and operates on release files only.
 
-The installer does not restart anything. If `.env` names published images, it prints the new `RUNQUILL_MANAGER_IMAGE` and `RUNQUILL_RUNNER_IMAGE` values for you to set, followed by the pull, `docker compose up -d --no-build` and `doctor` commands to run with your usual Compose files. The manager pulls the new runner image onto the `local` host and `ssh://` hosts. On outbound workers, load the new image and upgrade the `runquill worker` binary. On K3s, it prints `kubectl apply -f runquill-k3s.yaml` instead.
+The installer does not restart anything. If `.env` names published images, it prints the new `RUNQUILL_MANAGER_IMAGE` and `RUNQUILL_RUNNER_IMAGE` values for you to set, followed by the pull, `docker compose up -d --no-build` and `doctor` commands. When `.env` has `COMPOSE_FILE`, these plain commands use the recorded overlays. Otherwise the installer reminds you to add your usual `-f` files. The manager pulls the new runner image onto the `local` host and `ssh://` hosts. On outbound workers, load the new image and upgrade the `runquill worker` binary. For a K3s install, which setup marks with `RUNQUILL_BACKEND=kubernetes` in `.env`, it prints only `kubectl apply -f runquill-k3s.yaml`. An older install with neither setting gets both the Compose and the K3s instructions.
 
 For a release without `--upgrade` or a manual install, set both image tags in `.env` to the new release and repeat the pull commands from [Start the manager](install.md#start-the-manager).
 
-For Compose with the panel, apply the new tags using the following commands. Wait for running jobs to finish, keep the `queue` volume attached, and check that pending jobs are still present. Then [run the first job](workflows.md#verify-your-first-job).
+For Compose, apply the new tags using the following commands. They read the Compose files from `COMPOSE_FILE` in `.env`. Without it, add `-f compose.yaml -f compose.panel.yaml` and your other overlays. Wait for running jobs to finish, keep the `queue` volume attached by running from the same directory with the same project name, and check that pending jobs are still present. Then [run the first job](workflows.md#verify-your-first-job).
 
 ```sh
 cd "$HOME/runquill"
-docker compose -f compose.yaml -f compose.panel.yaml pull manager
-docker compose -f compose.yaml -f compose.panel.yaml up -d --no-build
-docker compose -f compose.yaml -f compose.panel.yaml exec -T manager runquill doctor
-docker compose -f compose.yaml -f compose.panel.yaml exec -T manager runquill status
+docker compose pull manager
+docker compose up -d --no-build
+docker compose exec -T manager runquill doctor
+docker compose exec -T manager runquill status
 ```
 
 ## Add manager settings

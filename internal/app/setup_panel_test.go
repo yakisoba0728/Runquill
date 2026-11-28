@@ -113,11 +113,11 @@ func TestGuidedPanelSetupReusesInstalledAppAndSavesPrivateConfig(t *testing.T) {
 	for line := range output {
 		log.WriteString(line)
 	}
-	if strings.Contains(log.String(), secret) || !strings.Contains(log.String(), "docker compose -f compose.yaml -f compose.panel.yaml up -d --no-build") {
+	if strings.Contains(log.String(), secret) || !strings.Contains(log.String(), "  docker compose up -d --no-build") {
 		t.Fatal("setup did not print the panel Compose command without exposing its secret")
 	}
 	expected := original + "\nRUNQUILL_PANEL_URL=" + origin + "\nRUNQUILL_PANEL_GITHUB_CLIENT_ID=client-fixture\nRUNQUILL_PANEL_GITHUB_CLIENT_SECRET=" +
-		secret + "\nRUNQUILL_PANEL_BOOTSTRAP_ID=321\n"
+		secret + "\nRUNQUILL_PANEL_BOOTSTRAP_ID=321\nCOMPOSE_FILE=compose.yaml:compose.panel.yaml\n"
 	data, err := os.ReadFile(envPath)
 	if err != nil || string(data) != expected {
 		t.Fatalf("panel setup did not preserve the existing env and append the settings: %v", err)
@@ -139,12 +139,20 @@ func TestGuidedPanelSetupReusesInstalledAppAndSavesPrivateConfig(t *testing.T) {
 	if err != nil || string(data) != expected {
 		t.Fatalf("repeated panel setup changed the existing credentials: %v", err)
 	}
+	opts.panel = false
+	if err := setup(ctx, io.Discard, dir, gh.Client(), gh.URL, opts); err != nil {
+		t.Fatal(err)
+	}
+	if data, err = os.ReadFile(envPath); err != nil || string(data) != expected {
+		t.Fatalf("setup without --panel dropped the recorded panel overlay: %v", err)
+	}
+	opts.panel = true
 	opts.kubernetes = true
 	if err := setup(ctx, io.Discard, dir, gh.Client(), gh.URL, opts); err != nil {
 		t.Fatal(err)
 	}
 	data, err = os.ReadFile(envPath)
-	if err != nil || string(data) != expected+"RUNQUILL_PANEL_ADDR=0.0.0.0:8081\n" {
+	if err != nil || string(data) != expected+"RUNQUILL_PANEL_ADDR=0.0.0.0:8081\nRUNQUILL_BACKEND=kubernetes\n" {
 		t.Fatalf("k3s setup did not add the internal listener and preserve panel credentials: %v", err)
 	}
 }

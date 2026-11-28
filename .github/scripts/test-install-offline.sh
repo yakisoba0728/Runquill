@@ -244,20 +244,20 @@ release() {
     mkdir "$fixture"
     (
         cd "$fixture"
-        for asset in runquill-linux-amd64 compose.yaml compose.ssh.yaml compose.panel.yaml LICENSE; do
+        for asset in runquill-linux-amd64 compose.yaml compose.ssh.yaml compose.panel.yaml runquill-k3s.yaml LICENSE; do
             printf 'new %s\n' "$asset" >"$asset"
             sha256sum "$asset"
         done >SHA256SUMS
     )
 }
 
-existing_install() {
+existing_install() { # [.env LINE...]
     installed=$case_dir/home/runquill
     mkdir -p "$installed/.previous"
     printf '%s\n' 'old binary' >"$installed/runquill"
     printf '%s\n' 'old compose' >"$installed/compose.yaml"
     printf '%s\n' 'older binary' >"$installed/.previous/runquill"
-    printf '%s\n' 'FIXTURE=keep' >"$case_dir/original.env"
+    printf '%s\n' 'FIXTURE=keep' "$@" >"$case_dir/original.env"
     cp "$case_dir/original.env" "$installed/.env"
 }
 
@@ -568,6 +568,29 @@ check 'upgrade: preserves .env' cmp "$case_dir/original.env" "$installed/.env"
 run -- --upgrade --version v0.3.2
 check 'upgrade: retry reports the release is already installed' has_out 'is already installed'
 check 'upgrade: retry keeps the rollback copy' grep -qx 'old binary' "$installed/.previous/runquill"
+
+images='RUNQUILL_MANAGER_IMAGE=ghcr.io/o/runquill:v0.3.1'
+host
+release
+existing_install "$images" 'COMPOSE_FILE=compose.yaml:compose.panel.yaml'
+run -- --upgrade --version v0.3.2
+check 'upgrade hint: recorded Compose files need no -f' has_out 'listed in COMPOSE_FILE in .env'
+check 'upgrade hint: recorded Compose files use plain commands' has_out '  docker compose up -d --no-build'
+check 'upgrade hint: Compose install gets no K3s line' lacks_out 'kubectl'
+
+host
+release
+existing_install "$images"
+run -- --upgrade --version v0.3.2
+check 'upgrade hint: older install is reminded of overlays' has_out 'add -f compose.yaml -f compose.panel.yaml'
+check 'upgrade hint: older install still sees the K3s line' has_out 'On K3s, apply the new manifest instead'
+
+host
+release
+existing_install "$images" 'RUNQUILL_BACKEND=kubernetes'
+run -- --upgrade --version v0.3.2
+check 'upgrade hint: K3s install applies the manifest' has_out 'kubectl apply -f runquill-k3s.yaml'
+check 'upgrade hint: K3s install gets no Compose commands' lacks_out 'docker compose'
 
 host
 release

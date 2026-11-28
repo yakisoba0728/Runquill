@@ -146,6 +146,8 @@ docker compose pull manager
 docker compose up -d --no-build
 ```
 
+`setup` and the setup wizard record the Compose files they deploy with, such as `compose.panel.yaml` for the panel, in `COMPOSE_FILE` in `.env`, so these plain commands keep the overlays. With a manual `.env`, pass the files with `-f` or add `COMPOSE_FILE` yourself. Keep the installation directory's name: Compose keeps the queue in a volume named after it. [Details](operations.md#upgrade)
+
 ### Use an existing GitHub App or configure webhooks
 
 For a manually configured App, select **Only on this account**, grant **Actions → Read-only** and **Administration → Read and write**, and create a private key. Install the App on your personal account. Copy [.env.example](../.env.example) to `.env`, fill in `RUNQUILL_OWNER`, `RUNQUILL_APP_ID` and the PEM path in `RUNQUILL_KEY_FILE`, and set both files to mode `0600`. Set `RUNQUILL_REPOSITORY_SCOPE=selected` if you chose **Only select repositories**. For polling, disable webhooks in the App settings and leave `RUNQUILL_WEBHOOK_SECRET` empty. [GitHub App installation](https://docs.github.com/en/apps/using-github-apps/installing-your-own-github-app) · [Repository JIT runner API](https://docs.github.com/en/rest/actions/self-hosted-runners#create-configuration-for-a-just-in-time-runner-for-a-repository)
