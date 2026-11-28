@@ -387,7 +387,7 @@ func waitForSetupInstallation(ctx context.Context, out io.Writer, api *github) (
 				return inst, err
 			}
 			if api.runnerGroupID > 0 {
-				_, err = api.inspectRunnerGroup(ctx, jwt, inst.ID)
+				_, _, err = api.inspectRunnerGroup(ctx, jwt, inst.ID)
 			}
 			return inst, err
 		}

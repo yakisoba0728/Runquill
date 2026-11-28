@@ -285,8 +285,13 @@ func (g *github) checkInstallation(ctx context.Context, repo string, webhooks bo
 	report("GitHub App permissions", permissionErr)
 	var group map[int64]string
 	if g.runnerGroupID > 0 && scopeErr == nil && permissionErr == nil {
-		group, err = g.inspectRunnerGroup(ctx, jwt, inst.ID)
+		var public []int64
+		group, public, err = g.inspectRunnerGroup(ctx, jwt, inst.ID)
 		report(fmt.Sprintf("GitHub organization runner group %d", g.runnerGroupID), err)
+		if len(public) > 0 {
+			report(fmt.Sprintf("public repositories sharing runner group %d (fork approval, waiting fork runs)", g.runnerGroupID),
+				g.guardRunnerGroup(ctx, inst.ID, group, public, 0))
+		}
 	}
 	if webhooks {
 		var eventErr error

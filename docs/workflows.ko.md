@@ -115,7 +115,7 @@ jobs:
 - 작업 자체의 워크플로 실행이 포크나 삭제된 포크에서 왔다면 패널에 이유를 남기고 작업을 실패 처리합니다.
 - 러너를 등록하기 전마다 저장소의 queued, in_progress, waiting 상태 워크플로 실행을 조회합니다. 포크에서 온 실행에 `runquill-` 라벨을 쓰는 미완료 작업이 있으면 그 실행 번호를 이유로 남기고 작업을 대기시킵니다. 그 실행을 취소하면 진행합니다.
 
-러너를 띄울 때마다 승인 정책 조회 1회와 실행 목록 조회 3회, 미완료 포크 실행마다 작업 목록 조회가 추가됩니다. 비공개 저장소에서는 이 호출을 하지 않습니다. 남는 위험도 있습니다. 관리자가 Runquill 라벨을 쓰는 포크 풀 리퀘스트를 승인하면 그 실행이 끝나거나 취소될 때까지 공개 저장소 작업은 대기합니다. 승인하기 전에 `runs-on` 변경을 확인하세요. 검사와 러너가 작업을 잡는 사이의 몇 초 동안 승인된 포크 작업이 러너를 가져갈 수 있으며, Runquill은 러너가 다른 작업을 잡은 경우를 감지하지 않습니다.
+러너를 띄울 때마다 승인 정책 조회 1회와 실행 목록 조회 3회, 미완료 포크 실행마다 작업 목록 조회가 추가됩니다. 비공개 저장소에서는 공개 저장소와 러너 그룹을 함께 쓰지 않는 한 이 호출을 하지 않습니다. 남는 위험도 있습니다. 관리자가 Runquill 라벨을 쓰는 포크 풀 리퀘스트를 승인하면 그 실행이 끝나거나 취소될 때까지 공개 저장소 작업은 대기합니다. 승인하기 전에 `runs-on` 변경을 확인하세요. 검사와 러너가 작업을 잡는 사이의 몇 초 동안 승인된 포크 작업이 러너를 가져갈 수 있으며, Runquill은 러너가 다른 작업을 잡은 경우를 감지하지 않습니다.
 
 ### 원본 저장소에서 실행되는 워크플로
 
@@ -124,6 +124,6 @@ jobs:
 ### 공개 저장소 작업 분리
 
 - 전용 호스트에서 `privileged: false`이고 `repositories`를 공개 저장소로 제한한 비특권 [워커 풀](workers.ko.md#워커-풀로-작업-분리)로 실행합니다. 풀이 `cache: true`이면 공개 저장소는 기본으로 [`cache_writes: default_branch`](workers.ko.md#공유-캐시-보호)를 씁니다. 기본 브랜치의 push, schedule, 수동 실행만 공유 캐시에 쓰고, 나머지 작업은 빈 캐시를 받습니다. `cache_writes`를 `all`로 설정하면 한 작업이 다음 작업을 오염시킬 수 있습니다.
-- [조직 러너 그룹](install.ko.md#github-조직-연결)을 쓴다면 공개 저장소 전용 그룹을 만들고 공개 저장소를 허용합니다. 비공개 저장소를 그 그룹에 섞지 마세요. GitHub는 공개 저장소를 허용하지 않는 그룹에 공개 저장소의 작업을 배정하지 않으며, Runquill은 공개 저장소를 허용하지 않는데 공개 저장소가 들어 있는 그룹을 오류로 알립니다.
+- [조직 러너 그룹](install.ko.md#github-조직-연결)을 쓴다면 공개 저장소 전용 그룹을 만들고 공개 저장소를 허용합니다. 비공개 저장소를 그 그룹에 섞지 마세요. GitHub는 공개 저장소를 허용하지 않는 그룹에 공개 저장소의 작업을 배정하지 않으며, Runquill은 공개 저장소를 허용하지 않는데 공개 저장소가 들어 있는 그룹을 오류로 알립니다. GitHub는 그룹 러너를 그룹 안 어느 저장소든 라벨이 일치하는 대기 작업에 배정하므로, Runquill은 러너를 등록하기 전마다 작업의 저장소뿐 아니라 그룹 안의 모든 공개 저장소에 승인 정책과 포크 실행 검사를 적용합니다. 그중 하나라도 통과하지 못하면 그룹 안 모든 저장소의 작업이 그 저장소 이름을 이유에 남기고 대기하며, GitHub App에는 각 공개 저장소의 Administration 읽기 권한이 필요합니다. `runquill doctor`와 `runquill diagnose OWNER/REPO`가 결과를 보여 줍니다.
 
 [GitHub self-hosted 러너 보안 강화](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#hardening-for-self-hosted-runners) · [스크립트 인젝션](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#understanding-the-risk-of-script-injections)
